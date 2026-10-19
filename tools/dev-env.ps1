@@ -11,8 +11,13 @@ if (-not (Test-Path -LiteralPath $devcmd)) { throw 'Visual Studio C++ developer 
 $variables = & cmd.exe /d /c "`"$devcmd`" -arch=x64 -host_arch=x64 >nul && set"
 if ($LASTEXITCODE -ne 0) { throw 'VsDevCmd failed' }
 foreach ($line in $variables) {
-    if ($line -match '^([^=]+)=(.*)$' -and $Matches[1] -notin @('HOME', 'CODEX_HOME')) {
-        [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
+    if ($line -match '^([^=]+)=(.*)$' -and $Matches[1] -ne 'HOME') {
+        $variableName = $Matches[1]
+        $developerValue = $Matches[2]
+        # Import only changes made by the developer shell; retain existing context.
+        if ([Environment]::GetEnvironmentVariable($variableName, 'Process') -cne $developerValue) {
+            [Environment]::SetEnvironmentVariable($variableName, $developerValue, 'Process')
+        }
     }
 }
 $cmake = Join-Path $VisualStudio 'Common7\IDE\CommonExtensions\Microsoft\CMake'
