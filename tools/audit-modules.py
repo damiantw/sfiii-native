@@ -61,8 +61,7 @@ def main():
     work, out = external(a.work), external(a.out)
     profile = json.loads(a.profile.read_text(encoding='utf-8-sig'))
     hashes = json.loads((work/'hashes.json').read_text())
-    if not any('Track 1' in name and value['sha256'] == profile['track1_sha256']
-               for name, value in hashes.items()):
+    if not any(value['sha256'] == profile['track1_sha256'] for value in hashes.values()):
         raise ValueError('Inventory revision does not match profile')
     manifest = json.loads((work/'manifest.json').read_text())
     known = {m['file']: m for m in profile['modules']}

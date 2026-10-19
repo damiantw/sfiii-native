@@ -21,7 +21,7 @@ if work == repo or repo in work.parents or out == repo or repo in out.parents:
 profile = json.loads(a.profile.read_text())
 manifest = json.loads((work / 'manifest.json').read_text())
 hashes = json.loads((work / 'hashes.json').read_text())
-if not any('Track 1' in name and h['sha256'] == profile['track1_sha256'] for name, h in hashes.items()):
+if not any(h['sha256'] == profile['track1_sha256'] for h in hashes.values()):
     raise SystemExit('Local inventory does not match profile')
 specs = []
 for m in profile['modules']:

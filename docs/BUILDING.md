@@ -1,5 +1,7 @@
 # Building on Windows
 
+Players using the v0.2.0-alpha Windows package do **not** need these steps; see [automatic desktop setup](DESKTOP.md). This page describes the developer source-build workflow.
+
 Use a Windows x64 machine with Git for Windows, Python 3.11+, LLVM/Clang, and Visual Studio 2022 Build Tools (or Community) with **Desktop development with C++**, a Windows SDK, and the CMake tools component. LLVM 21.1.8 is the tested compiler. Put `python`, `clang` and `clang++` on PATH. The build scripts locate Visual Studio with `vswhere` and use its CMake/Ninja tools. Run in PowerShell; if local script execution is disabled, use `powershell -ExecutionPolicy Bypass -File SCRIPT ...` for the script you intend to run.
 
 ## 1. Dependencies
@@ -14,7 +16,7 @@ Setup does not install Visual Studio or LLVM, and does not download any game or 
 
 ## 2. Prepare your disc
 
-Keep all tracks referenced by your CUE beside it. Currently supported: unpatched Scenario 1 USA MK-81383 V1.001, data-track SHA-256 `089c77470dec14f1dbffaad1ab50d584f06df5e28b475fc712b8e67e5890f951`. A header match alone is insufficient. The generation profile rejects other data-track hashes. The current track-identification check expects the data-track filename to contain `Track 1`.
+Keep all tracks referenced by your CUE beside it. Currently supported: unpatched Scenario 1 USA MK-81383 V1.001, data-track SHA-256 `089c77470dec14f1dbffaad1ab50d584f06df5e28b475fc712b8e67e5890f951`. A header match alone is insufficient. The generation profile rejects other data-track hashes.
 
 ```powershell
 .\tools\prepare-game.ps1 -Cue 'D:\Games\SFIII\Shining Force III (USA).cue' -Work 'D:\SFIII-local' -Python python

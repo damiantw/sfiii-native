@@ -21,3 +21,7 @@ Microsoft DirectX Shader Compiler is fetched as a development tool with the lice
 SF3Tools informed module load-address metadata; this project does not vendor its implementation or any game data. See `tools/audit-modules.py` for the mapping provenance revision. Common instruction-pattern recognition and module entry/address metadata are used to generate code from the user's locally supplied disc.
 
 No game assets, disc images, BIOS files, saves, extracted binaries or generated game code are licensed or distributed by this source repository. Owning a source-code license does not grant rights to those materials.
+
+## Portable desktop package
+
+The optional desktop ZIP bundles LLVM-MinGW (including LLVM's Apache-2.0-with-LLVM-exceptions notice and mingw-w64 component notices), CMake (BSD-3-Clause), Ninja (Apache-2.0), official embedded CPython and SDL3 development files. Their licenses remain in the respective payload directories; Ninja's complete COPYING is also included as `LICENSES/ninja-LICENSE.txt` in the package. Versions and verified archive hashes are in `desktop/dependencies.json`. The launcher uses the system .NET Framework; Microsoft Visual Studio and Windows SDK files are not bundled. Generated game code and executables remain user-local.

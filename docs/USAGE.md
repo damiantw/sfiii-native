@@ -1,6 +1,6 @@
 # Playing
 
-Launch with **Launch Native SFIII.cmd** from your external work directory. Use **Controller Setup.cmd** to bind a generic or Saturn USB pad; **Controller Test.cmd** checks its controls. SDL mappings cover PS5, Xbox and other controllers. The Saturn USB pad has been physically tested locally; PS5/Xbox support has not received equivalent physical-device validation.
+In the desktop package, click **Play** after preparation. Source builds can launch with **Launch Native SFIII.cmd** from the external work directory. Use **Controller Setup.cmd** to bind a generic or Saturn USB pad; **Controller Test.cmd** checks its controls. SDL mappings cover PS5, Xbox and other controllers. The Saturn USB pad has been physically tested locally; PS5/Xbox support has not received equivalent physical-device validation.
 
 Keyboard defaults: arrows for movement, Enter for Start, Z/X/C for A/B/C, A/S/D for X/Y/Z, Q/W for L/R. Escape opens the menu. F11 or Alt+Enter toggles fullscreen.
 
@@ -14,7 +14,7 @@ Use **1× / 2× / 4×** for supported geometry resolution. Source texture detail
 
 Use the game's save command for ordinary persistent progress. The external files are `experimental-backup.bin` (32 KiB internal capacity) and `experimental-backup.bin.cartridge` (512 KiB cartridge capacity). They contain native backup records, **not raw emulator memory images**. Back them up before changing versions or importing saves. The full game's save behavior has not been validated.
 
-**Import Saturn Saves.cmd** accepts the supported per-save raw Scenario 1 `SFORCE31_XX.BIN` export format, with a choice of internal or cartridge storage. Imports preserve payloads and back up the destination. Real Saturn exports have been tested locally. Emulator and Saroo exports are usable only when they match that supported format; arbitrary `.bin` files, whole memory dumps, compressed exports and emulator save states are not automatically interchangeable. Stop the game before importing. Python 3.11+ must remain installed.
+**Import Saturn Saves.cmd** accepts the supported per-save raw Scenario 1 `SFORCE31_XX.BIN` export format, with a choice of internal or cartridge storage. Imports preserve payloads and back up the destination. Real Saturn exports have been tested locally. Emulator and Saroo exports are usable only when they match that supported format; arbitrary `.bin` files, whole memory dumps, compressed exports and emulator save states are not automatically interchangeable. Stop the game before importing. The desktop package supplies Python; source builds need Python 3.11+ installed.
 
 ## Replay checkpoints
 
