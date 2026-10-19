@@ -34,11 +34,31 @@ The work folder must be outside the source repository. Preparation inventories y
 
 Open **Launch Native SFIII.cmd** in the work folder to play. See [building](docs/BUILDING.md) for manual steps and [controls, saves and display settings](docs/USAGE.md) for use. This source repository is not a portable prebuilt game release: each user generates their own game executable from their own supported dump.
 
+## Bring your own saves
+
+The included **Import Saturn Saves.cmd** utility lets you bring your existing progress into the native application. Supported raw Scenario 1 `SFORCE31_XX.BIN` exports from a real Saturn have been tested. Exports from emulators or Saroo carts must match that same supported format; arbitrary `.bin` files, whole backup-memory images and emulator save states are not automatically compatible.
+
+Close the game, open **Import Saturn Saves.cmd** in your work folder, select your exported saves, and choose **internal memory** or **cartridge memory**. Then launch the game and use its own load menu. The importer validates the save layout and checksum, leaves your original export untouched, and backs up an existing destination before writing. Python 3.11+ is required. See [save formats and storage details](docs/USAGE.md#game-saves).
+
 ## Status and validation
 
 The current local audit compiles 250 configured/candidate modules, including 169 X1 scene modules. The nine-route regression suite exercises 12 X1 scenes; it does not validate all 169 scenes. Five mapping/entry reviews, nine discovery findings and 918 unresolved indirect sites remain review items. Compilation, emitted entry coverage, executed gameplay and hardware fidelity are separate claims.
 
 Synthetic tests cover arithmetic/DSP, storage, DMA, background composition, controller input, checkpoint integrity and GPU rendering. Captured gameplay diagnostics and historical route fixtures stay local. See [development and publication rules](docs/DEVELOPMENT.md).
+
+## Upcoming features
+
+Planned directions, with no release dates or compatibility guarantees. Faithful gameplay, graphics, audio and reliable saves take priority over enhancements.
+
+- **Broader gameplay validation:** exercise more towns, battles, menus and transitions, fixing crashes and rendering/audio defects as coverage grows.
+- **More complete widescreen:** improve game-side object and terrain culling so additional scenery remains visible as the camera moves and rotates.
+- **Game and edition selector:** organize locally supplied discs and supported editions in one launcher, with separate progress and settings where appropriate.
+- **Scenarios 2–3, Premium Disc and translations:** add revision-specific compilation profiles and validation, including explicit identification of supported translation patch versions.
+- **Save portability and campaign transfers:** expand verified emulator/Saroo import and export formats, and validate backed-up progress transfers between compatible scenarios and editions.
+- **Optional faithful high-resolution artwork:** revisit sharper replacement assets after gameplay and rendering correctness are further established, while retaining the original-art option.
+- **Instant native save states:** investigate full runtime-state restoration beyond the existing replay checkpoints; this requires additional runtime work.
+
+These are roadmap items, not features already supported by the current Scenario 1 build.
 
 ## Credits and licensing
 
