@@ -60,6 +60,10 @@ Planned directions, with no release dates or compatibility guarantees. Faithful 
 
 These are roadmap items, not features already supported by the current Scenario 1 build.
 
+## Support development
+
+If you'd like to support development and testing, you can [leave a tip via PayPal](https://paypal.me/mattkuhn14). Contributions are optional; the project remains free, and no game data is provided.
+
 ## Credits and licensing
 
 Built on [saturn-recomp](https://github.com/callumjenkins/saturn-recomp), derived from [saturnkit](https://github.com/vs-sr-dev/saturnkit). SFIII module mappings were informed by [SF3Tools](https://github.com/Synival/sf3tools). Controller mappings use [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB). Rendering and input use [SDL3](https://github.com/libsdl-org/SDL).

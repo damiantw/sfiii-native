@@ -6,6 +6,9 @@
 !/LICENSE
 !/THIRD_PARTY.md
 !/dependencies.json
+!/.github/
+/.github/*
+!/.github/FUNDING.yml
 !/LICENSES/
 /LICENSES/*
 !/LICENSES/saturn-recomp.txt
