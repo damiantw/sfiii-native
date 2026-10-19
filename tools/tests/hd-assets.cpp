@@ -1,0 +1,47 @@
+#include "hd-assets.h"
+#include <cstdio>
+
+int main(int argc,char** argv) {
+    if(argc!=2) return 2;
+    namespace fs=std::filesystem;auto root=fs::path(argv[1]);auto fixture=root/"invented-material";
+    fs::create_directories(fixture);
+    { std::ofstream f(fixture/"asset.txt");f<<"SF3HDASSET1\n1 1\n4 4\n"; }
+    { std::ofstream f(fixture/"original.rgba",std::ios::binary);const char rgba[]={char(248),0,0,char(255)};f.write(rgba,4); }
+    { std::ofstream f(fixture/"replacement.rgba",std::ios::binary);
+      for(int i=0;i<16;++i) { const char rgba[]={0,char(i&1 ? 255 : 0),char(i&1 ? 0 : 255),char(255)};f.write(rgba,4); } }
+    sf3::HdAssets assets;if(assets.load(root.string())!=1) return 3;
+    Frame source;source.w=source.h=2;source.px.assign(4,0xF80000);
+    source.hd=std::make_shared<HdScene>();source.hd->visible={1,0,1,0};
+    auto t=std::make_shared<HdTexture>();t->w=t->h=1;t->rgba={0xFFF80000};
+    HdQuad quad;const float xy[]={0,0,1,0,1,1,0,1};std::copy(xy,xy+8,quad.xy);quad.texture=t;
+    source.hd->quads.push_back(quad);source.hd->effects.resize(4);
+    for(auto& e:source.hd->effects) { e.flags=1;e.ratio=15;e.second=0xFFFFFF; }
+    Frame output;output.w=output.h=8;output.px.assign(64,0xF80000);
+    assets.apply(source,output);
+    if(output.px[0]!=0x7F7FFF || assets.last_pixels()!=32) return 4;
+    for(int y=0;y<8;++y) for(int x=4;x<8;++x) if(output.px[y*8+x]!=0xF80000) return 5;
+    for(auto p:source.px) if(p!=0xF80000) return 6;
+    for(int i=0;i<4;++i) source.hd->quads[0].shade[i*3+1]=8;
+    ++source.hd->geometry;
+    for(auto& e:source.hd->effects) {e.flags|=4;e.offset[0]=-10;}
+    output.px.assign(64,0xF80000);assets.apply(source,output);
+    if(output.px[0]!=0x3A417F) return 7;
+    t->rgba[0]^=1;++source.hd->geometry;output.px.assign(64,0xF80000);assets.apply(source,output);
+    if(assets.last_pixels()) return 8; // Different source bytes must not match.
+    t->rgba[0]^=1;
+    { std::ofstream f(fixture/"asset.txt");f<<"SF3HDASSET1\n1 1\n4 4\n0.333333333 0 0.666666667 1\n"; }
+    if(assets.load(root.string())!=1) return 10;
+    for(auto& e:source.hd->effects) e=HdEffect{};
+    for(auto& s:source.hd->quads[0].shade) s=0;
+    output.px.assign(64,0xF80000);assets.apply(source,output);
+    if(output.px[0]!=0x00FF00) return 11; // Exact atlas region starts at green column.
+    source.hd->quads[0].hflip=true;++source.hd->geometry;output.px.assign(64,0xF80000);assets.apply(source,output);
+    if(output.px[0]!=0x0000FF) return 12;
+    for(auto& coordinate:source.hd->quads[0].xy) coordinate=0;
+    ++source.hd->geometry;
+    output.px.assign(64,0xF80000);assets.apply(source,output);
+    if(assets.last_pixels()) return 13;
+    { std::ofstream f(fixture/"replacement.rgba",std::ios::binary);f<<"truncated"; }
+    if(assets.load(root.string())!=0) return 9;
+    std::puts("PASS: replacement detail, exact original match, native occlusion mask, source immutability, colour calculation, Gouraud, offset/shadow, damaged pack rejection");
+}

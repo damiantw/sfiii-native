@@ -1,0 +1,2610 @@
+diff --git a/runtime/runtime.cmake b/runtime/runtime.cmake
+index ecf1dde..4a9e784 100644
+--- a/runtime/runtime.cmake
++++ b/runtime/runtime.cmake
+@@ -27,6 +27,7 @@ option(SATURN_VDP1_GPL "draw VDP1's shapes by Mednafen's rules, making the build
+ if(SATURN_VDP1_GPL)
+   target_compile_definitions(saturn_machine PRIVATE SATURN_VDP1_GPL=1)
+ endif()
++enable_language(C) # SDL3's Windows package probes CPU architecture with a C file.
+ if(NOT SATURN_NO_SDL)
+   find_package(SDL3 CONFIG)
+ endif()
+@@ -55,7 +56,6 @@ if(SDL3_FOUND)
+ else()
+   add_library(saturn_host OBJECT ${_src}/host/host_null.cpp ${_src}/host/settings.cpp)
+ endif()
+-enable_language(C)
+ set(_m68k ${_rt}/third_party/musashi)
+ add_library(saturn_m68k STATIC
+     ${_m68k}/m68kcpu.c ${_m68k}/m68kops.c ${_m68k}/m68kdasm.c ${_m68k}/softfloat/softfloat.c
+diff --git a/runtime/src/app/main.cpp b/runtime/src/app/main.cpp
+index 566fcfd..bfdb70e 100644
+--- a/runtime/src/app/main.cpp
++++ b/runtime/src/app/main.cpp
+@@ -98,6 +98,13 @@ static int parse_args(SaturnConfig& cfg, bool& launcher, int argc, char** argv)
+         else if (!std::strcmp(a, "--save") && more) cfg.save = argv[++i];
+         else if (!std::strcmp(a, "--vblanks") && more) cfg.stop_vblanks = std::strtoull(argv[++i], nullptr, 10);
+         else if (!std::strcmp(a, "--starts") && more) cfg.stop_starts = std::atoi(argv[++i]);
++        else if (!std::strcmp(a, "--render-scale") && more) {
++            const char* value=argv[++i];
++            if(std::strcmp(value,"1") && std::strcmp(value,"2") && std::strcmp(value,"4")) {
++                std::fprintf(stderr,"--render-scale: 1, 2 or 4\n");return 2;
++            }
++            cfg.render_scale=std::atoi(value);
++        }
+         else if (!std::strcmp(a, "--trace")) cfg.trace = true;
+         else if (!std::strcmp(a, "--peek") && more) cfg.peek = argv[++i];
+         else if (!std::strcmp(a, "--coverage") && more) cfg.coverage = argv[++i];
+diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
+index cb6af72..f87fae5 100644
+--- a/runtime/src/core/core.cpp
++++ b/runtime/src/core/core.cpp
+@@ -4,6 +4,7 @@
+ // swapped in).
+ #include "saturn/sh2.h"
+ #include <cstdio>
++#include <cstdlib>
+ #include <cstring>
+ 
+ alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
+@@ -113,8 +114,17 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+     return lo < m->nfuncs && m->funcs[lo].addr == addr;
+ }
+ 
+-static const int kSlots = 8;
++static const int kSlots = 64;
+ static const SH2Module* g_active[kSlots];
++static uint64_t g_active_heads[kSlots];
++static uint64_t module_head(const SH2Module* m) {
++    uint8_t* p=m ? host(m->base):nullptr;
++    if(!p) return 0;
++    uint64_t hash=14695981039346656037ull;
++    size_t n=m->size<64 ? m->size:64;
++    for(size_t i=0;i<n;++i) hash=(hash^p[i])*1099511628211ull;
++    return hash;
++}
+ 
+ const SH2Module* sh2_identify_containing(uint32_t addr, bool* exact) {
+     const SH2Module* by_entry = nullptr;
+@@ -135,20 +145,31 @@ const SH2Module* sh2_identify_containing(uint32_t addr, bool* exact) {
+ 
+ int sh2_active_slots() { return kSlots; }
+ const SH2Module* sh2_active_slot(int i) { return g_active[i]; }
+-void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m; }
++void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m;g_active_heads[i]=module_head(m); }
+ 
+ void sh2_activate(const SH2Module* m) {
+     for (auto& a : g_active)
+         if (a && a->base < m->base + m->size && m->base < a->base + a->size) a = nullptr;
+-    for (auto& a : g_active)
+-        if (!a) { a = m; return; }
++    for (int i=0;i<kSlots;++i)
++        if (!g_active[i]) {g_active[i]=m;g_active_heads[i]=module_head(m);return;}
+     std::fprintf(stderr, "saturn-recomp: more than %d modules active\n", kSlots);
+ }
+ 
+ SH2Func sh2_lookup(uint32_t addr) {
+     if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;           // code run cache-through
+-    for (const SH2Module* m : g_active) {
++    for (int slot=0;slot<kSlots;++slot) {
++        const SH2Module* m=g_active[slot];
+         if (!m || addr - m->base >= m->size) continue;
++        // Overlay transitions can call an interior export already present in
++        // the old dispatch table. A changed header triggers full-image identity
++        // before trusting that entry. Data-only mutation retains its owner.
++        uint64_t head=module_head(m);
++        if(head!=g_active_heads[slot]) {
++            g_active_heads[slot]=head;
++            bool exact=false;
++            const SH2Module* loaded=sh2_identify_containing(addr,&exact);
++            if(exact && loaded && loaded!=m) {sh2_activate(loaded);return sh2_lookup(addr);}
++        }
+         uint32_t lo = 0, hi = m->nfuncs;
+         while (lo < hi) {
+             uint32_t mid = (lo + hi) / 2;
+@@ -185,10 +206,28 @@ static bool inside_loaded_program(uint32_t addr) {
+ 
+ void sh2_call(SH2Context& c, uint32_t addr) {
+     if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;
+-    if (SH2_UNLIKELY(is_base(addr)) && !inside_loaded_program(addr)) {
++    static const char* probe = std::getenv("SF3_CALL_ADDRESS");
++    static const char* path = std::getenv("SF3_CALL_DUMP");
++    static const uint32_t probe_addr = probe ? std::strtoul(probe, nullptr, 16) : 0;
++    if (probe && path && addr == probe_addr) {
++        if (FILE* dump = std::fopen(path, "wb")) {
++            std::fwrite(g_wram_h, 1, 0x100000, dump);
++            std::fclose(dump);
++            std::fprintf(stderr, "call probe %08X pr=%08X r4=%08X r5=%08X sp=%08X gbr=%08X\n", addr, c.pr, c.r[4], c.r[5], c.r[15], c.gbr);
++        }
++    }
++    if (SH2_UNLIKELY(is_base(addr))) {
+         const SH2Module* m = sh2_identify(addr);
++        // A returning module may have changed its data since exact activation.
++        // Keep calls to its base consistent with calls to its other entries.
++        if (!m)
++            for (const SH2Module* active : g_active)
++                if (active && active->base == addr && active->callable_entry && has_entry(active, addr)) {
++                    m = active;
++                    break;
++                }
+         if (m && m->callable_entry) sh2_activate(m);
+-        else { sh2_program_start(c, addr); return; }
++        else if (m || !inside_loaded_program(addr)) { sh2_program_start(c, addr); return; }
+     }
+     if (SH2Func f = sh2_lookup(addr)) f(c);
+     else sh2_call_unknown(c, addr);
+diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
+index feded39..7f17773 100644
+--- a/runtime/src/host/host.cpp
++++ b/runtime/src/host/host.cpp
+@@ -42,6 +42,14 @@
+ #include <chrono>
+ #include <cstring>
+ #include <map>
++#ifdef SF3_CONTROLLER_SUPPORT
++#include "controllers.h"
++#include "audio-buffer.h"
++#include "replay-checkpoint.h"
++#include "gpu-renderer.h"
++#include <fstream>
++#include <stdexcept>
++#endif
+ 
+ static SDL_Window* g_win;
+ static PadSlots g_slots(kHostSlots);
+@@ -50,19 +58,38 @@ static SDL_Texture* g_tex;
+ static int g_tex_w, g_tex_h;
+ static uint16_t g_buttons[kHostSlots];
+ static const Frame* g_last;
++#ifdef SF3_CONTROLLER_SUPPORT
++static sf3::GpuRenderer g_gpu;
++static bool g_gpu_active=false;
++static SDL_Texture* g_gpu_tex;
++static bool g_gpu_wide=false;
++static std::chrono::steady_clock::time_point g_perf_begin,g_perf_end;
++static uint64_t g_perf_first=0,g_perf_last=0,g_perf_fields=0;
++static int g_perf_empty_base=0;
++static void upload_frame(const Frame& f);
++#endif
+ using Clock = PaceClock;
+ static Clock::time_point g_base;                // host time of virtual time 0
+ static bool g_paced;
++static bool gpu_offscreen() {return std::getenv("SF3_GPU_OFFSCREEN")!=nullptr;}
+ 
+ bool host_wants_frame() { return g_win && (!sat_resuming() || sat_vblanks() % 30 == 0); }
+ uint16_t host_pad(int slot) { return g_buttons[slot]; }
+-bool host_pad_connected(int slot) { return g_win && (slot == 0 || g_slots.taken(slot)); }
++bool host_pad_connected(int slot) {
++#ifdef SF3_CONTROLLER_SUPPORT
++    if (sf3::single_player_controllers()) return g_win && slot == 0;
++#endif
++    return g_win && (slot == 0 || g_slots.taken(slot));
++}
+ 
+ static void virtual_open();
+ static bool g_touchscreen;                      // a touchscreen is there, or a finger has been seen
+ 
+ // ---- the settings (settings.h) -----------------------------------------------------------------
+ static Settings g_settings;
++#ifdef SF3_CONTROLLER_SUPPORT
++
++#endif
+ static std::string g_settings_path, g_settings_text;     // the file and its text, which a save writes over
+ static void bind_keyboard();
+ 
+@@ -91,6 +118,25 @@ static void load_settings(const std::string& named) {
+             for (auto& p : problems) sat_note("%s, so its default", p.c_str());
+         }
+     }
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(const char* root=std::getenv("SF3_CONTROLLER_DIR")) {
++        bool found=false;auto text=settings_load(std::string(root)+"/render-resolution.ini",found);
++        if(found) {
++            Settings prefs;std::vector<std::string> issues;prefs.read(text,issues);
++            if(issues.empty())g_settings.set("display","internal_scale",prefs.get("display","internal_scale"));
++        }
++    }
++    if(g_cfg.render_scale)g_settings.set("display","internal_scale",std::to_string(g_cfg.render_scale));
++    if(const char* root=std::getenv("SF3_CONTROLLER_DIR")) {
++        bool found=false;auto text=settings_load(std::string(root)+"/aspect-ratio.ini",found);
++        if(found) {Settings prefs;std::vector<std::string> issues;prefs.read(text,issues);
++            if(issues.empty())g_settings.set("display","aspect",prefs.get("display","aspect"));}
++    }
++    if(const char* mode=std::getenv("SF3_WIDESCREEN"))g_settings.set("display","aspect",std::strcmp(mode,"1")==0?"16:9":"4:3");
++    vdp1_widescreen(g_settings.get("display","aspect")=="16:9");
++    vdp1_render_scale(g_settings.number("display","internal_scale"));
++    vdp1_hd_collect(vdp1_gpu_active());
++#endif
+     bind_keyboard();
+ }
+ 
+@@ -112,7 +158,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
+ 
+ bool host_window(const SaturnConfig& cfg) {
+     if (g_win) return true;
++#ifdef SF3_CONTROLLER_SUPPORT
++    sf3::controller_hints();
++#endif
+     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) { sat_note("SDL: %s", SDL_GetError()); return false; }
++#ifdef SF3_CONTROLLER_SUPPORT
++    sf3::load_controller_mappings();
++#endif
+     load_settings(cfg.settings);
+     int s = cfg.scale > 0 ? cfg.scale : g_settings.number("display", "scale");
+     bool full = cfg.fullscreen || g_settings.flag("display", "fullscreen");
+@@ -121,12 +173,27 @@ bool host_window(const SaturnConfig& cfg) {
+     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+     full = true;
+ #endif
++#ifdef SF3_CONTROLLER_SUPPORT
++    g_win=SDL_CreateWindow("saturn-recomp",320*s,240*s,SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY|(full?SDL_WINDOW_FULLSCREEN:0)|(gpu_offscreen()?SDL_WINDOW_HIDDEN:0));
++    if(g_win && std::strcmp(SDL_GetCurrentVideoDriver(),"dummy")) g_ren=g_gpu.create_renderer(g_win);
++    if(g_win && !g_ren) {sat_note("GPU shader renderer unavailable (%s); using standard SDL presentation",SDL_GetError());g_ren=SDL_CreateRenderer(g_win,nullptr);}
++    if(!g_win || !g_ren) {
++#else
+     if (!SDL_CreateWindowAndRenderer("saturn-recomp", 320 * s, 240 * s, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+                                      (full ? SDL_WINDOW_FULLSCREEN : 0), &g_win, &g_ren)) {
++#endif
+         sat_note("SDL: %s", SDL_GetError());
+         return false;
+     }
+     sat_note("SDL: drawing with %s", SDL_GetRendererName(g_ren));
++#ifdef SF3_CONTROLLER_SUPPORT
++    const char* shader_override=std::getenv("SF3_GPU_SHADER_DIR");
++    std::string shader_dir=shader_override?shader_override:std::string(SDL_GetBasePath())+"shaders";
++    g_gpu_active=g_gpu.initialize(g_ren,shader_dir);
++    vdp1_gpu_available(g_gpu_active);vdp1_hd_collect(vdp1_gpu_active());
++    if(g_gpu_active)sat_note("Geometry GPU: backend=%s, adapter=%s; original textures, no replacement artwork",g_gpu.backend(),g_gpu.adapter());
++    else sat_note("Geometry GPU unavailable: %s; CPU reference fallback",SDL_GetError());
++#endif
+     ui_open(g_ren);
+     // host_pace keeps real time; a present that waited for the display would stall the whole machine
+     // whenever the compositor stops sending frames, as KWin does for a window that is out of sight
+@@ -163,6 +230,10 @@ struct HostCall {
+ static SDL_AudioStream* g_audio;
+ static const int kLead = 2205, kMax = 11025;    // frames: 50 ms ahead, 250 ms at most
+ static int g_underruns, g_dropped;
++static int g_audio_waits;
++#ifdef SF3_CONTROLLER_SUPPORT
++static sf3::AudioBuffer g_audio_buffer;
++#endif
+ 
+ static void audio_silence(int frames) {
+     std::vector<int16_t> z((size_t)frames * 2);
+@@ -174,23 +245,79 @@ bool host_audio_open() {
+     SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, 44100};
+     g_audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+     if (!g_audio) { sat_note("SDL audio: %s (no sound)", SDL_GetError()); return false; }
++#ifdef SF3_CONTROLLER_SUPPORT
++    g_audio_buffer = {};
++    g_underruns = g_dropped = g_audio_waits = 0;
++    sat_note("audio: prebuffer %d frames (100 ms), no silence injection", sf3::AudioBuffer::lead);
++#else
+     audio_silence(kLead);
++#endif
+     SDL_SetAudioStreamGain(g_audio, g_settings.number("audio", "volume") / 100.0f);
++#ifndef SF3_CONTROLLER_SUPPORT
+     SDL_ResumeAudioStreamDevice(g_audio);
++#endif
+     return true;
+ }
+ 
+ void host_audio_push(const int16_t* lr, int frames) {
+-    if (sat_resuming()) return;
+-    int queued = [] { HostCall in("SDL_GetAudioStreamQueued"); return SDL_GetAudioStreamQueued(g_audio) / 4; }();
++    if (sat_resuming() || gpu_offscreen()) return;
++#ifdef SF3_CONTROLLER_SUPPORT
++    if (frames > sf3::AudioBuffer::lead) {
++        for (int offset = 0; offset < frames; offset += sf3::AudioBuffer::lead)
++            host_audio_push(lr + offset * 2, std::min(frames - offset, sf3::AudioBuffer::lead));
++        return;
++    }
++#endif
++    auto queued_frames = [] {
++        HostCall in("SDL_GetAudioStreamQueued");
++        int bytes = SDL_GetAudioStreamQueued(g_audio);
++        return bytes < 0 ? -1 : bytes / 4;
++    };
++    int queued = queued_frames();
++#ifdef SF3_CONTROLLER_SUPPORT
++    // A fast startup can generate audio ahead of the device. Apply bounded
++    // backpressure instead of dropping chunks (which also makes clicks).
++    if (queued >= 0 && !g_audio_buffer.fits(queued, frames)) {
++        ++g_audio_waits;
++        Uint64 deadline = SDL_GetTicks() + 1000;
++        while (queued >= 0 && !g_audio_buffer.fits(queued, frames) && SDL_GetTicks() < deadline) {
++            SDL_Delay(1);
++            queued = queued_frames();
++        }
++    }
++    if (g_audio_buffer.drained(queued)) {
++        ++g_underruns;
++        SDL_PauseAudioStreamDevice(g_audio);
++        if (g_underruns <= 8) sat_note("audio: rebuffer %d at VBlank %llu", g_underruns, (unsigned long long)sat_vblanks());
++    }
++    if (!g_audio_buffer.fits(queued, frames)) {
++        ++g_dropped;
++        if (g_dropped <= 8) sat_note("audio: playback queue unavailable or stalled: %s", SDL_GetError());
++        return;
++    }
++#else
+     if (queued + frames > kMax) { ++g_dropped; return; }
+     if (queued == 0) { ++g_underruns; audio_silence(kLead); }
++#endif
+     HostCall in("SDL_PutAudioStreamData");
+-    SDL_PutAudioStreamData(g_audio, lr, frames * 4);
++    if (!SDL_PutAudioStreamData(g_audio, lr, frames * 4)) {
++        sat_note("audio: cannot queue samples: %s", SDL_GetError());
++        return;
++    }
++#ifdef SF3_CONTROLLER_SUPPORT
++    if (g_audio_buffer.ready(queued + frames)) SDL_ResumeAudioStreamDevice(g_audio);
++#endif
+ }
+ 
+ void host_audio_report() {
+-    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped\n", g_underruns, g_dropped);
++    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped, %d producer waits\n", g_underruns, g_dropped, g_audio_waits);
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(g_perf_fields>1)std::fprintf(stderr,"  presentation profile: %llu fields, %.3f seconds, %.3f fields/sec; %d audio underruns in measured interval; GPU %llu draws, %llu repeated fields reused; %llu native compositions reused; %llu sampled fields\n",
++        (unsigned long long)(g_perf_last-g_perf_first),std::chrono::duration<double>(g_perf_end-g_perf_begin).count(),
++        (g_perf_last-g_perf_first)/std::chrono::duration<double>(g_perf_end-g_perf_begin).count(),
++        g_underruns-g_perf_empty_base,
++        (unsigned long long)g_gpu.submissions(),(unsigned long long)g_gpu.cache_hits(),(unsigned long long)vdp2_cached_fields(),(unsigned long long)(g_perf_fields-1));
++#endif
+ }
+ 
+ // ---- the pad ----------------------------------------------------------------------------------
+@@ -281,6 +408,9 @@ static void read_pads() {
+         if (k[key] && !(alt && key == SDL_SCANCODE_RETURN)) b[0] |= bit;   // Alt+Enter is fullscreen
+     for (auto& p : g_pads) {
+         int s = g_slots.slot_of(p.id);
++#ifdef SF3_CONTROLLER_SUPPORT
++        if (s >= 0 && sf3::single_player_controllers()) s = 0;
++#endif
+         if (s >= 0) b[s] |= gamepad_buttons(p.pad, p.map);
+     }
+     for (int s = 0; s < kHostSlots; ++s) {
+@@ -292,6 +422,7 @@ static void read_pads() {
+ }
+ 
+ static void pad_added(SDL_JoystickID id) {
++    if (std::any_of(g_pads.begin(), g_pads.end(), [id](const OpenPad& p) { return p.id == id; })) return;
+     SDL_Gamepad* pad = SDL_OpenGamepad(id);
+     if (!pad) return;
+     char guid[33];
+@@ -303,7 +434,11 @@ static void pad_added(SDL_JoystickID id) {
+         return;
+     }
+     g_pads.push_back({pad, id, bind_gamepad(guid)});
+-    sat_note("gamepad: %s (GUID %s), player %d", SDL_GetGamepadName(pad), guid, s + 1);
++    int player = s + 1;
++#ifdef SF3_CONTROLLER_SUPPORT
++    if (sf3::single_player_controllers()) player = 1;
++#endif
++    sat_note("gamepad: %s (GUID %s), player %d", SDL_GetGamepadName(pad), guid, player);
+ }
+ 
+ static void pad_removed(SDL_JoystickID id) {
+@@ -329,6 +464,7 @@ void host_rebind() {
+ void host_pad_event(const SDL_Event& e) {
+     if (e.type == SDL_EVENT_GAMEPAD_ADDED) pad_added(e.gdevice.which);
+     if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pad_removed(e.gdevice.which);
++    if (e.type == SDL_EVENT_GAMEPAD_REMAPPED) host_rebind();
+ }
+ 
+ std::vector<HostController> host_controllers() {
+@@ -336,6 +472,9 @@ std::vector<HostController> host_controllers() {
+     std::vector<HostController> out;
+     for (auto& p : g_pads) {
+         int s = g_slots.slot_of(p.id);
++#ifdef SF3_CONTROLLER_SUPPORT
++        if (s >= 0 && sf3::single_player_controllers()) s = 0;
++#endif
+         if (s >= 0) out.push_back({SDL_GetGamepadName(p.pad), s, gamepad_buttons(p.pad, p.map) != 0});
+     }
+     std::sort(out.begin(), out.end(), [](const HostController& a, const HostController& b) { return a.slot < b.slot; });
+@@ -438,7 +577,7 @@ static uint16_t touch_read() {
+ // by as long as it was, so the run is the same run with or without it. A panel of two columns where
+ // the screen is wide enough, the game's choices in one and the touch pad's in the other, each a row:
+ // an action, a choice of a few, a slider, or a switch.
+-enum MenuId { M_RESUME, M_SAVES, M_QUIT, M_PAD, M_SIZE, M_STYLE, M_MENU_BUTTON };
++enum MenuId { M_RESUME, M_SAVES, M_QUIT, M_PAD, M_SIZE, M_STYLE, M_MENU_BUTTON, M_REPLAY_SAVE, M_REPLAY_LOAD, M_CAPTURE, M_RESOLUTION, M_ASPECT };
+ enum class Control { Action, Choice, Slider, Switch };
+ struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
+ struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
+@@ -456,10 +595,16 @@ static void setting_change(const char* key, const char* value) {
+     host_settings_save();
+ }
+ 
+-static int choice_count(MenuId id) { return id == M_PAD ? 3 : 2; }
+-static const char* choice_name(MenuId id, int i) { return id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
++static void resolution_set(int scale);
++static void aspect_set(bool wide);
++static const int kRenderScales[]={1,2,4};
++static const char* kRenderNames[]={"1x","2x","4x"};
++static int choice_count(MenuId id) { return id == M_PAD || id==M_RESOLUTION ? 3 : 2; }
++static const char* choice_name(MenuId id, int i) { return id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
+ 
+ static int choice_at(MenuId id) {
++    if(id==M_ASPECT)return vdp1_widescreen()?1:0;
++    if(id==M_RESOLUTION) {for(int i=0;i<3;++i) if(vdp1_render_scale()==kRenderScales[i]) return i;return 0;}
+     std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
+     for (int i = 0; i < choice_count(id); ++i)
+         if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
+@@ -468,6 +613,8 @@ static int choice_at(MenuId id) {
+ 
+ static void choose(MenuId id, int i) {
+     i = (i + choice_count(id)) % choice_count(id);
++    if(id==M_ASPECT) {aspect_set(i!=0);return;}
++    if(id==M_RESOLUTION) {resolution_set(kRenderScales[i]);return;}
+     setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
+ }
+ 
+@@ -482,6 +629,11 @@ static const char* menu_label(MenuId id) {
+     case M_RESUME: return "Resume";
+     case M_SAVES: return "Save files";
+     case M_QUIT: return "Quit";
++    case M_REPLAY_SAVE: return "Save checkpoint (F5)";
++    case M_REPLAY_LOAD: return "Load checkpoint (F9)";
++    case M_CAPTURE: return "Capture issue (F8)";
++    case M_RESOLUTION: return "Internal resolution";
++    case M_ASPECT: return "Aspect ratio (beta)";
+     case M_PAD: return "Show pad";
+     case M_SIZE: return "Size";
+     case M_STYLE: return "Style";
+@@ -492,6 +644,13 @@ static const char* menu_label(MenuId id) {
+ static MenuLayout menu_layout() {
+     const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 340, between = 24;
+     std::vector<std::pair<MenuId, Control>> game = {{M_RESUME, Control::Action}};
++#ifdef SF3_CONTROLLER_SUPPORT
++    game.push_back({M_REPLAY_SAVE, Control::Action});
++    game.push_back({M_REPLAY_LOAD, Control::Action});
++    game.push_back({M_CAPTURE, Control::Action});
++    game.push_back({M_RESOLUTION, Control::Choice});
++    game.push_back({M_ASPECT, Control::Choice});
++#endif
+     if (!g_cfg.after.empty()) game.push_back({M_SAVES, Control::Action});
+     game.push_back({M_QUIT, Control::Action});
+     const std::vector<std::pair<MenuId, Control>> touch = {
+@@ -527,7 +686,7 @@ static MenuLayout menu_layout() {
+ 
+ // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
+ static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
+-    float w = r.control == Control::Switch ? 52 * l.u : 0.58f * r.r.w;
++    float w = r.control == Control::Switch ? 52 * l.u : ((r.id==M_RESOLUTION || r.id==M_ASPECT) ? 0.46f : 0.58f) * r.r.w;
+     return {r.r.x + r.r.w - w - 10 * l.u, r.r.y + 9 * l.u, w, r.r.h - 18 * l.u};
+ }
+ 
+@@ -563,12 +722,141 @@ static void menu_quit(bool to_saves) {
+ }
+ 
+ // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
++static void replay_action(bool load) {
++#ifdef SF3_CONTROLLER_SUPPORT
++    try {
++        if (sat_resuming()) throw std::runtime_error("Wait for replay to finish first");
++        const char* root = std::getenv("SF3_REPLAY_ROOT");
++        const char* seed = std::getenv("SF3_REPLAY_SEED");
++        if (!root || !seed) throw std::runtime_error("Restart with Launch Native SFIII to enable replay checkpoints");
++        if (!load) {
++            auto saved = sf3_replay::save(root, seed, g_cfg.record_input, sat_vblanks());
++            if (g_last) write_png((saved / "preview.png").string(), *g_last);
++            sat_note("replay checkpoint: saved %s", saved.string().c_str());
++            SDL_SetWindowTitle(g_win, "SFIII native - Replay checkpoint saved (F9 to load)");
++        } else {
++            sf3_replay::request_load(root, seed, g_cfg.out + "/reload-request.txt");
++            sat_note("replay checkpoint: load latest requested");
++            menu_close();
++            sat_stop("replay checkpoint load requested");
++        }
++    } catch (const std::exception& error) {
++        sat_note("replay checkpoint: %s", error.what());
++        SDL_SetWindowTitle(g_win, (std::string("Replay checkpoint: ") + error.what()).c_str());
++    }
++#endif
++}
++
++static void draw(bool present = true);
++
++static void capture_issue() {
++#ifdef SF3_CONTROLLER_SUPPORT
++    try {
++        namespace fs = std::filesystem;
++        auto stamp = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
++        fs::path path = fs::path(g_cfg.out) / "captures" / (std::to_string(stamp) + "-" + std::to_string(sat_vblanks()));
++        fs::create_directories(path);
++        video_capture_debug(path.string());
++        if (g_last) write_png((path / "game.png").string(), *g_last);
++        if(g_last && vdp1_gpu_active()) {
++            Frame enhanced;
++            upload_frame(*g_last);
++            if(g_gpu.capture(enhanced)) {
++                write_png((path/"game-native.png").string(),*g_last);
++                write_png((path/"game.png").string(),enhanced);
++            }
++        }
++        machine_capture_debug(path.string());
++        // Read a freshly rendered backbuffer before presenting; GPU backbuffers may
++        // be discarded after Present. The game texture is unchanged while we do this.
++        draw(false);
++        SDL_Surface* surface = SDL_RenderReadPixels(g_ren, nullptr);
++        if (!surface) throw std::runtime_error(SDL_GetError());
++        SDL_Surface* rgb = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_XRGB8888);
++        SDL_DestroySurface(surface);
++        if (!rgb) throw std::runtime_error(SDL_GetError());
++        Frame window; window.w=rgb->w; window.h=rgb->h; window.px.resize(rgb->w*rgb->h);
++        for (int y=0; y<rgb->h; ++y) std::memcpy(window.px.data()+y*rgb->w, (uint8_t*)rgb->pixels+y*rgb->pitch, rgb->w*4);
++        SDL_DestroySurface(rgb);
++        write_png((path / "window.png").string(), window);
++        for (const char* file : {"session.json", "replay-seed/context.json", "replay-seed/build-id.txt", "replay-seed/disc-id.txt"})
++            if (fs::exists(fs::path(g_cfg.out) / file)) fs::copy_file(fs::path(g_cfg.out) / file, path / fs::path(file).filename());
++        if (!g_cfg.record_input.empty() && fs::exists(g_cfg.record_input)) fs::copy_file(g_cfg.record_input, path / "input.txt");
++        if (!g_settings_path.empty() && fs::exists(g_settings_path)) fs::copy_file(g_settings_path, path / "current-settings.ini");
++        std::ifstream log(fs::path(g_cfg.out) / "run.log", std::ios::binary);
++        if (log) {
++            log.seekg(0, std::ios::end);
++            auto length = log.tellg();
++            log.seekg(std::max(std::streamoff(0), std::streamoff(length)-131072));
++            std::ofstream tail(path / "recent-log.txt", std::ios::binary); tail << log.rdbuf();
++        }
++        std::ofstream info(path / "capture.json");
++        info << "{\"kind\":\"issue-capture\",\"vblank\":" << sat_vblanks() << ",\"virtual_ns\":" << sat_now() << ",\"video_framebuffer\":\"shown\"}\n";
++        info.close();
++        const char* work = std::getenv("SF3_CONTROLLER_DIR");
++        if (work) { std::ofstream pointer(fs::path(work) / "last-capture.txt"); pointer << fs::absolute(path).string(); }
++        sat_note("issue capture: %s", path.string().c_str());
++        SDL_SetWindowTitle(g_win, "SFIII native - Issue captured (images and diagnostics saved)");
++    } catch (const std::exception& error) {
++        sat_note("issue capture: %s", error.what());
++        SDL_SetWindowTitle(g_win, (std::string("Capture failed: ") + error.what()).c_str());
++    }
++#endif
++}
++
++static float replay_bar_scale() { return std::min(display_scale(), g_out_w / 704.0f); }
++static float replay_bar_height() {
++#ifdef SF3_CONTROLLER_SUPPORT
++    return 36 * replay_bar_scale();
++#else
++    return 0;
++#endif
++}
++static SDL_FRect replay_bar_button(int i) {
++    float u = replay_bar_scale();
++    return i<4 ? SDL_FRect{(8+i*126)*u,4*u,120*u,28*u}:SDL_FRect{(512+(i-4)*58)*u,4*u,52*u,28*u};
++}
++
++static void resolution_set(int scale) {
++    vdp1_render_scale(scale);
++    g_settings.set("display","internal_scale",std::to_string(vdp1_render_scale()));
++    host_settings_save();
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(const char* root=std::getenv("SF3_CONTROLLER_DIR"))
++        if(!settings_store(std::string(root)+"/render-resolution.ini","[display]\ninternal_scale = "+std::to_string(vdp1_render_scale())+"\n"))
++            sat_note("Internal resolution: could not save preference");
++#endif
++    vdp1_hd_collect(vdp1_gpu_active() && !sat_resuming());
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(g_last)upload_frame(*g_last);
++#endif
++#ifdef SF3_CONTROLLER_SUPPORT
++    sat_note("Internal resolution: %dx, %s geometry; original textures",vdp1_render_scale(),g_gpu_active?"GPU":"CPU reference");
++#endif
++}
++
++static void aspect_set(bool wide) {
++    vdp1_widescreen(wide);
++    g_settings.set("display","aspect",wide?"16:9":"4:3");host_settings_save();
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(const char* root=std::getenv("SF3_CONTROLLER_DIR"))
++        if(!settings_store(std::string(root)+"/aspect-ratio.ini",std::string("[display]\naspect = ")+(wide?"16:9":"4:3")+"\n"))
++            sat_note("Aspect ratio: could not save preference");
++    vdp1_hd_collect(vdp1_gpu_active() && !sat_resuming());
++    if(g_last)upload_frame(*g_last);
++    sat_note("Aspect ratio: %s; expanded world view is experimental; game culling may leave edge gaps",wide?"16:9":"4:3");
++#endif
++}
++
+ static void menu_activate(MenuId id) {
+     switch (id) {
+     case M_RESUME: menu_close(); break;
+     case M_SAVES: menu_quit(true); break;
+     case M_QUIT: menu_quit(false); break;
+-    case M_PAD: case M_STYLE: choose(id, choice_at(id) + 1); break;
++    case M_REPLAY_SAVE: replay_action(false); break;
++    case M_REPLAY_LOAD: replay_action(true); break;
++    case M_CAPTURE: capture_issue(); break;
++    case M_PAD: case M_STYLE: case M_RESOLUTION: case M_ASPECT: choose(id, choice_at(id) + 1); break;
+     case M_SIZE: {
+         int size = g_settings.number("touch", "size") + 10;
+         pad_size_set(size > 200 ? 50 : size);
+@@ -580,7 +868,7 @@ static void menu_activate(MenuId id) {
+ 
+ // Left and right: a step along a choice or the slider, a switch set off or on.
+ static void menu_adjust(MenuId id, int dir) {
+-    if (id == M_PAD || id == M_STYLE) choose(id, choice_at(id) + dir);
++    if (id == M_PAD || id == M_STYLE || id==M_RESOLUTION || id==M_ASPECT) choose(id, choice_at(id) + dir);
+     else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
+     else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
+ }
+@@ -656,8 +944,18 @@ static void on_event(const SDL_Event& e) {
+     case SDL_EVENT_GAMEPAD_REMOVED:
+         pad_removed(e.gdevice.which);
+         break;
++    case SDL_EVENT_GAMEPAD_REMAPPED:
++        host_rebind();
++        break;
+     case SDL_EVENT_KEY_DOWN: {
+         SDL_Scancode k = e.key.scancode;
++#ifdef SF3_CONTROLLER_SUPPORT
++        if (k == SDL_SCANCODE_F8 && !e.key.repeat) { capture_issue(); break; }
++        if ((k == SDL_SCANCODE_F5 || k == SDL_SCANCODE_F9) && !e.key.repeat) {
++            replay_action(k == SDL_SCANCODE_F9);
++            break;
++        }
++#endif
+         if (k == SDL_SCANCODE_F12 && !e.key.repeat) save_shot();
+         if ((k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.mod & SDL_KMOD_ALT))) && !e.key.repeat) {
+             SDL_SetWindowFullscreen(g_win, !(SDL_GetWindowFlags(g_win) & SDL_WINDOW_FULLSCREEN));
+@@ -686,10 +984,19 @@ static void on_event(const SDL_Event& e) {
+         break;
+     }
+     case SDL_EVENT_MOUSE_BUTTON_DOWN:
+-        if (g_menu_open && e.button.which != SDL_TOUCH_MOUSEID) {
++        if (e.button.button == SDL_BUTTON_LEFT && e.button.which != SDL_TOUCH_MOUSEID) {
+             float x = e.button.x, y = e.button.y;
+             SDL_RenderCoordinatesFromWindow(g_ren, e.button.x, e.button.y, &x, &y);
+-            menu_tap(x, y, 0);
++            if (g_menu_open) menu_tap(x, y, 0);
++#ifdef SF3_CONTROLLER_SUPPORT
++            else if (inside(replay_bar_button(0), x, y)) replay_action(false);
++            else if (inside(replay_bar_button(1), x, y)) replay_action(true);
++            else if (inside(replay_bar_button(2), x, y)) capture_issue();
++            else if (inside(replay_bar_button(3), x, y)) menu_open();
++            else if(inside(replay_bar_button(4),x,y))resolution_set(1);
++            else if(inside(replay_bar_button(5),x,y))resolution_set(2);
++            else if(inside(replay_bar_button(6),x,y))resolution_set(4);
++#endif
+         }
+         break;
+     case SDL_EVENT_FINGER_DOWN:
+@@ -894,12 +1201,38 @@ static void draw_catching_up() {
+ }
+ 
+ // The last picture and what goes over it.
+-static void draw() {
++static void draw(bool present) {
+     SDL_GetCurrentRenderOutputSize(g_ren, &g_out_w, &g_out_h);
++    if (g_last && g_last->h>0) {
++        int bar=(int)replay_bar_height(), height=std::max(1,g_out_h-bar);
++        bool wide=false;
++#ifdef SF3_CONTROLLER_SUPPORT
++        wide=vdp1_gpu_active() && g_gpu_wide;
++#endif
++        const int aw=wide?16:4,ah=wide?9:3;
++        int sw=g_out_w, sh=sw*ah/aw;
++        if (sh>height) { sh=height; sw=sh*aw/ah; }
++        int tv=bios_pal() ? std::max(256,g_last->h) : g_last->h;
++        int ph=sh*g_last->h/tv;
++        g_dst={(float)((g_out_w-sw)/2),(float)(bar+(height-ph)/2),(float)sw,(float)ph};
++    }
+     SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 255);
+     SDL_RenderClear(g_ren);
+     SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND);
+     if (g_tex) SDL_RenderTexture(g_ren, g_tex, nullptr, &g_dst);
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(vdp1_gpu_active() && g_gpu_tex) SDL_RenderTexture(g_ren,g_gpu_tex,nullptr,&g_dst);
++#endif
++#ifdef SF3_CONTROLLER_SUPPORT
++    ui_fill_rounded({0, 0, (float)g_out_w, replay_bar_height()}, 0, rgba(0.07f, 0.08f, 0.11f, 1));
++    for (int i=0; i<7; ++i) {
++        auto r = replay_bar_button(i);
++        ui_fill_rounded(r, 5*replay_bar_scale(), i>=4 && vdp1_render_scale()==kRenderScales[i-4] ? rgba(0.22f,0.43f,0.9f,1):rgba(0.18f, 0.22f, 0.3f, 1));
++        ui_text(r.x+r.w/2, r.y+r.h/2, 13*replay_bar_scale(),
++                i == 0 ? "Save checkpoint" : i == 1 ? "Load checkpoint" : i == 2 ? "Capture issue" : i == 3 ? "Menu" : kRenderNames[i-4],
++                rgba(0.95f, 0.96f, 0.98f, 1), true);
++    }
++#endif
+     if (sat_resuming()) draw_catching_up();
+     if (g_menu_open) draw_menu();
+     else {
+@@ -912,8 +1245,10 @@ static void draw() {
+         ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
+     }
+     SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
+-    HostCall in("SDL_RenderPresent");
+-    SDL_RenderPresent(g_ren);
++    if (present) {
++        HostCall in("SDL_RenderPresent");
++        SDL_RenderPresent(g_ren);
++    }
+ }
+ 
+ // The menu, open until it is closed; the game waits.
+@@ -933,36 +1268,76 @@ static void menu_loop() {
+     }
+     g_base += Clock::now() - t;
+     --g_host_paused;
+-    if (g_audio) SDL_ResumeAudioStreamDevice(g_audio);
++    if (g_audio
++#ifdef SF3_CONTROLLER_SUPPORT
++        && g_audio_buffer.playing
++#endif
++    ) SDL_ResumeAudioStreamDevice(g_audio);
+     read_pads();
+ }
+ 
++static void upload_frame(const Frame& f) {
++#ifdef SF3_CONTROLLER_SUPPORT
++    vdp1_hd_collect(vdp1_gpu_active() && !sat_resuming());
++    if(vdp1_gpu_active()) {
++        Frame expanded;g_gpu_wide=vdp1_widescreen() && vdp2_compose_wide(expanded,&f);
++        g_gpu_tex=g_gpu.render(g_gpu_wide?expanded:f,vdp1_render_scale());
++        if(g_gpu_tex)return;
++        sat_note("Geometry GPU render failed: %s; CPU reference fallback",SDL_GetError());
++        g_gpu_active=false;vdp1_gpu_available(false);vdp1_hd_collect(false);
++    }
++#endif
++    if(f.w!=g_tex_w || f.h!=g_tex_h) {
++        if(g_tex)SDL_DestroyTexture(g_tex);
++        g_tex=SDL_CreateTexture(g_ren,SDL_PIXELFORMAT_XRGB8888,SDL_TEXTUREACCESS_STREAMING,f.w,f.h);
++        if(!g_tex)sat_fatal("SDL: cannot create %dx%d texture: %s",f.w,f.h,SDL_GetError());
++        SDL_SetTextureScaleMode(g_tex,SDL_SCALEMODE_LINEAR);g_tex_w=f.w;g_tex_h=f.h;
++    }
++    SDL_UpdateTexture(g_tex,nullptr,f.px.data(),f.w*4);
++}
++
+ static void present(const Frame& f) {
+     g_last = &f;
+-    if (SDL_GetWindowFlags(g_win) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED | SDL_WINDOW_HIDDEN)) {
++    if (!gpu_offscreen() && (SDL_GetWindowFlags(g_win) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED | SDL_WINDOW_HIDDEN))) {
+         events();
+         if (g_menu_open) menu_loop();
+         return;
+     }
+-    if (f.w != g_tex_w || f.h != g_tex_h) {
+-        if (g_tex) SDL_DestroyTexture(g_tex);
+-        g_tex = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, f.w, f.h);
+-        if (!g_tex) sat_fatal("SDL: no %dx%d texture: %s", f.w, f.h, SDL_GetError());
+-        SDL_SetTextureScaleMode(g_tex, SDL_SCALEMODE_LINEAR);
+-        g_tex_w = f.w;
+-        g_tex_h = f.h;
+-    }
+-    SDL_UpdateTexture(g_tex, nullptr, f.px.data(), f.w * 4);
+-    int ww = 0, wh = 0;
+-    SDL_GetCurrentRenderOutputSize(g_ren, &ww, &wh);
+-    // the TV's 4:3 screen, as large as the window allows, centred; a PAL TV
+-    // shows 256 lines, and a 224-line picture has a border above and below
+-    int sw = ww, sh = ww * 3 / 4;
+-    if (sh > wh) { sh = wh; sw = wh * 4 / 3; }
+-    int tv_lines = bios_pal() ? std::max(256, f.h) : f.h;
+-    int ph = sh * f.h / tv_lines;
+-    g_dst = {(float)((ww - sw) / 2), (float)((wh - ph) / 2), (float)sw, (float)ph};
++    // Diagnostic replay can defer GPU work while retaining native draw provenance.
++    if(gpu_offscreen())if(const char* first=std::getenv("SF3_GPU_FIRST_FRAME"))
++        if(sat_vblanks()<std::strtoull(first,nullptr,10)){events();return;}
++    upload_frame(f);
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(const char* from=std::getenv("SF3_PERF_FROM"))if(!sat_resuming() && sat_vblanks()>=std::strtoull(from,nullptr,10)) {
++        auto now=std::chrono::steady_clock::now();
++        if(!g_perf_fields){g_perf_begin=now;g_perf_first=sat_vblanks();g_perf_empty_base=g_underruns;}
++        g_perf_end=now;g_perf_last=sat_vblanks();++g_perf_fields;
++    }
++#endif
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(const char* shot=std::getenv("SF3_GPU_CAPTURE_AT")) if(vdp1_gpu_active() && sat_vblanks()==std::strtoull(shot,nullptr,10)) {
++        Frame result;
++        if(g_gpu.capture(result))write_png(g_cfg.out+"/gpu-shot-"+std::to_string(sat_vblanks())+".png",result);
++        else sat_note("GPU capture failed: %s",SDL_GetError());
++    }
++#endif
++    if(gpu_offscreen()){
++#ifdef SF3_CONTROLLER_SUPPORT
++        // The SDL GPU renderer submits its command buffer at present/readback.
++        // A device wait alone leaves its recording buffer open across frames.
++        Frame completed;if(vdp1_gpu_active() && !g_gpu.capture(completed))sat_fatal("Offscreen GPU completion: %s",SDL_GetError());
++#endif
++        SDL_RenderPresent(g_ren); // Retire GPU frame resources while hidden.
++        events();return;
++    }
+     draw();
++#ifdef SF3_CONTROLLER_SUPPORT
++    // Automated native visual-regression capture, using the same path as F8.
++    static const char* capture_env=std::getenv("SF3_CAPTURE_AT");
++    static const uint64_t capture_at=capture_env ? std::strtoull(capture_env,nullptr,10) : 0;
++    static bool captured=false;
++    if(capture_at && !captured && sat_vblanks()==capture_at) {captured=true;capture_issue();}
++#endif
+     events();
+     if (g_menu_open) menu_loop();
+ }
+@@ -973,7 +1348,7 @@ void host_present(const Frame& f) {
+ }
+ 
+ void host_pace(uint64_t now) {
+-    if (!g_win || !g_paced) return;
++    if (!g_win || !g_paced || gpu_offscreen()) return;
+     if (sat_resuming()) {
+         g_base = Clock::now() - std::chrono::nanoseconds(now);
+         return;
+diff --git a/runtime/src/host/settings.cpp b/runtime/src/host/settings.cpp
+index 15eaa96..f151c9a 100644
+--- a/runtime/src/host/settings.cpp
++++ b/runtime/src/host/settings.cpp
+@@ -16,6 +16,12 @@ static const char kDefaults[] = R"(; saturn-recomp's settings, read when a game
+ fullscreen = false
+ ; the window is 320x240 times this
+ scale = 3
++; VDP1 geometry: 1 (original), 2 or 4. Separate from window size and HD artwork.
++internal_scale = 1
++; 16:9 expands supported world views; game culling at new edges is experimental.
++aspect = 4:3
++; Optional edge-aware 1080p presentation; original assets retain their detail.
++hd = false
+ 
+ [audio]
+ ; percent
+@@ -81,7 +87,7 @@ multitap = 0
+ 
+ // The values a word may take, by key.
+ static const struct { const char* key; const char* values[3]; } kChoices[] = {
+-    {"controls", {"auto", "on", "off"}}, {"style", {"western", "japanese"}}};
++    {"controls", {"auto", "on", "off"}}, {"style", {"western", "japanese"}}, {"internal_scale", {"1","2","4"}}, {"aspect", {"4:3","16:9"}}};
+ 
+ // The range a number may take, by key.
+ static const struct { const char* key; int lo, hi; } kRanges[] = {
+diff --git a/runtime/src/machine/bios.cpp b/runtime/src/machine/bios.cpp
+index 5b42ace..8bd21c1 100644
+--- a/runtime/src/machine/bios.cpp
++++ b/runtime/src/machine/bios.cpp
+@@ -272,15 +272,17 @@ bool bios_call(SH2Context& c, uint32_t addr) {
+ // ---- the backup memory -----------------------------------------------------------------
+ // SBL's BUP interface: BUP_Init (0x06000358) sets 0x06000354 to a table of the
+ // library's functions: +4 SelPart, +8 Format, +12 Stat, +16 Write, +20 Read,
+-// +24 Delete, +28 Dir, +32 Verify, +36 GetDate, +40 SetDate. Only device 0
+-// (the internal memory, 32 KiB in 64-byte blocks) exists. Saves are kept by
+-// name in one file, rewritten whole after each Write and Delete.
+-static const uint32_t kBupSize = 32768, kBupBlock = 64;
++// +24 Delete, +28 Dir, +32 Verify, +36 GetDate, +40 SetDate. Internal memory
++// and a 4-Mbit backup cartridge are exposed. Each device has its own named
++// record container, rewritten after each Write and Delete.
+ struct BupFile { std::string comment; uint8_t language; uint32_t date; std::vector<uint8_t> data; };
+-static std::map<std::string, BupFile> g_bup;
+-static bool g_bup_loaded;
+-static bool g_bup_changed;                           // since the file was last written
+-static std::string g_bup_path;                       // empty: the saves last for the run alone
++struct BupDevice {
++    std::map<std::string, BupFile> files;
++    bool loaded = false, changed = false;
++    std::string path;
++    uint32_t size, block;
++};
++static BupDevice g_bup_devices[2] = {{{}, false, false, {}, 32768, 64}, {{}, false, false, {}, 524288, 512}};
+ 
+ // The user's data directory, by the platform's convention; empty if the environment names none.
+ std::string sat_data_dir() {
+@@ -310,11 +312,12 @@ static std::string default_save(const uint8_t* ip) {
+ }
+ 
+ void bios_select_save(const uint8_t* ip) {
+-    g_bup.clear();
+-    g_bup_loaded = g_bup_changed = false;
+-    g_bup_path = g_cfg.save == "-" ? "" : !g_cfg.save.empty() ? g_cfg.save : default_save(ip);
+-    if (g_bup_path.empty()) sat_note("backup memory: kept for this run alone");
+-    else sat_note("backup memory: %s", g_bup_path.c_str());
++    const std::string path = g_cfg.save == "-" ? "" : !g_cfg.save.empty() ? g_cfg.save : default_save(ip);
++    for (int i = 0; i < 2; ++i) {
++        auto& d = g_bup_devices[i]; d.files.clear(); d.loaded = d.changed = false;
++        d.path = path.empty() ? "" : path + (i ? ".cartridge" : "");
++        sat_note("backup memory device %d: %s", i, d.path.empty() ? "transient" : d.path.c_str());
++    }
+ }
+ 
+ static std::string gstr(uint32_t a, int max) {
+@@ -327,7 +330,8 @@ static std::string gstr(uint32_t a, int max) {
+     return s;
+ }
+ 
+-static void bup_load() {
++static void bup_load(BupDevice& device) {
++    auto& g_bup = device.files; auto& g_bup_loaded = device.loaded; auto& g_bup_path = device.path;
+     if (g_bup_loaded) return;
+     g_bup_loaded = true;
+     if (g_bup_path.empty()) return;
+@@ -338,8 +342,9 @@ static void bup_load() {
+     uint32_t date, size;
+     while (std::fread(name, 1, 12, f) == 12 && std::fread(comment, 1, 11, f) == 11 &&
+            std::fread(&lang, 1, 1, f) == 1 && std::fread(&date, 4, 1, f) == 1 && std::fread(&size, 4, 1, f) == 1) {
++        if (size > device.size) { sat_note("backup memory: invalid record size in %s", g_bup_path.c_str()); break; }
+         BupFile b{std::string(comment, strnlen(comment, 11)), lang, date, std::vector<uint8_t>(size)};
+-        if (size > kBupSize || (size && std::fread(b.data.data(), 1, size, f) != size)) {
++        if (size && std::fread(b.data.data(), 1, size, f) != size) {
+             sat_note("backup memory: %s is damaged after %zu saves; the rest are left out", g_bup_path.c_str(), g_bup.size());
+             break;
+         }
+@@ -349,9 +354,9 @@ static void bup_load() {
+ }
+ 
+ // Written beside the file and renamed over it, so a run that ends partway through leaves the last whole one.
+-void bios_save() {
++static void bup_save_device(BupDevice& device, int id) {
++    auto& g_bup = device.files; auto& g_bup_changed = device.changed; auto& g_bup_path = device.path;
+     if (!g_bup_changed || g_bup_path.empty()) return;
+-    g_bup_changed = false;
+     namespace fs = std::filesystem;
+     std::error_code ec;
+     if (fs::path(g_bup_path).has_parent_path()) fs::create_directories(fs::path(g_bup_path).parent_path(), ec);
+@@ -371,49 +376,66 @@ void bios_save() {
+     ok = std::fclose(f) == 0 && ok;
+     if (ok) fs::rename(tmp, g_bup_path, ec);
+     if (!ok || ec) sat_note("backup memory: cannot write %s", g_bup_path.c_str());
++    else { device.changed = false; }
++    if (ok && !ec && !sat_resuming() && g_cfg.out != "." && !g_cfg.out.empty()) {
++        // A launcher may publish this session's backup after exit. Historical
++        // writes while replaying must never replace the player's newer save.
++        const auto marker = fs::path(g_cfg.out) / (id ? "live-cartridge-save-written.txt" : "live-save-written.txt");
++        if (FILE* f = std::fopen(marker.string().c_str(), "wb")) {
++            std::fprintf(f, "%llu\n", (unsigned long long)sat_vblanks());
++            std::fclose(f);
++        }
++    }
+ }
+ 
++void bios_save() { for (int i=0; i<2; ++i) bup_save_device(g_bup_devices[i], i); }
++
+ static uint32_t days_in(uint32_t y, uint32_t m) {
+     static const uint8_t md[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+     return m == 2 && y % 4 == 0 && (y % 100 || y % 400 == 0) ? 29 : md[(m - 1) % 12];
+ }
+ 
+-static uint32_t blocks(uint32_t size) { return (size + 34 + kBupBlock - 1) / kBupBlock + 1; }
++static uint32_t blocks(uint32_t size, uint32_t block = 64) { return uint32_t((uint64_t(size) + 34 + block - 1) / block + 1); }
+ 
+ // BupDir: filename[12], comment[11], language, date, datasize, blocksize (u16)
+-static void put_dir(uint32_t a, const std::string& name, const BupFile& b) {
++static void put_dir(uint32_t a, const std::string& name, const BupFile& b, uint32_t block) {
+     for (int i = 0; i < 12; ++i) st8(a + i, i < (int)name.size() ? name[i] : 0);
+     for (int i = 0; i < 11; ++i) st8(a + 12 + i, i < (int)b.comment.size() ? b.comment[i] : 0);
+     st8(a + 23, b.language);
+     st32(a + 24, b.date);
+     st32(a + 28, (uint32_t)b.data.size());
+-    st16(a + 32, blocks((uint32_t)b.data.size()));
++    st16(a + 32, blocks((uint32_t)b.data.size(), block));
+ }
+ 
+ static bool bup_call(SH2Context& c, uint32_t k) {
+-    bup_load();
++    for (auto& d : g_bup_devices) bup_load(d);
+     uint32_t r4 = c.r[4], r5 = c.r[5], r6 = c.r[6], r7 = c.r[7];
+     static const char* names[] = {"?", "SelPart", "Format", "Stat", "Write", "Read", "Delete", "Dir",
+                                   "Verify", "GetDate", "SetDate"};
+     sat_trace("BUP_%s(%08X, %08X, %08X, %08X)", k == 0x100 ? "Init" : k < 11 ? names[k] : "?", r4, r5, r6, r7);
++    if (k != 0x100 && k < 9 && r4 > 1) { c.r[0] = k == 7 ? 0 : 1; return true; }
++    auto& device = g_bup_devices[r4 == 1 ? 1 : 0];
++    auto& g_bup = device.files; auto& g_bup_changed = device.changed;
+     uint32_t used = 0;
+-    for (auto& [n, b] : g_bup) used += blocks((uint32_t)b.data.size());
++    for (auto& [n, b] : g_bup) used += blocks((uint32_t)b.data.size(), device.block);
+     switch (k) {
+     case 0x100:                                 // Init(lib, work, BupConfig[3]): {u16 unit id, u16 partitions}
+         st16(r6 + 0, 1); st16(r6 + 2, 1);       // the internal memory
+-        st16(r6 + 4, 0); st16(r6 + 6, 0);       // no cartridge
++        st16(r6 + 4, 2); st16(r6 + 6, 1);       // 4-Mbit backup cartridge
+         st16(r6 + 8, 0); st16(r6 + 10, 0);
+         st32(0x06000354u, kBupTable);
+         return true;
+     case 1: case 2:                             // SelPart(device, part), Format(device)
+-        c.r[0] = r4 == 0 ? 0 : 1;
++        c.r[0] = k == 1 && r5 != 0 ? 1 : 0;
+         return true;
+     case 3: {                                   // Stat(device, datasize, BupStat*)
+-        if (r4 != 0) { c.r[0] = 1; return true; }
+-        uint32_t total = kBupSize / kBupBlock, freeb = total - 2 - used;
+-        st32(r6 + 0, kBupSize); st32(r6 + 4, total); st32(r6 + 8, kBupBlock);
+-        st32(r6 + 12, freeb * kBupBlock); st32(r6 + 16, freeb);
+-        st32(r6 + 20, r5 ? freeb / blocks(r5) : 0);
++        uint32_t total = device.size / device.block, freeb = used < total - 2 ? total - 2 - used : 0;
++        st32(r6 + 0, device.size); st32(r6 + 4, total); st32(r6 + 8, device.block);
++        st32(r6 + 12, freeb * device.block); st32(r6 + 16, freeb);
++        // Zero-length data still has directory/block-chain overhead. Games
++        // query zero here to enumerate usable slots before choosing a save.
++        st32(r6 + 20, freeb / blocks(r5, device.block));
++        sat_note("BUP Stat: device %u, request %u, free %u blocks, fits %u, at %08X, pr %08X", r4, r5, freeb, ld32(r6 + 20), r6, c.pr);
+         c.r[0] = 0;
+         return true;
+     }
+@@ -422,10 +444,12 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+         BupFile b{gstr(r5 + 12, 10), (uint8_t)ld8(r5 + 23), ld32(r5 + 24), {}};
+         uint32_t size = ld32(r5 + 28);
+         if (g_bup.count(name) && r7 != 0) { c.r[0] = 6; return true; }   // exists, and r7 asks to keep it
++        const uint32_t old = g_bup.count(name) ? blocks((uint32_t)g_bup[name].data.size(), device.block) : 0;
++        if (size > device.size || uint64_t(used) - old + blocks(size, device.block) > device.size/device.block - 2) { c.r[0] = 4; return true; }
+         b.data.resize(size);
+         for (uint32_t i = 0; i < size; ++i) b.data[i] = (uint8_t)ld8(r6 + i);
+         g_bup[name] = b;
+-        sat_note("BUP: wrote %s (%u bytes)", name.c_str(), size);
++        sat_note("BUP: wrote %s (%u bytes), device %u", name.c_str(), size, r4);
+         g_bup_changed = true;
+         bios_save();
+         c.r[0] = 0;
+@@ -433,7 +457,7 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+     }
+     case 5: {                                   // Read(device, name, data*)
+         auto it = g_bup.find(gstr(r5, 11));
+-        if (r4 != 0 || it == g_bup.end()) { c.r[0] = 5; return true; }
++        if (it == g_bup.end()) { c.r[0] = 5; return true; }
+         for (size_t i = 0; i < it->second.data.size(); ++i) st8(r6 + (uint32_t)i, it->second.data[i]);
+         c.r[0] = 0;
+         return true;
+@@ -449,10 +473,10 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+         int n = 0;
+         for (auto& [name, b] : g_bup)
+             if (!name.compare(0, pre.size(), pre)) {
+-                if ((uint32_t)n < (r6 & 0xFFFF)) put_dir(r7 + n * 36, name, b);
++                if ((uint32_t)n < (r6 & 0xFFFF)) put_dir(r7 + n * 36, name, b, device.block);
+                 ++n;
+             }
+-        c.r[0] = r4 == 0 ? (uint32_t)n : (uint32_t)-1;
++        c.r[0] = n > int(r6 & 0xFFFF) ? uint32_t(-n) : uint32_t(n);
+         return true;
+     }
+     case 8: {                                   // Verify(device, name, data*)
+@@ -495,16 +519,17 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+ // The saves as the game has them; the file is written as usual when they change.
+ void bios_state(State& s) {
+     s(g_first_read), s(g_pal), s(g_uint), s(g_uipr), s(g_sem);
+-    s(g_bup_loaded), s(g_bup_changed);
+-    uint64_t n = g_bup.size();
+-    s(n);
+-    if (s.loading) g_bup.clear();
+-    auto it = g_bup.begin();
+-    for (uint64_t k = 0; k < n; ++k) {
+-        std::string name;
+-        BupFile b;
+-        if (!s.loading) name = it->first, b = it->second, ++it;
+-        s.str(name), s.str(b.comment), s(b.language), s(b.date), s.vec(b.data);
+-        if (s.loading) g_bup[name] = b;
++    for (auto& device : g_bup_devices) {
++        auto& g_bup = device.files;
++        s(device.loaded), s(device.changed);
++        uint64_t n = g_bup.size(); s(n);
++        if (s.loading) g_bup.clear();
++        auto it = g_bup.begin();
++        for (uint64_t k=0; k<n; ++k) {
++            std::string name; BupFile b;
++            if (!s.loading) name=it->first, b=it->second, ++it;
++            s.str(name), s.str(b.comment), s(b.language), s(b.date), s.vec(b.data);
++            if (s.loading) g_bup[name]=b;
++        }
+     }
+ }
+diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
+index a17d926..efa62cb 100644
+--- a/runtime/src/machine/machine.cpp
++++ b/runtime/src/machine/machine.cpp
+@@ -46,6 +46,7 @@
+ #include <mutex>
+ #include <thread>
+ #include <vector>
++#include <stdexcept>
+ 
+ SaturnConfig g_cfg;
+ SH2Context g_master, g_slave;
+@@ -72,9 +73,26 @@ uint64_t sat_now() {
+ }
+ 
+ static void vprint(const char* tag, const char* fmt, va_list ap) {
+-    std::fprintf(stderr, "[%8.3f %s] ", sat_now() / 1e9, tag);
+-    std::vfprintf(stderr, fmt, ap);
+-    std::fputc('\n', stderr);
++    // --log is intentionally unbuffered for crash diagnostics. Assemble each
++    // line first, so tracing does one file write rather than three per event.
++    char line[2048];
++    int prefix = std::snprintf(line, sizeof line, "[%8.3f %s] ", sat_now() / 1e9, tag);
++    va_list copy;
++    va_copy(copy, ap);
++    int body = std::vsnprintf(line + prefix, sizeof line - prefix, fmt, copy);
++    va_end(copy);
++    if (body < 0) return;
++    size_t length = (size_t)prefix + (size_t)body;
++    if (length < sizeof line) {
++        line[length] = '\n';
++        std::fwrite(line, 1, length + 1, stderr);
++    } else {
++        std::vector<char> full(length + 1);
++        std::memcpy(full.data(), line, (size_t)prefix);
++        std::vsnprintf(full.data() + prefix, (size_t)body + 1, fmt, ap);
++        full[length] = '\n';
++        std::fwrite(full.data(), 1, length + 1, stderr);
++    }
+ }
+ 
+ void sat_trace(const char* fmt, ...) {
+@@ -302,6 +320,36 @@ void sat_fatal(const char* fmt, ...) {
+     va_start(ap, fmt);
+     vprint("FATAL", fmt, ap);
+     va_end(ap);
++    if (const char* path = std::getenv("SF3_RAM_DUMP")) {
++        if (FILE* dump = std::fopen(path, "wb")) {
++            std::fwrite(g_wram_h, 1, 0x100000, dump);
++            std::fclose(dump);
++        }
++    }
++    if (const char* directory = std::getenv("SF3_CRASH_DIR")) {
++        static bool capturing = false;
++        if (!capturing) {
++            capturing = true;
++            std::string base = std::string(directory) + "/";
++            if (FILE* dump = std::fopen((base + "crash-wram-low.bin").c_str(), "wb")) {
++                std::fwrite(g_wram_l, 1, 0x100000, dump);
++                std::fclose(dump);
++            }
++            if (FILE* dump = std::fopen((base + "crash-context.txt").c_str(), "w")) {
++                std::fprintf(dump, "VBlank %llu; virtual ns %llu\n", (unsigned long long)sat_vblanks(),
++                             (unsigned long long)sat_now());
++                for (const SH2Context* cpu : {&g_master, &g_slave}) {
++                    std::fprintf(dump, "CPU %d PC %08X PR %08X SR %03X\n", cpu->cpu, cpu->pc, cpu->pr, sh2_get_sr(*cpu));
++                    for (int i = 0; i < 16; ++i) std::fprintf(dump, "r%d=%08X%s", i, cpu->r[i], i % 4 == 3 ? "\n" : " ");
++                }
++                for (int i = 0; i < sh2_active_slots(); ++i)
++                    if (const SH2Module* module = sh2_active_slot(i))
++                        std::fprintf(dump, "module %s base=%08X size=%u crc=%08X\n", module->name, module->base, module->size, module->crc);
++                std::fclose(dump);
++            }
++            video_capture_crash();
++        }
++    }
+     SH2Context& c = *g_cpu;
+     std::fprintf(stderr, "  cpu %d  pr %08X  pc %08X  sr %03X\n", c.cpu, c.pr, c.pc, sh2_get_sr(c));
+     for (int i = 0; i < 16; ++i) std::fprintf(stderr, "  r%-2d %08X%s", i, c.r[i], i % 4 == 3 ? "\n" : "");
+@@ -316,6 +364,7 @@ void sat_fatal(const char* fmt, ...) {
+         sound_close();                          // a run that ends in an error is the one most worth watching
+         movie_finish();
+     }
++    else if (!closing) host_audio_report();
+     std::fflush(stderr);
+     std::_Exit(1);
+ }
+@@ -490,6 +539,30 @@ static void write_coverage(const std::string& path) {
+     if (e) sat_note("coverage: cannot replace %s: %s", path.c_str(), e.message().c_str());
+ }
+ 
++void machine_capture_debug(const std::string& directory) {
++    for (auto item : {std::pair<const char*, const uint8_t*>{"wram-high.bin", g_wram_h}, {"wram-low.bin", g_wram_l}}) {
++        FILE* f = std::fopen((directory + "/" + item.first).c_str(), "wb");
++        if (!f) throw std::runtime_error("Cannot write captured work RAM");
++        bool ok = std::fwrite(item.second, 1, 0x100000, f) == 0x100000;
++        ok = std::fclose(f) == 0 && ok;
++        if (!ok) throw std::runtime_error("Cannot finish captured work RAM");
++    }
++    FILE* f = std::fopen((directory + "/context.txt").c_str(), "w");
++    if (!f) throw std::runtime_error("Cannot write captured CPU context");
++    std::fprintf(f, "VBlank %llu; virtual ns %llu; slave on %d idle %d\nPC values are last native return PCs.\n",
++                 (unsigned long long)sat_vblanks(), (unsigned long long)sat_now(), g_slave_on, g_slave_idle);
++    for (const SH2Context* cpu : {&g_master, &g_slave}) {
++        std::fprintf(f, "CPU %d PC %08X PR %08X SR %03X GBR %08X VBR %08X\n", cpu->cpu, cpu->pc, cpu->pr, sh2_get_sr(*cpu), cpu->gbr, cpu->vbr);
++        for (int i=0; i<16; ++i) std::fprintf(f, "r%d=%08X%s", i, cpu->r[i], i%4==3 ? "\n" : " ");
++    }
++    for (int i=0; i<sh2_active_slots(); ++i)
++        if (const auto* module = sh2_active_slot(i))
++            std::fprintf(f, "module %s base=%08X size=%u crc=%08X\n", module->name, module->base, module->size, module->crc);
++    std::fclose(f);
++    mmio_log_write(directory + "/hw-log.txt");
++    write_coverage(directory + "/coverage.tsv");
++}
++
+ // --checkpoint SECONDS: coverage written again every SECONDS of the host's time, so a run that is
+ // killed rather than stopped still leaves what it ran.
+ static void checkpoint_due() {
+diff --git a/runtime/src/machine/onchip.cpp b/runtime/src/machine/onchip.cpp
+index 33a2cdd..6b783ff 100644
+--- a/runtime/src/machine/onchip.cpp
++++ b/runtime/src/machine/onchip.cpp
+@@ -151,7 +151,9 @@ static void divide(OnChip& o, bool wide) {
+     int32_t dvsr = (int32_t)rd(o, 0x100, 4);
+     int64_t n = wide ? (int64_t)((uint64_t)rd(o, 0x110, 4) << 32 | rd(o, 0x114, 4)) : (int32_t)rd(o, 0x104, 4);
+     int64_t q, r;
+-    bool ovf = dvsr == 0;
++    // Host signed division cannot represent INT64_MIN / -1. Detect it before
++    // evaluating either / or %, then report the DIVU overflow normally.
++    bool ovf = dvsr == 0 || (n == INT64_MIN && dvsr == -1);
+     if (!ovf) {
+         q = n / dvsr; r = n % dvsr;
+         ovf = q > INT32_MAX || q < INT32_MIN;
+@@ -163,6 +165,9 @@ static void divide(OnChip& o, bool wide) {
+     }
+     wr(o, 0x104, (uint32_t)q, 4); wr(o, 0x114, (uint32_t)q, 4);
+     wr(o, 0x110, (uint32_t)r, 4);
++    // Result shadows remain readable while the next dividend is being prepared.
++    // SGL's matrix routines read the quotient through DVDNTUL at 0x11C.
++    wr(o, 0x118, (uint32_t)r, 4); wr(o, 0x11C, (uint32_t)q, 4);
+     // the unit's registers are mirrored at +0x20
+     for (uint32_t k = 0x100; k < 0x120; k += 4) wr(o, k + 0x20, rd(o, k, 4), 4);
+ }
+@@ -183,7 +188,8 @@ static void dma(OnChip& o, int ch) {
+         if (ts == 3) {
+             for (int k = 0; k < 16; k += 4) st32(dar + (dm ? k : 0), ld32(sar + (sm ? k : 0)));
+             sar += step(sm); dar += step(dm);
+-            i += 3;
++            // n already converts the longword count to 16-byte bursts.
++            // Advancing i by four here again would transfer only a quarter.
+             continue;
+         }
+         uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
+diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
+index 6cbd98f..aca6941 100644
+--- a/runtime/src/machine/saturn.h
++++ b/runtime/src/machine/saturn.h
+@@ -55,6 +55,7 @@ struct SaturnConfig {
+     bool headless = false;          // no window
+     bool fullscreen = false;        // or as the settings say
+     int scale = 0;                  // the window: 320x240 times this; 0: as the settings say
++    int render_scale = 0;           // 0: preference, otherwise internal 1/2/4x
+     std::string settings;           // the player's settings file (host.cpp); "-": none, the defaults; empty: settings.ini
+                                     // in saturn-recomp's directory in the user's data directory
+     std::string wav;                // the run's sound to this file (16-bit stereo, 44 100 Hz)
+@@ -104,6 +105,7 @@ void slave_idle_check(uint32_t ftcsr);   // the slave read its FTCSR: yield if n
+ void slave_kick();                  // SINIT: the slave's input capture, and the CPU to it
+ void master_poll_devices();
+ bool state_slave_busy();            // the slave is on: no dump can be taken (state.cpp)
++void machine_capture_debug(const std::string& directory);
+ 
+ // ---- dumps of the machine (state.cpp; state.h for the parts) ----------------------------------
+ void state_enable();                // the run has safe moments: a game's task switch
+diff --git a/runtime/src/machine/scudsp.cpp b/runtime/src/machine/scudsp.cpp
+index ef4f660..26a52aa 100644
+--- a/runtime/src/machine/scudsp.cpp
++++ b/runtime/src/machine/scudsp.cpp
+@@ -9,9 +9,9 @@
+ //
+ // The DSP runs when PPAF's EX bit is written and stops at END/ENDI (which
+ // also raises the SCU's DSP-end interrupt). Here it runs to its end at
+-// once, in the SH-2's write, and its DMA transfers complete at once, so a
+-// program never waits on T0 and the SH-2 always sees it finished: fine for
+-// a program the CPU starts and polls, which is how SGL-era code uses it.
++// once, in the SH-2's write. DMA data is transferred synchronously, while
++// its busy flag remains observable by DSP instructions until the modeled
++// transfer duration ends. The SH-2 sees the completed DSP program.
+ //
+ // Semantics after Sega's SCU manual (ST-097). In one operation word the ALU
+ // works on the A and P registers as they were, then the X and Y buses move
+@@ -22,6 +22,9 @@
+ #include "saturn.h"
+ #include "state.h"
+ #include <cstring>
++#include <cstdio>
++#include <cstdlib>
++#include <string>
+ 
+ namespace {
+ struct Dsp {
+@@ -68,7 +71,9 @@ static void write_dst(int d, uint32_t v) {
+         g.ram[d][g.ct[d] & 63] = v;
+         g.ct[d] = (g.ct[d] + 1) & 63;
+         return;
+-    case 4: g.rx = (int32_t)v; return;
++    // D1 and MVI can write RX too. Its new product is available to the
++    // following instruction, just as after an X-bus RX write.
++    case 4: g.rx = (int32_t)v; g.mul = (int64_t)g.rx * g.ry; return;
+     case 5: g.p = (int32_t)v; return;               // PL, PH its sign
+     case 6: g.ra0 = v; return;
+     case 7: g.wa0 = v; return;
+@@ -79,14 +84,14 @@ static void write_dst(int d, uint32_t v) {
+     sat_fatal("SCU DSP: destination %X", d);
+ }
+ 
+-static bool cond(uint32_t c) {
++static bool cond(uint32_t c, bool dma_busy = false) {
+     bool r = false;
+     switch (c & 0xF) {
+     case 1: r = g.z; break;
+     case 2: r = g.s; break;
+     case 3: r = g.z || g.s; break;
+     case 4: r = g.c; break;
+-    case 8: r = false; break;                        // T0: DMA is never in progress here
++    case 8: r = dma_busy; break;                     // T0: D0-bus DMA is executing
+     default: sat_fatal("SCU DSP: condition %02X", c);
+     }
+     return c & 0x20 ? r : !r;
+@@ -100,6 +105,9 @@ static void set32(uint32_t r) {
+ }
+ 
+ static void op_alu(uint32_t op) {
++    // The ALU's NOP path bypasses AC, rather than retaining the previous result.
++    // 32-bit operations also retain AC's upper 16 bits. NOP leaves flags alone.
++    g.alu = (uint64_t)g.a & 0xFFFFFFFFFFFFull;
+     uint32_t acl = lo32(g.a), pl = lo32(g.p);
+     switch (op >> 26 & 0xF) {
+     case 0x0: break;
+@@ -159,7 +167,7 @@ static void op_alu(uint32_t op) {
+     if (loaded) g.mul = (int64_t)g.rx * g.ry;
+ }
+ 
+-static void op_dma(uint32_t op) {
++static uint32_t op_dma(uint32_t op) {
+     bool hold = op >> 14 & 1, to_d0 = op >> 12 & 1;
+     int ram = op >> 8 & 7;
+     int bump[4] = {};
+@@ -189,43 +197,82 @@ static void op_dma(uint32_t op) {
+         if (to_d0) g.wa0 += n * add / 4;
+         else g.ra0 += n * add / 4;
+     }
++    return n;
+ }
+ 
+ static void run() {
+-    int delay = -1;                                  // a delay slot's address, or -1
+-    for (long steps = 0; g.ex; ++steps) {
+-        if (steps > 10000000) sat_fatal("SCU DSP: the program at %02X does not end", g.pc);
+-        uint32_t op;
+-        if (delay >= 0) { op = g.prog[delay]; delay = -1; }
+-        else op = g.prog[g.pc++];
+-        switch (op >> 30) {
+-        case 0: op_alu(op); break;
+-        case 1: sat_fatal("SCU DSP: undefined word %08X", op);
+-        case 2: {                                    // MVI
+-            bool doit = op >> 25 & 1 ? cond(op >> 19 & 0x7F) : true;
+-            if (!doit) break;
+-            uint32_t v = op >> 25 & 1 ? (uint32_t)((int32_t)(op << 13) >> 13) : (uint32_t)((int32_t)(op << 7) >> 7);
+-            int d = op >> 26 & 0xF;
+-            if (d == 12) { delay = g.pc; g.top = g.pc; g.pc = v & 0xFF; }
+-            else write_dst(d, v);
++    const Dsp initial=g;
++    uint32_t visits[256]{};
++    // PC addresses the prefetched word, one ahead of the executing instruction.
++    // DMA starts next cycle, after this fetch; program DMA flushes that fetch.
++    uint32_t pending=0, dma=0;
++    int pending_at=-1;
++    bool dma_waiting=false, repeating=false;
++    uint32_t dma_ticks=0;
++    auto advance=[&]() {
++        if(repeating) {
++            if(!g.lop) {repeating=false;++g.pc;}
++            g.lop=(g.lop-1)&0xFFF;
++        } else ++g.pc;
++    };
++    for(long steps=0;g.ex;++steps) {
++        if(steps>10000000) {
++            if(const char* directory=std::getenv("SF3_CRASH_DIR")) {
++                std::string path=std::string(directory)+"/dsp-start.bin";
++                if(FILE* f=std::fopen(path.c_str(),"wb")) {std::fwrite(&initial,sizeof initial,1,f);std::fclose(f);}
++                path=std::string(directory)+"/dsp-stalled.bin";
++                if(FILE* f=std::fopen(path.c_str(),"wb")) {std::fwrite(&g,sizeof g,1,f);std::fclose(f);}
++            }
++            sat_note("SCU DSP initial pc=%02X top=%02X lop=%03X; final pc=%02X top=%02X lop=%03X A=%012llX P=%012llX ALU=%012llX",
++                initial.pc,initial.top,initial.lop,g.pc,g.top,g.lop,(unsigned long long)g.a,(unsigned long long)g.p,(unsigned long long)g.alu);
++            for(int i=0;i<256;++i) if(visits[i]) sat_note("DSP %02X %08X recent visits=%u",i,g.prog[i],visits[i]);
++            sat_fatal("SCU DSP: the program at %02X does not end",g.pc);
++        }
++        uint32_t op=pending;
++        int at=pending_at;
++        pending=g.prog[g.pc];pending_at=g.pc;
++        if(dma_ticks) --dma_ticks;
++        if(dma_waiting) {
++            // Keep the request-start edge and a finite busy interval visible.
++            // This is one DSP cycle per word, not cycle-accurate bus arbitration.
++            dma_ticks=op_dma(dma);dma_waiting=false;
++            if(!(dma>>12&1) && (dma>>8&7)==4) {
++                pending=0;pending_at=-1;g.pc=g.top;
++            }
++        }
++        // Collect only the final stalled window, without a counter store on
++        // every instruction in ordinary programs.
++        if(steps>9998976 && at>=0) ++visits[at];
++        switch(op>>30) {
++        case 0: advance();op_alu(op);break;
++        case 1: sat_fatal("SCU DSP: undefined word %08X",op);
++        case 2: {
++            int d=op>>26&0xF;
++            bool doit=op>>25&1 ? cond(op>>19&0x7F,dma_ticks!=0):true;
++            // An untaken PC write is an ordinary sequential instruction. The
++            // next word is already prefetched and must not be fetched twice.
++            if(d!=12 || !doit) advance();
++            if(!doit) break;
++            uint32_t v=op>>25&1 ? (uint32_t)((int32_t)(op<<13)>>13):(uint32_t)((int32_t)(op<<7)>>7);
++            if(d==12) {g.top=g.pc;g.pc=v&0xFF;}
++            else write_dst(d,v);
+             break;
+         }
+         case 3:
+-            switch (op >> 28 & 3) {
+-            case 0: op_dma(op); break;
+-            case 1:                                  // JMP
+-                if (!(op >> 19 & 0x7F) || cond(op >> 19 & 0x7F)) { delay = g.pc; g.pc = op & 0xFF; }
++            switch(op>>28&3) {
++            case 0: advance();dma=op;dma_waiting=true;break;
++            case 1:
++                advance();
++                if(!(op>>19&0x7F) || cond(op>>19&0x7F,dma_ticks!=0)) g.pc=op&0xFF;
+                 break;
+-            case 2:                                  // BTM / LPS
+-                if (g.lop) {
+-                    --g.lop;
+-                    delay = g.pc;
+-                    g.pc = op >> 27 & 1 ? g.pc - 1 : g.top;
+-                }
++            case 2:
++                if(op>>27&1) {repeating=true;advance();}
++                else if(g.lop) {--g.lop;g.pc=g.top;}
++                else advance();
+                 break;
+-            case 3:                                  // END / ENDI
+-                g.ex = false;
+-                if (op >> 27 & 1) { g.end = true; scu_raise(5); }
++            case 3:
++                advance();g.ex=false;
++                if(op>>27&1) {g.end=true;scu_raise(5);}
+                 break;
+             }
+         }
+diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
+index 8589d33..1ae5872 100644
+--- a/runtime/src/video/vdp1.cpp
++++ b/runtime/src/video/vdp1.cpp
+@@ -38,6 +38,7 @@
+ #include <climits>
+ #include <cmath>
+ #include <cstdlib>
++#include <cstring>
+ #include <unordered_map>
+ 
+ uint8_t g_vdp1_vram[0x80000];
+@@ -54,15 +55,66 @@ static bool g_change_pending, g_erase_pending, g_erase_field;
+ static bool g_drawing;
+ static uint64_t g_draw_end, g_frame_changes, g_draws;
+ 
++// Host-only companion planes. The native planes remain the CPU-visible truth.
++static int g_render_scale=1;
++static bool g_gpu_available;
++static uint64_t g_presentation_epoch;
++static bool g_widescreen;
++void vdp1_widescreen(bool enabled) {g_widescreen=enabled;}
++bool vdp1_widescreen() {return g_widescreen;}
++bool vdp1_gpu_active() {return g_gpu_available && (g_render_scale>1 || g_widescreen);}
++static bool g_scaled_drawing;
++static std::vector<uint16_t> g_scaled[2];
++static void scaled_store(int plane,int x,int y,uint16_t value) {
++    if(g_gpu_available || g_render_scale==1 || g_scaled[plane].empty()) return;
++    const int width=512*g_render_scale;
++    for(int dy=0;dy<g_render_scale;++dy)
++        std::fill_n(g_scaled[plane].data()+(y*g_render_scale+dy)*width+x*g_render_scale,g_render_scale,value);
++}
++void vdp1_render_scale(int scale) {
++    scale=scale==2 || scale==4 ? scale : 1;
++#if SATURN_VDP1_GPL
++    scale=1; // This companion path belongs to the MIT raster only.
++#endif
++    if(scale==g_render_scale) return;
++    g_render_scale=scale;
++    for(int p=0;p<2;++p) {
++        if(scale==1 || g_gpu_available) {g_scaled[p].clear();continue;}
++        g_scaled[p].resize(size_t(512)*256*scale*scale);
++        for(int y=0;y<256;++y) for(int x=0;x<512;++x) scaled_store(p,x,y,g_fb[p][y*512+x]);
++    }
++}
++int vdp1_render_scale() { return g_render_scale; }
++void vdp1_gpu_available(bool enabled) {
++    if(enabled==g_gpu_available) return;
++    const int scale=g_render_scale;g_gpu_available=enabled;
++    vdp1_render_scale(1);vdp1_render_scale(scale);
++}
++
+ // the drawing state that outlives a draw
+ static int g_sys_x = 319, g_sys_y = 223;        // system clip: 0..x, 0..y
+ static int g_ux0, g_uy0, g_ux1 = 319, g_uy1 = 223;
+ static int g_local_x, g_local_y;
++static bool g_hd_collect;
++static uint16_t g_hd_owner[2][512*256];
++static HdScene g_hd_scene[2];
++static uint16_t g_hd_current;
++static std::unordered_map<uint64_t,std::shared_ptr<HdTexture>> g_hd_textures;
++
++void vdp1_hd_collect(bool enabled) {
++    if(enabled!=g_hd_collect) {
++        ++g_presentation_epoch;
++        for(auto& plane:g_hd_owner) std::fill(plane,plane+512*256,0);
++        g_hd_scene[0]=HdScene{};g_hd_scene[1]=HdScene{};
++    }
++    g_hd_collect=enabled;
++}
+ 
+ uint64_t vdp1_frame_changes() { return g_frame_changes; }
+ uint64_t vdp1_draws() { return g_draws; }
+ 
+ void vdp1_init() {
++    ++g_presentation_epoch;
+     g_reg[MODR] = 0x1000;                       // version 1
+     g_reg[EDSR] = 0x0002;                       // the last draw has ended
+ }
+@@ -94,6 +146,7 @@ struct Cmd {
+     uint16_t lut[16];
+     Rgb g[4];                                   // A B C D
+ };
++static bool native_sprite_grid(const Cmd& c) { return (c.ctrl&15)==0 && !c.ccb && !c.mon; }
+ 
+ static Rgb rgb_of(uint16_t v) { return {v & 0x1F, v >> 5 & 0x1F, v >> 10 & 0x1F}; }
+ 
+@@ -136,12 +189,65 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+ 
+ static bool g_fb8;                              // 8 bits a pixel (TVMR 1) for this draw
+ 
++static void hd_quad(const Cmd& c,Pt a,Pt b,Pt cc,Pt d) {
++    g_hd_current=0;
++    if(!g_hd_collect || g_target!=g_fb[g_draw_fb] || !c.textured || c.cmode!=5
++       || (c.ccb&3) || c.mesh || c.mon || g_fb8 || g_hi_target || (g_reg[TVMR]&2)) return;
++    auto& scene=g_hd_scene[g_draw_fb];
++    if(scene.quads.size()>=65534) return;
++    uint64_t key=c.srca | (uint64_t(c.w)<<20) | (uint64_t(c.h)<<30)
++                 | (uint64_t(c.colr)<<40) | (uint64_t(c.pmod&0xC0)<<56);
++    auto& texture=g_hd_textures[key];
++    if(!texture) {
++        texture=std::make_shared<HdTexture>(); texture->w=c.w;texture->h=c.h;
++        texture->rgba.resize(c.w*c.h);texture->raw.resize(c.w*c.h);Cmd tc=c;tc.hflip=tc.vflip=false;
++        for(int y=0;y<c.h;++y) for(int x=0;x<c.w;++x) {
++            uint16_t p;bool end;
++            bool shown=texel(tc,x,y,p,end);
++            texture->raw[y*c.w+x]=tw(c.srca+2*(y*c.w+x));
++            texture->rgba[y*c.w+x]=((p&31)<<19)|(((p>>5)&31)<<11)|(((p>>10)&31)<<3)|(shown?0xFF000000u:0);
++        }
++        hd_fingerprint(texture->fingerprint,uint64_t(c.w)<<32|unsigned(c.h));
++        for(auto pixel:texture->rgba) hd_fingerprint(texture->fingerprint,pixel);
++    }
++    HdQuad q;float xy[]={float(a.x),float(a.y),float(b.x),float(b.y),float(cc.x),float(cc.y),float(d.x),float(d.y)};
++    std::copy(xy,xy+8,q.xy);q.hflip=c.hflip;q.vflip=c.vflip;q.texture=texture;
++    q.clip[0]=g_sys_x;q.clip[1]=g_sys_y;q.clip[2]=g_ux0;q.clip[3]=g_uy0;q.clip[4]=g_ux1;q.clip[5]=g_uy1;
++    q.gpu_flags=c.pmod|((c.ctrl&15)<<16);q.gpu_eligible=true;
++    for(auto raw:texture->raw) if(raw && raw!=0x7FFF && !(raw&0x8000)) {q.gpu_eligible=false;break;}
++    if((c.ctrl&15)>=2) {
++        const Pt corners[]={a,b,cc,d};int sign=0;
++        for(int i=0;i<4;++i) {
++            const auto p=corners[i],n=corners[(i+1)%4],nn=corners[(i+2)%4];
++            const int cross=(n.x-p.x)*(nn.y-n.y)-(n.y-p.y)*(nn.x-n.x);
++            if(!cross || (sign && ((cross<0)!=(sign<0)))) q.gpu_eligible=false;
++            if(cross) sign=cross;
++        }
++    }
++    if(c.gouraud) for(int i=0;i<4;++i) {
++        q.shade[i*3]=(c.g[i].r-16)*8.0f;q.shade[i*3+1]=(c.g[i].g-16)*8.0f;q.shade[i*3+2]=(c.g[i].b-16)*8.0f;
++    }
++    hd_fingerprint(scene.fingerprint,texture->fingerprint);
++    hd_fingerprint(scene.fingerprint,unsigned(q.hflip)|(unsigned(q.vflip)<<1));
++    for(float value:q.xy) {uint32_t bits;std::memcpy(&bits,&value,4);hd_fingerprint(scene.fingerprint,bits);}
++    for(float value:q.shade) {uint32_t bits;std::memcpy(&bits,&value,4);hd_fingerprint(scene.fingerprint,bits);}
++    scene.quads.push_back(std::move(q));g_hd_current=(uint16_t)scene.quads.size();
++}
++
+ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g);
+ 
+ // A pixel already inside the clipping, or the framebuffer's edge.
+ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g) {
++    if(g_scaled_drawing) {
++        const int width=512*g_render_scale,height=256*g_render_scale;
++        if(x<0 || y<0 || x>=width || y>=height) return;
++        if(c.mesh && (((x/g_render_scale)^(y/g_render_scale))&1)) return;
++        put(g_scaled[g_draw_fb][y*width+x],c,pix,g);return;
++    }
+     if (x < 0 || y < 0 || x >= (g_fb8 ? 1024 : 512) || y >= (g_hi_target ? 512 : 256)) return;
+     if (c.mesh && ((x ^ y) & 1)) return;
++    if(g_hd_collect && g_target==g_fb[g_draw_fb] && !g_fb8 && !g_hi_target)
++        g_hd_owner[g_draw_fb][y*512+x]=g_hd_current;
+     if (g_hi_target) {
+         uint16_t& h = g_hi_target[y * 1024 + x];
+         if (g_fb8) { if (!c.mon) h = pix & 0xFF; }
+@@ -156,12 +262,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
+         return;
+     }
+     put(g_target[y * 512 + x], c, pix, g);
++    // A normal sprite has an integer, 1:1 texel grid. Expanding its native
++    // samples is exact; reserve subpixel raster work for transformed shapes.
++    if((native_sprite_grid(c) || (c.ctrl&15)>=5) && g_target==g_fb[g_draw_fb]) scaled_store(g_draw_fb,x,y,g_target[y*512+x]);
+ }
+ 
+ static void plot(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g) {
+-    if (x < 0 || y < 0 || x > g_sys_x || y > g_sys_y) return;
++    const int scale=g_scaled_drawing ? g_render_scale : 1;
++    if (x < 0 || y < 0 || x >= (g_sys_x+1)*scale || y >= (g_sys_y+1)*scale) return;
+     if (c.clip) {
+-        bool in = x >= g_ux0 && x <= g_ux1 && y >= g_uy0 && y <= g_uy1;
++        bool in = x >= g_ux0*scale && x < (g_ux1+1)*scale && y >= g_uy0*scale && y < (g_uy1+1)*scale;
+         if (in == c.outside) return;
+     }
+     plot_clipped(c, x, y, pix, g);
+@@ -211,6 +321,7 @@ static uint64_t g_draw_steps;
+ #endif
+ 
+ static void command(const uint8_t* cmd, uint32_t a) {
++    g_hd_current=0;
+     Cmd c{};
+     c.ctrl = cw(cmd, 0);
+     c.pmod = cw(cmd, 4);
+@@ -256,6 +367,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
+     }
+     for (Pt& q : p) { q.x += g_local_x; q.y += g_local_y; }
+     draw_shape(c, cmd, comm, p);
++    if(g_render_scale>1 && !vdp1_gpu_active() && comm<=4 && !native_sprite_grid(c) && g_target==g_fb[g_draw_fb] && !g_fb8 && !g_hi_target && !(g_reg[TVMR]&2)) {
++        const auto steps=g_draw_steps;
++        g_draw_steps=0;g_scaled_drawing=true;
++        draw_shape(c,cmd,comm,p);
++        g_scaled_drawing=false;g_draw_steps=steps;
++    }
+ }
+ 
+ // ---- the frames in between (--interp) -------------------------------------------------------
+@@ -289,6 +406,27 @@ struct RecFrame {
+ static RecFrame g_rec_cur, g_rec_last, g_rec_prev;
+ static uint16_t g_ifb[512 * 256];               // the frame in between
+ static bool g_show_ifb;
++std::shared_ptr<HdScene> vdp1_hd_scene() {
++    if(!g_hd_collect || g_show_ifb || (g_reg[TVMR]&3) || g_hi_on[g_draw_fb^1]) return {};
++    return std::make_shared<HdScene>(g_hd_scene[g_draw_fb^1]);
++}
++
++bool vdp1_presentation_key(std::vector<uint8_t>& key) {
++    key.clear();
++    const int shown=g_draw_fb^1;
++    if(!g_hd_collect || g_show_ifb || (g_reg[TVMR]&3) || g_hi_on[shown])return false;
++    auto append=[&](const void* data,size_t bytes) {auto start=key.size();key.resize(start+bytes);std::memcpy(key.data()+start,data,bytes);};
++    append(g_fb[shown],sizeof g_fb[shown]);append(g_hd_owner[shown],sizeof g_hd_owner[shown]);
++    append(&g_hd_scene[shown].serial,sizeof g_hd_scene[shown].serial);
++    append(&g_hd_scene[shown].fingerprint,sizeof g_hd_scene[shown].fingerprint);
++    append(&g_presentation_epoch,sizeof g_presentation_epoch);
++    const int mode[]={g_reg[TVMR],g_reg[FBCR]&0x1C,g_render_scale,int(g_widescreen)};
++    append(mode,sizeof mode);return true;
++}
++uint16_t vdp1_hd_owner(int x,int y,bool dd) {
++    if(!g_hd_collect || dd || g_show_ifb || (g_reg[TVMR]&3) || x<0 || x>=512 || y<0 || y>=256) return 0;
++    return g_hd_owner[g_draw_fb^1][y*512+x];
++}
+ static uint64_t g_fields;
+ static float g_alpha;
+ static std::vector<uint64_t> g_next_keys;       // vdp1_next_draw_keys: by command address / 32
+@@ -312,6 +450,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
+     return x & 1 ? w & 0xFF : w >> 8;
+ }
+ 
++uint16_t vdp1_scaled_dot(int x,int y,bool dd) {
++    if(g_render_scale==1) return vdp1_dot(x,y,dd);
++    if(dd || g_show_ifb || (g_reg[TVMR]&3) || g_hi_on[g_draw_fb^1])
++        return vdp1_dot(x/g_render_scale,y/g_render_scale,dd);
++    if(x<0 || y<0 || x>=512*g_render_scale || y>=256*g_render_scale) return 0;
++    return g_scaled[g_draw_fb^1][y*(512*g_render_scale)+x];
++}
++
+ static void draw() {
+     g_reg[EDSR] = (uint16_t)(g_reg[EDSR] >> 1 & 1);   // BEF <- CEF, CEF <- 0
+     if ((g_reg[TVMR] & 3) == 3) sat_fatal("VDP1: TVMR %04X (8-bit rotation) is not done", g_reg[TVMR]);
+@@ -320,6 +466,12 @@ static void draw() {
+     g_hi_on[g_draw_fb] = g_reg[FBCR] & 8;
+     g_hi_target = g_hi_on[g_draw_fb] ? g_hi[g_draw_fb] : nullptr;
+     g_dil = g_reg[FBCR] >> 2 & 1;
++    if(g_hd_collect) {
++        g_hd_scene[g_draw_fb]=HdScene{};
++        g_hd_scene[g_draw_fb].serial=g_draws+1;
++        std::fill(g_hd_owner[g_draw_fb],g_hd_owner[g_draw_fb]+512*256,0);
++        g_hd_textures.clear();
++    }
+     RecDraw* rec = nullptr;
+     if (g_cfg.interp) {
+         g_rec_cur.draws.push_back({g_sys_x, g_sys_y, g_ux0, g_uy0, g_ux1, g_uy1, g_local_x, g_local_y, {}});
+@@ -606,7 +758,11 @@ static void erase(int which) {
+     int x0 = (g_reg[EWLR] >> 9 & 0x7F) * 8, y0 = g_reg[EWLR] & 0x1FF;
+     int x1 = (g_reg[EWRR] >> 9 & 0x7F) * 8, y1 = g_reg[EWRR] & 0x1FF;
+     for (int y = y0; y <= y1 && y < 256; ++y)
+-        for (int x = x0; x < x1 && x < 512; ++x) g_fb[which][y * 512 + x] = g_reg[EWDR];
++        for (int x = x0; x < x1 && x < 512; ++x) {
++            g_fb[which][y * 512 + x] = g_reg[EWDR];
++            scaled_store(which,x,y,g_reg[EWDR]);
++            g_hd_owner[which][y*512+x]=0;
++        }
+     if (!g_hi_on[which]) return;
+     bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
+     int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
+@@ -676,16 +832,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+ }
+ 
+ void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
++    // CPU framebuffer uploads have no source texture/geometry provenance.
++    if(g_hd_collect) {
++        g_hd_owner[g_draw_fb][(off>>1)&0x1FFFF]=0;
++        if(size==4) g_hd_owner[g_draw_fb][((off>>1)+1)&0x1FFFF]=0;
++    }
+     uint16_t* fb = g_fb[g_draw_fb];
+-    if (size == 4) { fb[(off >> 1) & 0x1FFFF] = (uint16_t)(v >> 16); fb[((off >> 1) + 1) & 0x1FFFF] = (uint16_t)v; return; }
++    if (size == 4) {
++        fb[(off >> 1) & 0x1FFFF] = (uint16_t)(v >> 16);fb[((off >> 1) + 1) & 0x1FFFF] = (uint16_t)v;
++        for(unsigned i=0;i<2;++i) {const unsigned at=((off>>1)+i)&0x1FFFF;scaled_store(g_draw_fb,at%512,at/512,fb[at]);}
++        return;
++    }
+     uint16_t& w = fb[(off >> 1) & 0x1FFFF];
+     if (size == 2) w = (uint16_t)v;
+     else w = off & 1 ? (uint16_t)((w & 0xFF00) | (v & 0xFF)) : (uint16_t)((w & 0x00FF) | (v & 0xFF) << 8);
++    const unsigned at=(off>>1)&0x1FFFF;scaled_store(g_draw_fb,at%512,at/512,w);
+ }
+ 
+-void vdp1_dump(FILE* f) {
++void vdp1_dump(FILE* f, bool shown) {
+     std::fwrite(g_vdp1_vram, 1, sizeof g_vdp1_vram, f);
+-    for (uint16_t p : g_fb[g_draw_fb]) { uint8_t b[2] = {(uint8_t)(p >> 8), (uint8_t)p}; std::fwrite(b, 1, 2, f); }
++    for (uint16_t p : g_fb[g_draw_fb ^ (shown ? 1 : 0)]) { uint8_t b[2] = {(uint8_t)(p >> 8), (uint8_t)p}; std::fwrite(b, 1, 2, f); }
+     for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
+ }
+ 
+@@ -707,4 +873,6 @@ void vdp1_state(State& s) {
+     s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
+     s(g_draw_end), s(g_frame_changes), s(g_draws);
+     s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
++    if(s.loading && g_render_scale>1) for(int p=0;p<2;++p)
++        for(int y=0;y<256;++y) for(int x=0;x<512;++x) scaled_store(p,x,y,g_fb[p][y*512+x]);
+ }
+diff --git a/runtime/src/video/vdp1_raster.inc b/runtime/src/video/vdp1_raster.inc
+index 15c677f..55ec3b7 100644
+--- a/runtime/src/video/vdp1_raster.inc
++++ b/runtime/src/video/vdp1_raster.inc
+@@ -24,14 +24,19 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+     int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
+     int ends = 0;
+     bool stop = false;
++    int sampled_u = -1;
+     auto pixel = [&](int x, int y, int k) {
+         if (stop) return;
+         uint16_t pix = c.colr;
+         if (c.textured) {
+             bool end;
+             int u = (int)((int64_t)k * c.w / (len + 1));
++            bool first_sample = u != sampled_u;
++            sampled_u = u;
+             if (!texel(c, u, v, pix, end)) {
+-                if (end && ++ends == 2) stop = true;
++                // Expansion and corner coverage reuse a source texel. Count its
++                // end code only when advancing to it, not for every output pixel.
++                if (end && first_sample && ++ends == 2) stop = true;
+                 return;
+             }
+         }
+@@ -77,19 +82,33 @@ static int step_to(int a, int b, int i, int n) {   // a + (b - a) * i / n, round
+ 
+ // the area a pixel can land in: system clipping, and the user clipping inside it
+ static bool outside_clip(const Cmd& c, int x0, int y0, int x1, int y1) {
++    if(g_scaled_drawing) {
++        const int scale=g_render_scale;
++        if(x1<0 || y1<0 || x0>=(std::min(g_sys_x,511)+1)*scale || y0>=(std::min(g_sys_y,255)+1)*scale) return true;
++        return c.clip && !c.outside && (x1<g_ux0*scale || y1<g_uy0*scale || x0>=(g_ux1+1)*scale || y0>=(g_uy1+1)*scale);
++    }
+     if (x1 < 0 || y1 < 0 || x0 > std::min(g_sys_x, g_fb8 ? 1023 : 511) || y0 > std::min(g_sys_y, g_hi_target ? 511 : 255)) return true;
+     return c.clip && !c.outside && (x1 < g_ux0 || y1 < g_uy0 || x0 > g_ux1 || y0 > g_uy1);
+ }
+ 
+ static void quad(const Cmd& c, Pt a, Pt b, Pt cc, Pt d) {
++    if(g_scaled_drawing) {
++        const int maxx=std::max({a.x,b.x,cc.x,d.x}),maxy=std::max({a.y,b.y,cc.y,d.y});
++        for(Pt* p : {&a,&b,&cc,&d}) {
++            const int ex=(c.ctrl&15)<2 && p->x==maxx ? g_render_scale-1 : 0;
++            const int ey=(c.ctrl&15)<2 && p->y==maxy ? g_render_scale-1 : 0;
++            p->x=p->x*g_render_scale+ex;p->y=p->y*g_render_scale+ey;
++        }
++    } else hd_quad(c,a,b,cc,d);
+     if (outside_clip(c, std::min({a.x, b.x, cc.x, d.x}), std::min({a.y, b.y, cc.y, d.y}),
+                      std::max({a.x, b.x, cc.x, d.x}), std::max({a.y, b.y, cc.y, d.y})))
+         return;
+     int left = std::max(std::abs(d.x - a.x), std::abs(d.y - a.y));
+     int right = std::max(std::abs(cc.x - b.x), std::abs(cc.y - b.y));
+     int n = std::max(left, right);
+-    if (n > 2048) return;                       // a shape far off the framebuffer: the chip would spend ages on it
+-    for (int i = 0; i <= n && g_draw_steps < kDrawSteps; ++i) {
++    const int scale=g_scaled_drawing ? g_render_scale : 1;
++    if (n > 2048*scale) return;                       // bound a shape far off the framebuffer
++    for (int i = 0; i <= n && g_draw_steps < kDrawSteps*scale*scale; ++i) {
+         Pt l{step_to(a.x, d.x, i, n), step_to(a.y, d.y, i, n)};
+         Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
+         int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
+diff --git a/runtime/src/video/vdp2.cpp b/runtime/src/video/vdp2.cpp
+index 4c8bcb1..8d81cae 100644
+--- a/runtime/src/video/vdp2.cpp
++++ b/runtime/src/video/vdp2.cpp
+@@ -5,9 +5,10 @@
+ // (1x1 or 2x2 cells, 1- or 2-word pattern names with the supplement, plane
+ // sizes, map offsets, 16/256/2048 colours and RGB) and NBG0/NBG1 in bitmap
+ // mode; NBG0/NBG1's fractional scroll and coordinate increments (zoom);
++// RBG0 parameters A/B, coefficient tables, bitmap/cell maps and screen-over;
+ // the sprite layer from VDP1's framebuffer, including rotation parameter A, every sprite type, palette and
+ // RGB mixed (SPCLMD), with its priorities and colour-calculation ratios;
+-// priorities with the chip's order for ties (sprite, NBG0, NBG1, NBG2,
++// priorities with the chip's order for ties (sprite, RBG0, NBG0, NBG1, NBG2,
+ // NBG3); special priority and special colour calculation by screen or by
+ // character, and colour calculation by the colour's MSB; colour calculation
+ // of the top two layers (the top one's ratio or the second's, or add), with
+@@ -21,13 +22,14 @@
+ // fields' lines (448, 480 or 512), the scroll screens a dot row a line;
+ // shadows (normal, MSB and transparent) on the scroll screens, the back
+ // screen and the sprite itself.
+-// What is not: RBG0 and RBG1 (rotation), line and vertical-cell scroll,
++// What is not: RBG1, window-selected rotation parameters, line and vertical-cell scroll,
+ // mosaic, the sprite window, special priority and colour calculation by dot
+ // (the special function codes), gradation of RBG0, extended colour
+ // calculation, the exclusive resolutions. A register that asks for one of them is noted once.
+ #include "saturn.h"
+ #include "state.h"
+ #include "video.h"
++#include <array>
+ #include <algorithm>
+ #include <cstring>
+ #include <vector>
+@@ -43,8 +45,12 @@ static int32_t signed_bits(uint32_t value, int bits) {
+     return (int32_t)((value & (sign * 2 - 1)) ^ sign) - (int32_t)sign;
+ }
+ 
+-static uint16_t sprite_dot(int x, int y, bool dd) {
+-    if (!(vdp1_reg_read(0, 2) & 2)) return vdp1_dot(x, y, dd);
++static uint16_t sprite_dot(int x, int y, bool dd,int subx=0,int suby=0) {
++    if (!(vdp1_reg_read(0, 2) & 2)) {
++        if(vdp1_gpu_active()) return vdp1_dot(x,y,dd);
++        const int scale=vdp1_render_scale();
++        return vdp1_scaled_dot(x*scale+subx,y*scale+suby,dd);
++    }
+     uint32_t table = (((uint32_t)(reg(0xBC) & 7) << 16 | reg(0xBE)) & ~0x41u) * 2;
+     auto parameter = [&](uint32_t off, int bits, int shift) {
+         return signed_bits(((uint32_t)vw(table + off) << 16 | vw(table + off + 2)) >> shift, bits);
+@@ -100,7 +106,7 @@ struct Pix {
+     bool shade;                                 // an MSB shadow: the sprite dot at half brightness
+ };
+ 
+-enum { L_SPRITE, L_NBG0, L_NBG1, L_NBG2, L_NBG3, L_COUNT };
++enum { L_SPRITE, L_RBG0, L_NBG0, L_NBG1, L_NBG2, L_NBG3, L_COUNT };
+ 
+ // ---- the scroll screens ---------------------------------------------------------------------
+ struct Nbg {
+@@ -267,6 +273,238 @@ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
+     return dot(s, base, px & 7, py & 7, 8, pal, p);
+ }
+ 
++// RBG0 sampling adapted from saturnkit 1b345ef9 (MIT, Samuele Voltan).
++static bool cell_pixel(const Nbg& s, const uint32_t* planes, int side, uint32_t sx, uint32_t sy, Pix& p,
++                       const uint16_t* pnd_over = nullptr) {
++    uint32_t pw = (uint32_t)s.plane_w * 512, ph = (uint32_t)s.plane_h * 512;
++    int cs = s.cell2x2 ? 16 : 8;
++    uint32_t ix = sx % pw, iy = sy % ph;
++    uint32_t pnd_addr = 0;
++    if (!pnd_over) {
++        int pl = (int)(sy / ph) * side + (int)(sx / pw);
++        uint32_t page = (iy / 512) * (uint32_t)s.plane_w + ix / 512;
++        uint32_t cx = (ix % 512) / (uint32_t)cs, cy = (iy % 512) / (uint32_t)cs;
++        uint32_t cpr = 512 / (uint32_t)cs;
++        pnd_addr = planes[pl] + page * s.page_bytes + (cy * cpr + cx) * (s.word1 ? 2 : 4);
++    }
++    uint32_t chr, pal;
++    bool hf, vf;
++    if (s.word1 || pnd_over) {
++        uint16_t w = pnd_over ? *pnd_over : vw(pnd_addr);
++        p.spr = s.supp >> 9 & 1; p.scc = s.supp >> 8 & 1;
++        pal = s.colors == 0 ? (uint32_t)(w >> 12 & 0xF) | (s.supp >> 1 & 0x70) : (uint32_t)(w >> 8 & 0x70);
++        if (!s.cnsm) {
++            hf = w & 0x400; vf = w & 0x800;
++            chr = s.cell2x2 ? ((w & 0x3FFu) << 2) | (s.supp & 3u) | ((s.supp & 0x1Cu) << 10)
++                            : (w & 0x3FFu) | ((s.supp & 0x1Fu) << 10);
++        } else {
++            hf = vf = false;
++            chr = s.cell2x2 ? ((w & 0xFFFu) << 2) | (s.supp & 3u) | ((s.supp & 0x10u) << 10)
++                            : (w & 0xFFFu) | ((s.supp & 0x1Cu) << 10);
++        }
++    } else {
++        uint16_t w0 = vw(pnd_addr), w1 = vw(pnd_addr + 2);
++        hf = w0 & 0x4000; vf = w0 & 0x8000;
++        p.spr = w0 >> 13 & 1; p.scc = w0 >> 12 & 1;
++        pal = w0 & 0x7F;
++        chr = w1 & 0x7FFF;
++    }
++    int px = (int)(ix % (uint32_t)cs), py = (int)(iy % (uint32_t)cs);
++    if (hf) px = cs - 1 - px;
++    if (vf) py = cs - 1 - py;
++    static const uint32_t kCellBytes[] = {32, 64, 128, 128, 256};
++    uint32_t base = chr * 0x20;
++    if (s.cell2x2) base += (uint32_t)((py >> 3) * 2 + (px >> 3)) * kCellBytes[s.colors];
++    return dot(s, base, px & 7, py & 7, 8, pal, p);
++}
++
++// ---- the rotation screen RBG0 -----------------------------------------------------------------
++// Each dot's map coordinates come from rotation parameter A or B (RPMD: A, B, or B where A's
++// coefficient is transparent). A parameter is a table in VRAM (RPTA, A then B 0x80 bytes on):
++// the screen's start (Xst, Yst, Zst) and its steps per line (dXst, dYst) and per dot (dX, dY),
++// the matrix A-F, the viewpoint P, the centre C, the shift M and the scale kx, ky. A coefficient
++// table (KTCTL, KTAOF) may give, per line or per dot, kx and ky, one of them, or Xp, and a
++// transparent bit. The map is 4x4 planes of the parameter's plane size, or a bitmap; outside it
++// (PLSZ's screen-over) it repeats, shows one pattern (OVPNR), or is transparent.
++struct RotParam {
++    Nbg chr;                                    // characters, plane size, the map's pattern names
++    uint32_t plane[16];
++    int32_t xst, yst, zst, dxst, dyst, dx, dy, m[6], px, py, pz, cx, cy, cz, mx, my, kx, ky;
++    uint32_t ka0;                               // KTAOF and KAst, 10 fraction bits
++    int32_t dkast, dkax;
++    bool coef, coef1w;
++    int coef_mode, over;
++    uint16_t over_pn;
++    // on the current line
++    int32_t xsp, ysp, xp, yp, ldx, ldy;
++    uint32_t ka, line_coef;
++};
++
++struct Rbg {
++    bool on;
++    int mode;                                   // RPMD
++    bool crkte, perdot, bank_coef[4];
++    RotParam par[2];
++    uint8_t prio, ratio;
++    bool cc, offset, offset_b;
++};
++
++static int32_t sext(uint32_t v, int bits) { return (int32_t)(v << (32 - bits)) >> (32 - bits); }
++static uint32_t vl(uint32_t a) { return (uint32_t)vw(a) << 16 | vw(a + 2); }
++
++static void setup_rbg(Rbg& r) {
++    r = Rbg{};
++    uint16_t bgon = reg(0x20);
++    r.on = bgon >> 4 & 1;
++    if (!r.on) return;
++    r.mode = reg(0xB0) & 3;
++    uint16_t ramctl = reg(0x0E);
++    r.crkte = ramctl >> 15 & 1;
++    for (int b = 0; b < 4; ++b) {                // which VRAM banks hold coefficients (RDBS), split or not
++        int esb = b & (2 | (ramctl >> (8 + (b >> 1)) & 1));
++        r.bank_coef[b] = r.crkte || (ramctl >> (esb * 2) & 3) == 1;
++        r.perdot |= r.bank_coef[b];
++    }
++    r.prio = (uint8_t)(reg(0xFC) & 7);
++    r.ratio = (uint8_t)(reg(0x10C) & 0x1F);
++    r.cc = reg(0xEC) >> 4 & 1;
++    r.offset = reg(0x110) >> 4 & 1;
++    r.offset_b = reg(0x112) >> 4 & 1;
++    uint16_t chctl = (uint16_t)(reg(0x2A) >> 8), pncr = reg(0x38);
++    uint32_t rpta = ((uint32_t)(reg(0xBC) & 7) << 16 | (reg(0xBE) & 0xFFFE)) * 2 & 0xFFF7C;
++    for (int i = 0; i < 2; ++i) {
++        RotParam& p = r.par[i];
++        Nbg& s = p.chr;
++        s.on = true;
++        s.opaque = bgon >> 12 & 1;
++        s.colors = chctl >> 4 & 7;
++        s.bitmap = i == 0 && (chctl >> 1 & 1);
++        s.cell2x2 = chctl & 1;
++        s.bm_w = 512;
++        s.bm_h = chctl >> 2 & 1 ? 512 : 256;
++        s.bm_pal = (uint16_t)((reg(0x2E) & 7) << 4);
++        s.bm_spr = reg(0x2E) >> 5 & 1;
++        s.bm_scc = reg(0x2E) >> 4 & 1;
++        s.word1 = pncr >> 15 & 1;
++        s.cnsm = pncr >> 14 & 1;
++        s.supp = pncr & 0x3FF;
++        s.caos = (uint32_t)(reg(0xE6) & 7) << 8;
++        int plsz = reg(0x3A) >> (8 + i * 4) & 3;
++        s.plane_w = plsz == 0 ? 1 : 2;
++        s.plane_h = plsz == 3 ? 2 : 1;
++        s.page_bytes = (s.cell2x2 ? 0x800u : 0x2000u) * (s.word1 ? 1 : 2);
++        p.over = reg(0x3A) >> (10 + i * 4) & 3;
++        p.over_pn = reg(0xB8 + i * 2);
++        uint32_t mpof = reg(0x3E) >> (i * 4) & 7, mask = (uint32_t)(s.plane_w * s.plane_h - 1);
++        for (int k = 0; k < 16; ++k) {
++            uint32_t mp = reg(0x50 + i * 0x10 + (k / 2) * 2) >> ((k & 1) * 8) & 0x3F;
++            p.plane[k] = ((mpof << 6 | mp) & ~mask) * s.page_bytes;
++        }
++        s.bm_addr = mpof * 0x20000;
++        uint32_t a = rpta + (uint32_t)i * 0x80;
++        p.xst = sext(vl(a + 0x00) >> 6, 23);
++        p.yst = sext(vl(a + 0x04) >> 6, 23);
++        p.zst = sext(vl(a + 0x08) >> 6, 23);
++        p.dxst = sext(vl(a + 0x0C) >> 6, 13);
++        p.dyst = sext(vl(a + 0x10) >> 6, 13);
++        p.dx = sext(vl(a + 0x14) >> 6, 13);
++        p.dy = sext(vl(a + 0x18) >> 6, 13);
++        for (int k = 0; k < 6; ++k) p.m[k] = sext(vl(a + 0x1C + k * 4) >> 6, 14);
++        p.px = sext(vw(a + 0x34), 14); p.py = sext(vw(a + 0x36), 14); p.pz = sext(vw(a + 0x38), 14);
++        p.cx = sext(vw(a + 0x3C), 14); p.cy = sext(vw(a + 0x3E), 14); p.cz = sext(vw(a + 0x40), 14);
++        p.mx = sext(vl(a + 0x44) >> 6, 24);
++        p.my = sext(vl(a + 0x48) >> 6, 24);
++        p.kx = sext(vl(a + 0x4C), 24);
++        p.ky = sext(vl(a + 0x50), 24);
++        uint16_t ktctl = (uint16_t)(reg(0xB4) >> (i * 8));
++        p.coef = ktctl & 1;
++        p.coef1w = ktctl >> 1 & 1;
++        p.coef_mode = ktctl >> 2 & 3;
++        p.ka0 = ((uint32_t)(reg(0xB6) >> (i * 8) & 7) << 26) + (vl(a + 0x54) >> 6);
++        p.dkast = sext(vl(a + 0x58) >> 6, 20);
++        p.dkax = sext(vl(a + 0x5C) >> 6, 20);
++    }
++}
++
++// a coefficient's address (in words) from its table address (10 fraction bits)
++static uint32_t coef_addr(const Rbg& r, const RotParam& p, uint32_t ka) {
++    uint32_t a = (ka >> 10) << (p.coef1w ? 0 : 1);
++    return a & (r.crkte ? 0x3FFu : 0x3FFFFu);
++}
++
++// a coefficient: bit 31 transparent, bits 23-0 the value (7.16)
++static uint32_t coef_read(const Rbg& r, const RotParam& p, uint32_t addr) {
++    auto word = [&](uint32_t w) -> uint16_t {
++        if (!r.crkte) return vw(w * 2);
++        uint32_t b = (0x800 + w * 2) & 0xFFE;
++        return (uint16_t)(g_vdp2_cram[b] << 8 | g_vdp2_cram[b + 1]);
++    };
++    if (p.coef1w) {
++        uint16_t t = word(addr);
++        return ((uint32_t)sext((uint32_t)t << 6, 21) & 0xFFFFFF) | (uint32_t)(t & 0x8000) << 16;
++    }
++    return (uint32_t)word(addr) << 16 | word(addr + 1);
++}
++
++static void rbg_line(Rbg& r, int y) {
++    for (RotParam& p : r.par) {
++        int64_t x0 = p.xst + (int64_t)p.dxst * y - p.px * 1024, y0 = p.yst + (int64_t)p.dyst * y - p.py * 1024;
++        int64_t z0 = p.zst - p.pz * 1024;
++        p.xsp = (int32_t)((p.m[0] * x0 + p.m[1] * y0 + p.m[2] * z0) >> 10);
++        p.ysp = (int32_t)((p.m[3] * x0 + p.m[4] * y0 + p.m[5] * z0) >> 10);
++        p.xp = p.m[0] * (p.px - p.cx) + p.m[1] * (p.py - p.cy) + p.m[2] * (p.pz - p.cz) + p.cx * 1024 + p.mx;
++        p.yp = p.m[3] * (p.px - p.cx) + p.m[4] * (p.py - p.cy) + p.m[5] * (p.pz - p.cz) + p.cy * 1024 + p.my;
++        p.ldx = (p.m[0] * p.dx + p.m[1] * p.dy) >> 10;
++        p.ldy = (p.m[3] * p.dx + p.m[4] * p.dy) >> 10;
++        p.ka = p.ka0 + (uint32_t)(p.dkast * y);
++        p.line_coef = coef_read(r, p, coef_addr(r, p, p.ka));
++    }
++}
++
++static bool rbg_pixel(const Rbg& r, int x, Pix& out) {
++    int sel = r.mode == 1 ? 1 : 0;              // RPMD 3 (by the rotation-parameter window) is taken as A
++    auto coef_at = [&](int i) {
++        const RotParam& p = r.par[i];
++        if (!r.perdot) return p.line_coef;
++        uint32_t a = coef_addr(r, p, p.ka + (uint32_t)(x * p.dkax));
++        return r.bank_coef[r.crkte ? 0 : (a >> 16) & 3] ? coef_read(r, p, a) : 0u;
++    };
++    uint32_t c = 0;
++    if (r.mode == 2) {
++        c = r.par[0].coef ? coef_at(0) : 0;
++        if (c >> 31) { sel = 1; c = r.par[1].line_coef; }
++    } else if (r.par[sel].coef) {
++        c = coef_at(sel);
++    }
++    const RotParam& p = r.par[sel];
++    int32_t kx = p.kx, ky = p.ky;
++    uint32_t xp = (uint32_t)p.xp;
++    if (p.coef) {
++        if (c >> 31) return false;              // a transparent coefficient
++        int32_t v = sext(c, 24);
++        switch (p.coef_mode) {
++        case 0: kx = ky = v; break;
++        case 1: kx = v; break;
++        case 2: ky = v; break;
++        default: xp = (uint32_t)v << 2; break;
++        }
++    }
++    uint32_t ix = (xp + (uint32_t)(((int64_t)kx * (int32_t)(p.xsp + p.ldx * x)) >> 16)) >> 10;
++    uint32_t iy = ((uint32_t)p.yp + (uint32_t)(((int64_t)ky * (int32_t)(p.ysp + p.ldy * x)) >> 16)) >> 10;
++    const Nbg& s = p.chr;
++    uint32_t mw = s.bitmap ? (uint32_t)s.bm_w : (uint32_t)s.plane_w * 512 * 4;
++    uint32_t mh = s.bitmap ? (uint32_t)s.bm_h : (uint32_t)s.plane_h * 512 * 4;
++    bool outside = false;
++    if (p.over == 3) outside = (ix | iy) & ~511u;
++    else if (p.over) outside = (ix & ~(mw - 1)) || (iy & ~(mh - 1));
++    if (outside && (p.over & 2)) return false;
++    if (s.bitmap) {
++        out.spr = s.bm_spr; out.scc = s.bm_scc;
++        return dot(s, s.bm_addr, (int)(ix & (mw - 1)), (int)(iy & (mh - 1)), s.bm_w, s.bm_pal, out);
++    }
++    return cell_pixel(s, p.plane, 4, ix & (mw - 1), iy & (mh - 1), out, outside ? &p.over_pn : nullptr);
++}
++
+ // ---- the sprite layer -----------------------------------------------------------------------
+ struct SpriteType { int pr_shift, pr_mask, cc_shift, cc_mask, dc_mask; };
+ static const SpriteType kTypes[16] = {
+@@ -367,7 +605,7 @@ static void note_unsupported() {
+     auto once = [&](int i, bool cond, const char* what, uint16_t v) {
+         if (cond && !noted[i]) { noted[i] = fresh = true; sat_note("VDP2: %s (%04X) is not done", what, v); }
+     };
+-    once(0, reg(0x20) & 0x30, "RBG0/RBG1", reg(0x20));
++    once(0, (reg(0x20) & 0x20) || ((reg(0x20) & 0x10) && (reg(0xB0) & 3) == 3), "RBG1 or rotation parameters chosen by window", reg(0x20));
+     once(1, reg(0x9A) & 0x3F3F, "line or vertical cell scroll (SCRCTL)", reg(0x9A));
+     once(2, reg(0x22) & 0xF, "mosaic (MZCTL)", reg(0x22));
+     once(3, (reg(0xD0) | reg(0xD2) | reg(0xD4) | reg(0xD6)) & 0x2020, "the sprite window (WCTL)", reg(0xD0));
+@@ -393,18 +631,37 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
+     return (uint32_t)out;
+ }
+ 
+-void vdp2_compose(Frame& f) {
++static void provenance_hash(Frame& f,size_t at) {
++    if(auto owner=f.hd->visible[at]) {
++        const auto& e=f.hd->effects[at];
++        hd_fingerprint(f.hd->geometry,(uint64_t(at)<<16)|owner);
++        hd_fingerprint(f.hd->fingerprint,(uint64_t(at)<<16)|owner);
++        hd_fingerprint(f.hd->fingerprint,uint64_t(e.second)|(uint64_t(e.ratio)<<32)|(uint64_t(e.flags)<<40));
++        hd_fingerprint(f.hd->fingerprint,uint16_t(e.offset[0])|(uint64_t(uint16_t(e.offset[1]))<<16)|(uint64_t(uint16_t(e.offset[2]))<<32));
++    }
++}
++
++static void compose_frame(Frame& f,bool expand,const Frame* current=nullptr,bool reference_metadata=false) {
+     uint16_t tvmd = reg(0x00);
+     static const int kWidths[4] = {320, 352, 640, 704};
+     int hreso = tvmd & 7;
+     f.w = kWidths[hreso < 4 ? hreso : hreso & 1];
++    f.native_w=f.w;f.origin_x=0;
++    if(expand) {f.w=(f.w*4+2)/3;f.origin_x=(f.w-f.native_w)/2;}
+     bool dd = (tvmd >> 6 & 3) == 3;              // double-density interlace
+     f.h = vdp2_lines() * (dd ? 2 : 1);
++    const int scale=vdp1_gpu_active() ? 1 : vdp1_render_scale();
++    f.w*=scale;f.h*=scale;
+     f.px.assign((size_t)f.w * f.h, 0);
+-    if (!(tvmd & 0x8000)) return;                // display off
++    f.hd.reset();
++    if (!(tvmd & 0x8000)) {if(expand)f=Frame{};return;} // display off
++    if(scale==1) f.hd=vdp1_hd_scene();
++    if(f.hd) { f.hd->geometry=f.hd->fingerprint;f.hd->visible.assign(f.w*f.h,0);f.hd->effects.resize(f.w*f.h); }
+     note_unsupported();
+     Nbg nbg[4];
+     for (int n = 0; n < 4; ++n) setup_nbg(n, nbg[n]);
++    Rbg rbg;
++    setup_rbg(rbg);
+     uint32_t bk = ((uint32_t)(reg(0xAC) & 7) << 16 | reg(0xAE)) * 2;
+     bool bk_lines = reg(0xAC) & 0x8000;
+     bool add = reg(0xEC) >> 8 & 1;
+@@ -420,7 +677,7 @@ void vdp2_compose(Frame& f) {
+     Pix line_colour{};
+     line_colour.ratio = (uint8_t)(reg(0x10E) & 0x1F);
+     uint16_t sfprmd = reg(0xEA), sfccmd = reg(0xEE);
+-    uint8_t wctl[L_COUNT] = {(uint8_t)(reg(0xD4) >> 8), (uint8_t)reg(0xD0), (uint8_t)(reg(0xD0) >> 8),
++    uint8_t wctl[L_COUNT] = {(uint8_t)(reg(0xD4) >> 8), (uint8_t)reg(0xD4), (uint8_t)reg(0xD0), (uint8_t)(reg(0xD0) >> 8),
+                              (uint8_t)reg(0xD2), (uint8_t)(reg(0xD2) >> 8)};
+     uint8_t cc_wctl = (uint8_t)(reg(0xD6) >> 8);
+     uint16_t sdctl = reg(0xE2);
+@@ -428,10 +685,36 @@ void vdp2_compose(Frame& f) {
+     // top or second image of a colour calculation
+     static const int kGradLayer[8] = {L_SPRITE, -1, L_NBG0, -1, L_NBG1, L_NBG2, L_NBG3, -1};
+     int grad = reg(0xEC) & 0x8000 && hreso < 2 && cram_mode() == 0 ? kGradLayer[reg(0xEC) >> 12 & 7] : -1;
++    const bool gpu=vdp1_gpu_active() && f.hd && !dd && !(vdp1_reg_read(0,2)&3) && (reg(0xE0)&0x20) && grad<0;
++    if(expand) {
++        unsigned world=0;if(f.hd)for(const auto& q:f.hd->quads)world+=q.gpu_eligible && ((q.gpu_flags>>16)&15)==2;
++        // Keep movies, flat screens and unsupported video modes at original framing.
++        if(!gpu || scale!=1 || !rbg.on || world<3) {f=Frame{};return;}
++    }
++    if(gpu) f.hd->composition.resize(f.w*f.h);
++    const bool reuse=expand && current && current!=&f && current->origin_x==0 && current->w==f.native_w && current->h==f.h
++        && current->px.size()==size_t(current->w)*current->h && current->hd
++        && current->hd->composition.size()==current->px.size() && current->hd->visible.size()==current->px.size()
++        && current->hd->effects.size()==current->px.size();
+     std::vector<uint32_t> blur(grad >= 0 ? f.w : 0);
+-    for (int y = 0; y < f.h; ++y) {
++    // Backgrounds use native pixel coordinates in this first enhancement.
++    // Cache them once per native row instead of resampling them scale^2 times.
++    std::vector<std::array<Pix,L_COUNT-1>> background_row(scale>1 ? f.w/scale : 0);
++    for (int output_y = 0; output_y < f.h; ++output_y) {
++        const int y=output_y/scale,suby=output_y%scale;
+         int line = dd ? y >> 1 : y;
++        if (rbg.on) rbg_line(rbg, y);
+         Win win[2] = {window_line(0, y, dd), window_line(1, y, dd)};
++        Win floor_win[2] = {win[0], win[1]};
++        if(expand) for(int i=0;i<2;++i) {
++            // A full-viewport outside window clips the rotation floor to 4:3.
++            // Extend only that horizontal viewport boundary, retaining Y ranges,
++            // partial/line-window masks and every native dot's original result.
++            if((wctl[L_RBG0]>>(i*2)&3)==3 && floor_win[i].xs==0 && floor_win[i].xe==f.native_w-1) {
++                floor_win[i].xs=-f.origin_x;
++                floor_win[i].xe=f.w-f.origin_x-1;
++            }
++        }
+         back.rgb = rgb555(vw(bk + (bk_lines ? (uint32_t)line * 2 : 0)));
+         // a table word a line, a line of either field in double-density interlace
+         line_colour.rgb = cram(vw(lc_table + (lc_lines ? (uint32_t)y * 2 : 0)) & 0x7FF, nullptr);
+@@ -439,18 +722,26 @@ void vdp2_compose(Frame& f) {
+             // each dot averaged with the average of the two before it; a dot the screen does not draw is black
+             auto avg = [](uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; };
+             uint32_t prev[2] = {0, 0};
+-            for (int x = 0; x < f.w; ++x) {
++            for (int output_x = 0; output_x < f.w; ++output_x) {
++                const int x=output_x/scale,subx=output_x%scale;
+                 Pix p{};
+-                bool drawn = grad == L_SPRITE ? sprite_pixel(sprite_dot(x, y, dd), p) == S_DOT
++                bool drawn = grad == L_SPRITE ? sprite_pixel(sprite_dot(x, y, dd,subx,suby), p) == S_DOT
+                                               : nbg[grad - L_NBG0].on && nbg_pixel(nbg[grad - L_NBG0], x, y, p);
+                 uint32_t here = drawn ? p.rgb : 0;
+                 if (x == 0) prev[0] = prev[1] = here;
+-                blur[x] = avg(avg(prev[0], prev[1]), here);
++                blur[output_x] = avg(avg(prev[0], prev[1]), here);
+                 prev[0] = prev[1];
+                 prev[1] = here;
+             }
+         }
+-        for (int x = 0; x < f.w; ++x) {
++        for (int output_x = 0; output_x < f.w; ++output_x) {
++            const int x=output_x/scale-f.origin_x,subx=output_x%scale;
++            if(reuse && x>=0 && x<f.native_w) {
++                const size_t src=size_t(y)*current->w+x,dst=size_t(y)*f.w+output_x;
++                f.px[dst]=current->px[src];f.hd->composition[dst]=current->hd->composition[src];
++                f.hd->visible[dst]=current->hd->visible[src];f.hd->effects[dst]=current->hd->effects[src];
++                provenance_hash(f,dst);continue;
++            }
+             Pix l[L_COUNT];
+             int top = -1, second = -1;
+             auto consider = [&](int i) {
+@@ -458,16 +749,32 @@ void vdp2_compose(Frame& f) {
+                 if (top < 0 || l[i].prio > l[top].prio) { second = top; top = i; }
+                 else if (second < 0 || l[i].prio > l[second].prio) second = i;
+             };
+-            // in the order that wins ties: sprite, then NBG0..NBG3
++            // in the order that wins ties: sprite, RBG0, then NBG0..NBG3
+             l[L_SPRITE] = {};
+             uint8_t shadow = 0;                  // the priority of a shadow dot here
+-            if (!windowed(wctl[L_SPRITE], win, x)) {
+-                switch (sprite_pixel(sprite_dot(x, y, dd), l[L_SPRITE])) {
++            if ((!expand || (x>=0 && x<f.native_w)) && !windowed(wctl[L_SPRITE], win, x)) {
++                switch (sprite_pixel(sprite_dot(x, y, dd,subx,suby), l[L_SPRITE])) {
+                 case S_DOT: consider(L_SPRITE); break;
+                 case S_SHADOW: shadow = l[L_SPRITE].prio; l[L_SPRITE] = {}; break;
+                 case S_NONE: break;
+                 }
+             }
++            if(scale>1 && (subx || suby)) {
++                for(int i=1;i<L_COUNT;++i) {l[i]=background_row[x][i-1];consider(i);}
++            } else {
++            Pix& rp = l[L_RBG0];
++            rp = {};
++            if (rbg.on && !windowed(wctl[L_RBG0], floor_win, x) && rbg_pixel(rbg, x, rp)) {
++                rp.prio = rbg.prio;
++                if ((sfprmd >> 8 & 3) == 1) rp.prio = (uint8_t)((rbg.prio & 6) | rp.spr);
++                switch (sfccmd >> 8 & 3) {
++                case 1: rp.cc = rbg.cc && rp.scc; break;
++                case 3: rp.cc = rbg.cc && rp.msb; break;
++                default: rp.cc = rbg.cc; break;
++                }
++                rp.ratio = rbg.ratio; rp.offset = rbg.offset; rp.offset_b = rbg.offset_b;
++                consider(L_RBG0);
++            }
+             for (int n = 0; n < 4; ++n) {
+                 Pix& p = l[L_NBG0 + n];
+                 p = {};
+@@ -485,10 +792,12 @@ void vdp2_compose(Frame& f) {
+                 p.ratio = s.ratio; p.offset = s.offset; p.offset_b = s.offset_b;
+                 consider(L_NBG0 + n);
+             }
++            if(scale>1) for(int i=1;i<L_COUNT;++i) background_row[x][i-1]=l[i];
++            }
+             const Pix& t = top >= 0 ? l[top] : back;
+-            Pix u = top >= 0 && (lnclen >> (top == L_SPRITE ? 5 : top - L_NBG0) & 1) && grad < 0 ? line_colour
++            Pix u = top >= 0 && (lnclen >> (top == L_SPRITE ? 5 : top == L_RBG0 ? 4 : top - L_NBG0) & 1) && grad < 0 ? line_colour
+                   : second >= 0 ? l[second] : back;
+-            if (grad >= 0 && (top == grad || second == grad)) u.rgb = blur[x];
++            if (grad >= 0 && (top == grad || second == grad)) u.rgb = blur[output_x];
+             uint32_t rgb = t.rgb;
+             if (top >= 0 && t.cc && !windowed(cc_wctl, win, x)) {
+                 uint32_t out = 0;
+@@ -504,11 +813,116 @@ void vdp2_compose(Frame& f) {
+             if (t.offset) rgb = apply_offset(rgb, t.offset_b);
+             // A shadow halves the top screen under it when SDCTL enables that screen (bit 5: the back screen).
+             bool shaded = top == L_SPRITE ? t.shade
+-                        : shadow && shadow >= t.prio && (sdctl >> (top >= 0 ? top - L_NBG0 : 5) & 1);
++                        : shadow && shadow >= t.prio && (sdctl >> (top == L_RBG0 ? 4 : top >= 0 ? top - L_NBG0 : 5) & 1);
+             if (shaded) rgb = rgb >> 1 & 0x7F7F7F;
+-            f.px[(size_t)y * f.w + x] = rgb;
++            f.px[(size_t)output_y * f.w + output_x] = rgb;
++            if(gpu) {
++                auto& e=f.hd->composition[size_t(y)*f.w+output_x];
++                e.owner=expand && (x<0 || x>=f.native_w) ? 0:vdp1_hd_owner(x,y,dd);
++                const uint16_t raw=expand && (x<0 || x>=f.native_w) ? 0:sprite_dot(x,y,dd);
++                const bool supported=e.owner && e.owner<=f.hd->quads.size() && f.hd->quads[e.owner-1].gpu_eligible;
++                if(raw && !supported) e.mode=0x100; // Retain native unsupported effects/UI.
++                else {
++                    auto evaluate=[&](bool present,GpuPixel* parameters) {
++                        Pix sp{};sprite_pixel(0x8000,sp);
++                        int a=-1,b=-1;
++                        auto take=[&](int i) {if(!l[i].prio)return;if(a<0 || l[i].prio>l[a].prio){b=a;a=i;}else if(b<0 || l[i].prio>l[b].prio)b=i;};
++                        const Pix saved=l[L_SPRITE];l[L_SPRITE]=sp;
++                        if(present && !windowed(wctl[L_SPRITE],win,x)) take(L_SPRITE);
++                        for(int i=1;i<L_COUNT;++i) take(i);
++                        const Pix& first=a>=0 ? l[a] : back;
++                        const bool line=a>=0 && (lnclen>>(a==L_SPRITE?5:a==L_RBG0?4:a-L_NBG0)&1);
++                        const Pix& next=line ? line_colour : b>=0 ? l[b] : back;
++                        const bool calculation=a>=0 && first.cc && !windowed(cc_wctl,win,x);
++                        uint32_t value=first.rgb;
++                        const int ratio=second_ratio ? next.ratio : first.ratio;
++                        if(calculation) {
++                            value=0;
++                            for(int sh=0;sh<24;sh+=8) {
++                                const unsigned v=first.rgb>>sh&255,u=next.rgb>>sh&255;
++                                value|=(add?std::min(v+u,255u):(v*(31-ratio)+u*(ratio+1))>>5)<<sh;
++                            }
++                        }
++                        if(first.offset) value=apply_offset(value,first.offset_b);
++                        if(parameters) {
++                            parameters->constant=value;parameters->ratio=ratio;
++                            if(a==L_SPRITE) {parameters->mode=calculation ? (add?3:2):1;parameters->constant=next.rgb;}
++                            else if(!line && b==L_SPRITE && calculation) {parameters->mode=add?5:4;parameters->constant=first.rgb;}
++                            if(parameters->mode && first.offset) for(int ch=0;ch<3;++ch) {
++                                unsigned off=(first.offset_b?0x11A:0x114)+ch*2;
++                                parameters->offset[ch]=(int32_t)((uint32_t)(reg(off)&0x1FF)<<23)>>23;
++                            }
++                        }
++                        l[L_SPRITE]=saved;return value;
++                    };
++                    if(reference_metadata) {e.absent=evaluate(false,nullptr);evaluate(true,&e);}
++                    else if(!raw) {
++                        // The native pixel already contains the background without
++                        // a sprite. Only the hypothetical RGB insertion is new work.
++                        e.absent=rgb;evaluate(true,&e);
++                    } else {
++                        // A supported native RGB sprite has exactly the same
++                        // priority/effect attributes as the hypothetical RGB dot.
++                        // Reuse the layer ordering and composition above.
++                        e.absent=evaluate(false,nullptr);e.constant=rgb;
++                        const bool calculation=top>=0 && t.cc && !windowed(cc_wctl,win,x);
++                        const bool line=top>=0 && (lnclen>>(top==L_SPRITE?5:top==L_RBG0?4:top-L_NBG0)&1);
++                        e.ratio=second_ratio?u.ratio:t.ratio;
++                        if(top==L_SPRITE) {e.mode=calculation?(add?3:2):1;e.constant=u.rgb;}
++                        else if(!line && second==L_SPRITE && calculation) {e.mode=add?5:4;e.constant=t.rgb;}
++                        if(e.mode && t.offset)for(int ch=0;ch<3;++ch) {
++                            unsigned off=(t.offset_b?0x11A:0x114)+ch*2;
++                            e.offset[ch]=(int32_t)((uint32_t)(reg(off)&0x1FF)<<23)>>23;
++                        }
++                    }
++                }
++            }
++            if(f.hd && top==L_SPRITE && grad!=L_SPRITE) {
++                f.hd->visible[(size_t)y*f.w+output_x]=vdp1_hd_owner(x,y,dd);
++                auto& e=f.hd->effects[(size_t)y*f.w+output_x];e.second=u.rgb;
++                e.ratio=(uint8_t)(second_ratio ? u.ratio : t.ratio);
++                e.flags=(t.cc && !windowed(cc_wctl,win,x) ? 1 : 0)|(add?2:0)|(shaded?4:0);
++                if(t.offset) for(int ch=0;ch<3;++ch) {
++                    unsigned off=(t.offset_b?0x11A:0x114)+ch*2;
++                    e.offset[ch]=(int16_t)((int32_t)((uint32_t)(reg(off)&0x1FF)<<23)>>23);
++                }
++                provenance_hash(f,(size_t)y*f.w+output_x);
++            }
+         }
+     }
+ }
+ 
+-void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
++static Frame g_cached_frame;
++static std::vector<uint8_t> g_cache_input,g_cache_previous;
++static bool g_cache_valid;
++static uint64_t g_cached_fields;
++static uint64_t g_cache_version,g_wide_cache_version;
++static Frame g_cached_wide;
++uint64_t vdp2_cached_fields() {return g_cached_fields;}
++void vdp2_compose(Frame& f) {
++    // Normal GPU presentation is a pure function of these exact video inputs.
++    // Comparing bytes (not hashes) avoids redoing an unchanged 30 Hz picture
++    // for its second 60 Hz field without weakening cache invalidation.
++    const bool cacheable=vdp1_gpu_active() && !g_cfg.interp && ((reg(0)>>6)&3)!=3 && vdp1_presentation_key(g_cache_input);
++    if(!cacheable) {g_cache_valid=false;compose_frame(f,false);return;}
++    auto append=[&](const void* data,size_t bytes) {auto start=g_cache_input.size();g_cache_input.resize(start+bytes);std::memcpy(g_cache_input.data()+start,data,bytes);};
++    append(g_vdp2_vram,sizeof g_vdp2_vram);append(g_vdp2_cram,sizeof g_vdp2_cram);
++    const size_t regs_at=g_cache_input.size();append(g_vdp2_regs,sizeof g_vdp2_regs);
++    // TVSTAT/HCNT/VCNT report raster timing but are not compositor inputs.
++    // Ignore their changing readback values, while retaining all display controls.
++    for(int off:{4,5,8,9,10,11})g_cache_input[regs_at+off]=0;
++    if(g_cache_valid && g_cache_input==g_cache_previous) {f=g_cached_frame;++g_cached_fields;return;}
++    compose_frame(f,false);g_cached_frame=f;g_cache_previous.swap(g_cache_input);g_cache_valid=true;++g_cache_version;
++}
++void vdp2_compose_reference(Frame& f) {compose_frame(f,false,nullptr,true);}
++bool vdp2_compose_wide(Frame& f,const Frame* current) {
++    const bool same_current=g_cache_valid && current && current!=&f && current->origin_x==0
++        && current->w==g_cached_frame.w && current->h==g_cached_frame.h
++        && current->hd==g_cached_frame.hd && current->px==g_cached_frame.px;
++    if(same_current && g_wide_cache_version==g_cache_version) {f=g_cached_wide;return f.origin_x>0;}
++    compose_frame(f,true,current);
++    if(same_current) {g_cached_wide=f;g_wide_cache_version=g_cache_version;}
++    return f.origin_x>0;
++}
++
++void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
+diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
+index 88d1642..c9182c1 100644
+--- a/runtime/src/video/video.cpp
++++ b/runtime/src/video/video.cpp
+@@ -21,6 +21,7 @@
+ #include <cstring>
+ #include <string>
+ #include <vector>
++#include <stdexcept>
+ 
+ // A line is 1708 cycles of φ at the master clock over 65 (1820 over 61 in 352-dot mode, the same
+ // time), as Mednafen counts it.
+@@ -40,6 +41,7 @@ static void set16(uint8_t* r, uint32_t o, uint16_t v) { r[o] = v >> 8; r[o + 1]
+ 
+ void video_init() {
+     vdp1_init();
++    if(g_cfg.render_scale) vdp1_render_scale(g_cfg.render_scale);
+     if (!host_open()) {                         // the host has said why
+         std::fprintf(stderr, "saturn: no window could be opened; --headless runs without one\n");
+         std::exit(3);
+@@ -58,16 +60,29 @@ static bool listed(const std::string& list, const std::string& item) {
+ }
+ 
+ // --dump: VDP1 VRAM, its draw framebuffer, VDP1's registers, VDP2 VRAM, CRAM and VDP2's registers, one after the other
+-static void dump(const char* prefix, uint64_t n) {
++static bool dump(const char* prefix, uint64_t n, const std::string* directory = nullptr, bool shown = false) {
+     char path[512];
+-    std::snprintf(path, sizeof path, "%s/dump-%s%llu.bin", g_cfg.out.c_str(), prefix, (unsigned long long)n);
++    std::snprintf(path, sizeof path, "%s/dump-%s%llu.bin", directory ? directory->c_str() : g_cfg.out.c_str(), prefix, (unsigned long long)n);
+     FILE* f = std::fopen(path, "wb");
+-    if (!f) return;
+-    vdp1_dump(f);
++    if (!f) return false;
++    vdp1_dump(f, shown);
+     std::fwrite(g_vdp2_vram, 1, sizeof g_vdp2_vram, f);
+     std::fwrite(g_vdp2_cram, 1, sizeof g_vdp2_cram, f);
+     std::fwrite(g_vdp2_regs, 1, sizeof g_vdp2_regs, f);
+-    std::fclose(f);
++    bool ok = !std::ferror(f);
++    return std::fclose(f) == 0 && ok;
++}
++
++void video_capture_debug(const std::string& directory) {
++    if (!dump("", sat_vblanks(), &directory, true)) throw std::runtime_error("Cannot write captured video memory");
++    if (g_frame.w > 0 && g_frame.h > 0 && !g_frame.px.empty())
++        write_png(directory + "/game.png", g_frame);
++}
++
++void video_capture_crash() {
++    dump("crash-", sat_vblanks());
++    if (g_frame.w > 0 && g_frame.h > 0 && !g_frame.px.empty())
++        write_png(g_cfg.out + "/crash-last-frame.png", g_frame);
+ }
+ 
+ static void vblank_in(uint64_t now) {
+@@ -144,6 +159,10 @@ uint32_t video_read(uint32_t a, int size) {
+ 
+ void video_write(uint32_t a, uint32_t v, int size) {
+     if (a < 0x05B01000u) { sound_write(a, v, size); return; }
++    static const bool watch_cram = std::getenv("SF3_CRAM_WATCH") != nullptr;
++    if (watch_cram && a >= 0x05F00800u && a < 0x05F00A00u)
++        sat_note("CRAM watch %08X <- %08X size %d pc %08X pr %08X r4 %08X r5 %08X r6 %08X r7 %08X",
++                 a, v, size, g_cpu->pc, g_cpu->pr, g_cpu->r[4], g_cpu->r[5], g_cpu->r[6], g_cpu->r[7]);
+     uint32_t off;
+     if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
+     if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
+diff --git a/runtime/src/video/video.h b/runtime/src/video/video.h
+index ebaa466..c68e655 100644
+--- a/runtime/src/video/video.h
++++ b/runtime/src/video/video.h
+@@ -6,6 +6,7 @@
+ #include <cstdio>
+ #include <string>
+ #include <vector>
++#include <memory>
+ 
+ // ---- VDP1 (vdp1.cpp) --------------------------------------------------------------------
+ extern uint8_t g_vdp1_vram[0x80000];                 // big-endian, as the bus sees it
+@@ -17,23 +18,49 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
+ void vdp1_vblank_out();                              // erase, frame change, the draw PTMR 2 asks for
+ void vdp1_tick(uint64_t now);                        // the end of a draw
+ uint16_t vdp1_dot(int x, int y, bool dd);           // the sprite dot VDP2 shows at x, line y (dd: double-density, 2 lines a framebuffer line)
++void vdp1_render_scale(int scale);                  // presentation companion; guest framebuffer stays native
++int vdp1_render_scale();
++void vdp1_gpu_available(bool enabled);
++bool vdp1_gpu_active();
++void vdp1_widescreen(bool enabled);
++bool vdp1_widescreen();
++bool vdp1_presentation_key(std::vector<uint8_t>& key); // exact normal-mode shown framebuffer/provenance inputs
++uint16_t vdp1_scaled_dot(int x,int y,bool dd);
+ uint64_t vdp1_frame_changes();
+ uint64_t vdp1_draws();
+-void vdp1_dump(FILE* f);                             // VRAM, the draw framebuffer, the registers
++void vdp1_dump(FILE* f, bool shown = false);          // VRAM, a framebuffer, the registers
+ bool vdp1_interp_field(bool compose);                // --interp: a frame in between for this field?
+ void vdp1_interp_scroll(uint8_t* regs);              // ... and VDP2's scroll registers for it
+ void vdp1_next_draw_keys(std::vector<uint64_t> keys); // --interp: what each command of the next draw is
+ 
+ // ---- VDP2 (vdp2.cpp) --------------------------------------------------------------------
+ extern uint8_t g_vdp2_vram[0x80000], g_vdp2_cram[0x1000], g_vdp2_regs[0x200];
++struct HdTexture { int w=0,h=0; uint64_t fingerprint=0; std::vector<uint32_t> rgba; std::vector<uint16_t> raw; };
++struct HdQuad { float xy[8]{},shade[12]{}; bool hflip=false,vflip=false; std::shared_ptr<HdTexture> texture;
++    int clip[6]{};uint32_t gpu_flags=0;bool gpu_eligible=false; };
++struct GpuPixel { uint32_t absent=0,constant=0,mode=0,ratio=0;int32_t offset[3]{};uint32_t owner=0; };
++struct HdEffect { uint32_t second=0; int16_t offset[3]{}; uint8_t ratio=0,flags=0; };
++inline void hd_fingerprint(uint64_t& state,uint64_t value) {state^=value+0x9E3779B97F4A7C15ull+(state<<6)+(state>>2);}
++struct HdScene { uint64_t serial=0,fingerprint=0,geometry=0; std::vector<HdQuad> quads; std::vector<uint16_t> visible; std::vector<HdEffect> effects;
++    std::vector<GpuPixel> composition; };
++void vdp1_hd_collect(bool enabled);
++std::shared_ptr<HdScene> vdp1_hd_scene();
++uint16_t vdp1_hd_owner(int x,int y,bool dd);
+ struct Frame {
+     int w = 0, h = 0;
+     std::vector<uint32_t> px;                       // 0x00RRGGBB, w*h, top row first
++    std::shared_ptr<HdScene> hd;                     // optional presentation provenance, never guest memory
++    int origin_x=0, native_w=0;                     // expanded presentation only; guest coordinates stay unchanged
+ };
+ void vdp2_compose(Frame& out);                       // the picture of the field that has just ended
++void vdp2_compose_reference(Frame& out);             // diagnostic reference for GPU composition metadata
++uint64_t vdp2_cached_fields();
++bool vdp2_compose_wide(Frame& out,const Frame* current_native=nullptr); // reuse this field's native center when available
+ int vdp2_lines();                                    // 224, 240 or 256 (TVMD VRESO)
+ 
+ void write_png(const std::string& path, const Frame& f);   // png.cpp
++void video_capture_crash();                         // raw video memory and last composed frame
++void video_capture_debug(const std::string& directory); // shown framebuffer and unobscured game image
+ 
+ // ---- --video (movie.cpp) ----------------------------------------------------------------
+ bool movie_on();
+diff --git a/src/saturnrecomp/recomp/discover.py b/src/saturnrecomp/recomp/discover.py
+index 3396388..5901589 100644
+--- a/src/saturnrecomp/recomp/discover.py
++++ b/src/saturnrecomp/recomp/discover.py
+@@ -776,6 +776,13 @@ class Program:
+             f.code.add(a)
+             self._code_literal(ins, data)
+             op = ins.op
++            # Explicit local return: MOVA label,R0; LDS R0,PR. The helper
++            # reached by a following JMP returns here without a JSR edge.
++            if (op == "lds" and ins.fmt == "lds Rm,pr" and ins.m == 0
++                    and a - 2 in f.code):
++                previous = img.insn(a - 2)
++                if previous.op == "mova" and self.inside(previous.target):
++                    work.append(previous.target)
+             if ins.delay:
+                 slot = a + 2
+                 if self.inside(slot) and slot not in self.data:
+diff --git a/src/saturnrecomp/recomp/emit.py b/src/saturnrecomp/recomp/emit.py
+index 4cf69d5..c3d945f 100644
+--- a/src/saturnrecomp/recomp/emit.py
++++ b/src/saturnrecomp/recomp/emit.py
+@@ -279,6 +279,14 @@ class Body:
+         self.unknown = []
+         self.locations = []
+         self._targets = self._resolve()
++        # Hand-written SH-2 also uses MOVA; LDS R0,PR; JMP helper as a
++        # local subroutine, without JSR. Keep its proven local continuation.
++        self._local_returns = set()
++        for a, ins in self.ops.items():
++            previous = self.ops.get(a - 2)
++            if (ins.op == "lds" and ins.fmt == "lds Rm,pr" and ins.m == 0
++                    and previous and previous.op == "mova" and previous.target in f.code):
++                self._local_returns.add(previous.target)
+ 
+     # -- analysis
+     def _resolve(self):
+@@ -334,9 +342,14 @@ class Body:
+     def _tail(self, t):
+         """Leave for `t`, a static target outside this function's code."""
+         if t in self.entries:
+-            return "%s(c); return;" % fname(t)
++            return "%s(c); %s" % (fname(t), self._returned())
+         self.unknown.append(t)
+-        return "sh2_call(c, %s); return;" % _h(t)
++        return "sh2_call(c, %s); %s" % (_h(t), self._returned())
++
++    def _returned(self):
++        cases = " ".join("case %s: SH2_POLL(c); goto L_%08X;" % (_h(t), t)
++                         for t in sorted(self._local_returns))
++        return ("switch (c.pc) { %s default: return; }" % cases) if cases else "return;"
+ 
+     def _call(self, t):
+         if t in self.entries:
+@@ -371,16 +384,16 @@ class Body:
+                 cases.append("case %s: goto L_%08X;" % (_h(v), v))
+                 back |= v <= a
+             elif v in self.entries:
+-                cases.append("case %s: %s(c); return;" % (_h(v), fname(v)))
++                cases.append("case %s: %s" % (_h(v), self._tail(v)))
+             else:
+                 self.unknown.append(v)
+         poll = "SH2_POLL(c); " if back else ""
+         if not cases:
+-            return "sh2_call(c, x); return;"
+-        return "%sswitch (x) { %s default: sh2_call(c, x); return; }" % (poll, " ".join(cases))
++            return "sh2_call(c, x); " + self._returned()
++        return "%sswitch (x) { %s default: sh2_call(c, x); %s }" % (poll, " ".join(cases), self._returned())
+ 
+     def labels(self):
+-        out = set()
++        out = set(self._local_returns)
+         code = self.f.code
+         self._fallback = sorted(a for a in code if a not in self.slots)
+         for a, ins in self.ops.items():
+@@ -424,7 +437,10 @@ class Body:
+             x = _r(ins.n) if op == "jmp" else "%s + %s" % (ret, _r(ins.n))
+             return "{ const uint32_t x = %s; %s%s }" % (x, s, self._djump(a)), None
+         if op == "rts":
+-            return "{ const uint32_t x = c.pr; %sc.pc = x; return; }" % s, None
++            cases = " ".join("case %s: SH2_POLL(c); goto L_%08X;" % (_h(t), t)
++                             for t in sorted(self._local_returns))
++            local = ("switch (x) { %s default: break; } " % cases) if cases else ""
++            return "{ const uint32_t x = c.pr; %s%sc.pc = x; return; }" % (s, local), None
+         if op == "rte":
+             return ("{ const uint32_t x = ld32(c.r[15]); c.r[15] += 4; sh2_set_sr(c, ld32(c.r[15]) & 0x3F3u); "
+                     "c.r[15] += 4; %sc.pc = x; return; }" % s), None

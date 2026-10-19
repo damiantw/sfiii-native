@@ -1,0 +1,47 @@
+# Shining Force III Native
+
+An experimental Windows native static recompilation project for **Shining Force III, Scenario 1 (USA, MK-81383 V1.001)**. Game SH-2 code is generated locally as C++ and compiled for the PC. The runtime supplies Saturn graphics, sound, storage and other hardware services; static recompilation does not remove the need to model those systems.
+
+**Work in progress.** Recorded gameplay routes, real Saturn save imports and rendering checks work, but the complete game has not been validated. Scenarios 2–3, the Premium Disc and translated editions are planned, **not supported** by this build profile.
+
+## Features
+
+- Keyboard and SDL controllers, including PlayStation, Xbox, generic USB and configurable Saturn USB controllers.
+- Original textures with 1×, 2× and 4× rendering of supported geometry through Vulkan or Direct3D 12.
+- Experimental 16:9 rendering with centered original framing and additional scenery. Game-side object culling is still incomplete, so edge gaps and pop-in can remain.
+- Persistent internal and cartridge backup storage, with import of supported raw Scenario 1 `SFORCE31_XX.BIN` saves.
+- Replay checkpoints. Loading reconstructs progress by fast-forwarding recorded input; these are **not instant save states**.
+
+## What you supply
+
+- Windows x64, a Vulkan or Direct3D 12 capable GPU, and the [build prerequisites](docs/BUILDING.md).
+- Your own unpatched USA V1.001 **BIN/CUE** disc dump. The supported data-track SHA-256 is:
+
+  `089c77470dec14f1dbffaad1ab50d584f06df5e28b475fc712b8e67e5890f951`
+
+The current runtime provides BIOS services at a high level and **does not load or require a Saturn BIOS file**. No BIOS, game assets, disc images, saves, extracted files or generated game code are distributed here. Do not upload those files, including in issues or pull requests. Other dump formats and patched revisions are not accepted by the current generation profile.
+
+## Build and play
+
+Clone this repository, install the prerequisites, then run from PowerShell in its directory:
+
+```powershell
+.\tools\setup-dependencies.ps1
+.\tools\prepare-game.ps1 -Cue 'D:\Games\SFIII\Shining Force III (USA).cue' -Work 'D:\SFIII-local' -Python python
+```
+
+The work folder must be outside the source repository. Preparation inventories your disc, generates and compiles code locally, and writes a launcher into that work folder. It does not upload your disc or saves. Compilation can take substantial time and disk space.
+
+Open **Launch Native SFIII.cmd** in the work folder to play. See [building](docs/BUILDING.md) for manual steps and [controls, saves and display settings](docs/USAGE.md) for use. This source repository is not a portable prebuilt game release: each user generates their own game executable from their own supported dump.
+
+## Status and validation
+
+The current local audit compiles 250 configured/candidate modules, including 169 X1 scene modules. The nine-route regression suite exercises 12 X1 scenes; it does not validate all 169 scenes. Five mapping/entry reviews, nine discovery findings and 918 unresolved indirect sites remain review items. Compilation, emitted entry coverage, executed gameplay and hardware fidelity are separate claims.
+
+Synthetic tests cover arithmetic/DSP, storage, DMA, background composition, controller input, checkpoint integrity and GPU rendering. Captured gameplay diagnostics and historical route fixtures stay local. See [development and publication rules](docs/DEVELOPMENT.md).
+
+## Credits and licensing
+
+Built on [saturn-recomp](https://github.com/callumjenkins/saturn-recomp), derived from [saturnkit](https://github.com/vs-sr-dev/saturnkit). SFIII module mappings were informed by [SF3Tools](https://github.com/Synival/sf3tools). Controller mappings use [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB). Rendering and input use [SDL3](https://github.com/libsdl-org/SDL).
+
+Project source is provided under the [MIT license](LICENSE); third-party code retains its own notices. See [THIRD_PARTY.md](THIRD_PARTY.md). Shining Force III and Sega Saturn belong to their respective rights holders. This is an unofficial project and includes no permission to redistribute game content.

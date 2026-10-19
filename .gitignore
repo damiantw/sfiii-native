@@ -1,0 +1,67 @@
+# Publish only reusable source. Local research and private diagnostics remain local.
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/LICENSE
+!/THIRD_PARTY.md
+!/dependencies.json
+!/LICENSES/
+/LICENSES/*
+!/LICENSES/saturn-recomp.txt
+!/docs/
+/docs/*
+!/docs/BUILDING.md
+!/docs/USAGE.md
+!/docs/DEVELOPMENT.md
+!/native/
+!/profiles/
+/profiles/*
+!/profiles/usa-v1.001.json
+!/tools/
+/tools/*
+!/tools/audit-modules.py
+!/tools/build-headless.ps1
+!/tools/build-scenario1.ps1
+!/tools/check-module-build.py
+!/tools/check-source-package.py
+!/tools/dev-env.ps1
+!/tools/generate.py
+!/tools/module_entries.py
+!/tools/probe.py
+!/tools/setup-dependencies.ps1
+!/tools/prepare-game.ps1
+!/tools/run-native.ps1
+!/tools/publish-replay-save.ps1
+!/tools/import-saturn-save.py
+!/tools/import-saturn-save.ps1
+!/tools/Import Saturn Saves.cmd
+!/tools/Controller Setup.cmd
+!/tools/Controller Test.cmd
+!/tools/Launch Native SFIII.cmd
+!/tools/Load Replay Checkpoint.cmd
+!/tools/runtime-diagnostics.patch
+!/tools/windows.cmake
+!/tools/tests/
+__pycache__/
+*.pyc
+*.bin
+*.BIN
+*.cue
+*.CUE
+*.iso
+*.chd
+*.wav
+*.sav
+*.state
+*.exe
+*.dll
+*.obj
+*.o
+*.lib
+*.pdb
+*.png
+*.jpg
+*.log
+*.zip
+*.7z
