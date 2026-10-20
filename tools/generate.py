@@ -4,7 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-from module_entries import unrolled_copy_entries, arithmetic_shift_entries
+from module_entries import unrolled_copy_entries, arithmetic_shift_entries, registered_store_callback_entries
+from disc_profile import verify_inventory
 
 p = argparse.ArgumentParser(__doc__)
 p.add_argument('--framework', choices=['saturnkit', 'saturn-recomp'], required=True)
@@ -19,10 +20,7 @@ out = (a.out or work / ('recomp-saturnkit' if a.framework == 'saturnkit' else 'r
 if work == repo or repo in work.parents or out == repo or repo in out.parents:
     raise SystemExit('Game-derived output must be outside the repository')
 profile = json.loads(a.profile.read_text())
-manifest = json.loads((work / 'manifest.json').read_text())
-hashes = json.loads((work / 'hashes.json').read_text())
-if not any(h['sha256'] == profile['track1_sha256'] for h in hashes.values()):
-    raise SystemExit('Local inventory does not match profile')
+manifest = verify_inventory(work, profile)
 specs = []
 for m in profile['modules']:
     source = work / 'extract' / m['file']
@@ -40,6 +38,7 @@ for m in profile['modules']:
     data = source.read_bytes()
     seeds.update(unrolled_copy_entries(data, base))
     seeds.update(arithmetic_shift_entries(data, base))
+    seeds.update(registered_store_callback_entries(data, base))
     # Common SFIII export veneer: mov.l @(PC),r0; jmp @r0; nop; nop; target.
     # Only aligned veneers whose literal points within this verified image qualify.
     for at in range(0, len(data) - 11, 4):

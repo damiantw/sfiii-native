@@ -1,6 +1,28 @@
 """Conservative recognition of entry points in fully matched SH-2 code idioms."""
 
 
+def registered_store_callback_entries(data: bytes, base: int) -> set[int]:
+    """PC-relative callback passed to a registration tail-call, then halfword store.
+
+    Require both the complete registration wrapper and its small callback body.
+    This avoids treating arbitrary MOVA data pointers as executable entries.
+    """
+    entries = set()
+    word = lambda at: int.from_bytes(data[at:at+2], 'big')
+    for at in range(0,len(data)-11,2):
+        if (base+at)&1 or word(at)&0xFF00 != 0xC700:continue
+        if [word(at+n) for n in (2,4,8,10)] != [0x6543,0x6403,0x402B,0x0009]:continue
+        if word(at+6)&0xFF00 != 0xD000:continue
+        target=((base+at+4)&~3)+(word(at)&255)*4
+        literal=((base+at+10)&~3)+(word(at+6)&255)*4
+        off=target-base
+        if not (0<=off<=len(data)-6 and base<=literal<=base+len(data)-4):continue
+        if word(off)&0xFF00 != 0xC700 or [word(off+2),word(off+4)] != [0x000B,0x2041]:continue
+        destination=((target+4)&~3)+(word(off)&255)*4
+        if base<=destination<=base+len(data)-2:entries.add(target)
+    return entries
+
+
 def unrolled_copy_entries(data: bytes, base: int) -> set[int]:
     """Entry per longword in a complete descending 64-byte copy and return.
 

@@ -33,7 +33,7 @@ def main():
             failures.append([name, 'not in publication source directories'])
         if path.parts[0] in {'native','tools'} and path.suffix.lower() not in SOURCE_SUFFIXES and path.name != 'CMakeLists.txt':
             failures.append([name,'not a source file'])
-        if path.parts[0] == 'profiles' and name != 'profiles/usa-v1.001.json':
+        if path.parts[0] == 'profiles' and name not in {'profiles/usa-v1.001.json','profiles/scenario2-v24.json'}:
             failures.append([name,'unreviewed generation profile'])
         if path.parts[0] == 'desktop' and name != 'desktop/dependencies.json' and path.suffix not in {'.py','.cs'}:
             failures.append([name,'not desktop application source'])

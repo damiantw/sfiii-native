@@ -22,7 +22,26 @@ def external(path):
 
 def extract(archive,destination,spec):
     destination.mkdir(parents=True,exist_ok=False)
-    if spec['format']=='tar':
+    if spec['format']=='keep':
+        shutil.copyfile(archive,destination/spec['archive'])
+    elif spec['format']=='mame-sfx':
+        # Only the independently invoked CD image utility and upstream notices.
+        subprocess.run([str(archive.resolve()),'-o'+str(destination.resolve()),'-y',
+                        'chdman.exe','COPYING','docs/legal/*'],check=True,stdout=subprocess.DEVNULL)
+        if not (destination/'chdman.exe').is_file():raise ValueError('CHD tool missing from official archive')
+        # The upstream self-extractor may ignore member filters. Never ship its
+        # emulator, sample folders or unrelated utilities with this application.
+        for child in destination.iterdir():
+            if child.name in {'chdman.exe','COPYING','docs'}:continue
+            if destination.resolve() not in child.resolve().parents:raise ValueError('Unsafe extraction cleanup path')
+            if child.is_dir():shutil.rmtree(child)
+            else:child.unlink()
+        for child in (destination/'docs').iterdir():
+            if child.name=='legal':continue
+            if destination.resolve() not in child.resolve().parents:raise ValueError('Unsafe extraction cleanup path')
+            if child.is_dir():shutil.rmtree(child)
+            else:child.unlink()
+    elif spec['format']=='tar':
         with tarfile.open(archive) as t:t.extractall(destination,filter='data')
     else:
         with zipfile.ZipFile(archive) as z:
@@ -96,7 +115,7 @@ def main():
         'Shining Force III Native '+lock['version']+'\n\n'
         '1. Extract the WHOLE ZIP to a local application folder.\n'
         '2. Open SFIII Native.exe.\n'
-        '3. Browse to your own unpatched Scenario 1 USA V1.001 CUE file. Keep its BIN tracks beside it.\n'
+        '3. Choose the game and browse to your supported CUE or CHD image. Keep CUE BIN tracks beside it.\n'
         '4. Keep or choose a game-data folder outside this application folder, then click Prepare game.\n'
         '5. Wait for preparation, then click Play. No compiler installation, terminal commands or BIOS needed.\n\n'
         'Windows 10/11 x64 with .NET Framework 4.8 and a Vulkan/Direct3D 12 capable GPU.\n'

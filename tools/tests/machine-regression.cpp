@@ -4,6 +4,41 @@
 #include <array>
 #include <climits>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <chrono>
+
+TEST(cd_track_types_follow_track_boundaries_in_shared_and_split_files) {
+    namespace fs=std::filesystem;
+    const auto parent=fs::temp_directory_path();
+    const auto dir=parent/("sf3-cd-track-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(dir);
+    auto track=[&](const char* name,int first,int count) {
+        std::ofstream out(dir/name,std::ios::binary);
+        for(int n=first;n<first+count;++n) {std::array<char,2352> sector{};sector.fill(char(n));out.write(sector.data(),sector.size());}
+    };
+    track("shared.bin",1,6);track("data.bin",1,2);track("audio.bin",3,2);track("last.bin",5,2);
+    for(bool split : {false,true}) for(bool last_data : {false,true}) {
+        std::ofstream cue(dir/"synthetic.cue");
+        if(split)cue<<"FILE \"data.bin\" BINARY\n TRACK 01 MODE1/2352\n INDEX 01 00:00:00\nFILE \"audio.bin\" BINARY\n TRACK 02 AUDIO\n INDEX 01 00:00:00\n";
+        else cue<<"FILE \"shared.bin\" BINARY\n TRACK 01 MODE1/2352\n INDEX 01 00:00:00\n TRACK 02 AUDIO\n INDEX 01 00:00:02\n";
+        if(last_data) {
+            if(split)cue<<"FILE \"last.bin\" BINARY\n TRACK 03 MODE1/2352\n INDEX 01 00:00:00\n";
+            else cue<<" TRACK 03 MODE1/2352\n INDEX 01 00:00:04\n";
+        }
+        cue.close();CHECK_EQ(cdrom_open((dir/"synthetic.cue").string()),true);
+        CHECK_EQ(cdrom_is_audio(149),false);
+        for(uint32_t fad=150;fad<(split&&!last_data ? 154u : 156u);++fad) {
+            const bool audio=fad>=152 && (!last_data || fad<154);
+            CHECK_EQ(cdrom_is_audio(fad),audio);
+            std::array<uint8_t,2352> sector{};CHECK_EQ(cdrom_read(fad,sector.data()),true);CHECK_EQ(sector.front(),fad-149);
+        }
+        CHECK_EQ(cdrom_is_audio(split&&!last_data ? 154 : 156),false);
+    }
+    // Closing a synthetic image releases Windows handles before fixture cleanup.
+    CHECK_EQ(cdrom_open((dir/"missing.cue").string()),false);
+    if(dir.parent_path()!=parent)throw std::runtime_error("Unexpected CD fixture cleanup path");fs::remove_all(dir);
+}
 
 TEST(division_handles_signs_boundaries_zero_and_wide_overflow_on_both_cpus) {
     const int32_t divisors[]={INT32_MIN,-32769,-17,-1,0,1,7,32767,INT32_MAX};

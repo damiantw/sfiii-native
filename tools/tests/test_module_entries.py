@@ -4,7 +4,29 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from module_entries import unrolled_copy_entries, arithmetic_shift_entries
+from module_entries import unrolled_copy_entries, arithmetic_shift_entries, registered_store_callback_entries
+
+class RegisteredCallbacks(unittest.TestCase):
+    def code(self,start=0):
+        data=bytearray(96)
+        words=[0xC707,0x6543,0x6403,0xD003,0x402B,0x0009]
+        for i,w in enumerate(words):data[start+i*2:start+i*2+2]=w.to_bytes(2,'big')
+        data[32:38]=bytes.fromhex('c704000b2041')
+        return data
+
+    def test_callback_and_pc_alignment_paths(self):
+        for start in [0,2]:
+            self.assertEqual(registered_store_callback_entries(self.code(start),0x6004000),{0x6004020})
+
+    def test_requires_full_wrapper_body_and_in_image_store(self):
+        original=self.code()
+        for at in [2,4,6,8,10,32,34,36]:
+            corrupt=bytearray(original);corrupt[at]^=1
+            self.assertFalse(registered_store_callback_entries(corrupt,0x6004000))
+        self.assertFalse(registered_store_callback_entries(original[:37],0x6004000))
+        self.assertFalse(registered_store_callback_entries(original,0x6004001))
+        outside=bytearray(original);outside[33]=255
+        self.assertFalse(registered_store_callback_entries(outside,0x6004000))
 
 
 class CopyEntries(unittest.TestCase):

@@ -324,5 +324,10 @@
       "overlay": true,
       "evidence": "Whole 11916-byte image exact match at 0604A800 in a local whole-image RAM comparison; fatal call to base; X014 effect-loader literals corroborate destination."
     }
-  ]
+  ],
+  "id": "scenario1-usa-v1_001",
+  "title": "Scenario 1 USA (unpatched V1.001)",
+  "scenario": 1,
+  "scene_base": "0605F000",
+  "content_sha256": "54aa1d2178407d7273a7fb54a7aef4b36c8364cc3b203acb997613e95eea81a9"
 }

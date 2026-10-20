@@ -5,6 +5,7 @@ import hashlib
 import json
 import pathlib
 import sys
+from disc_profile import identify
 
 def digest(path):
     with path.open('rb') as stream:
@@ -26,10 +27,11 @@ def main():
         raise SystemExit('Choose --out outside the source repository; extracted data and generated code must stay local.')
     out.mkdir(parents=True, exist_ok=True)
     disc = Disc(str(a.cue.resolve()))
-    if (disc.ip.product, disc.ip.version, disc.ip.areas) != ('MK-81383', 'V1.001', 'U'):
-        raise SystemExit('This probe supports only the USA MK-81383 V1.001 header; hashes still require review.')
+    contents = manifest(disc)
+    profile_path, profile = identify(disc, contents)
     (out / 'disc-info.txt').write_text(disc.ip.describe(), encoding='utf-8')
-    (out / 'manifest.json').write_text(json.dumps(manifest(disc), indent=2), encoding='utf-8')
+    (out / 'manifest.json').write_text(json.dumps(contents, indent=2), encoding='utf-8')
+    (out / 'revision.json').write_text(json.dumps(dict(profile=profile_path.name, title=profile['title'], scenario=profile['scenario']),indent=2),encoding='utf-8')
     tracks = [a.cue] + [a.cue.parent / line.split('"')[1] for line in a.cue.read_text().splitlines() if line.strip().startswith('FILE "')]
     (out / 'hashes.json').write_text(json.dumps({f.name: {'size': f.stat().st_size, 'sha256': digest(f)} for f in tracks}, indent=2), encoding='utf-8')
     rows = []
@@ -50,7 +52,7 @@ def main():
             if path.name == '1ST.BIN':
                 row.update(classification='boot SH-2', base='06004000', evidence='IP first-read address; startup disassembly')
             elif path.name.startswith('X1') and path.suffix == '.BIN':
-                base = 0x06060000 if path.name == 'X1BTL99.BIN' else 0x0605F000
+                base = int(profile['scene_base'],16) if path.name != 'X1BTL99.BIN' else 0x06060000
                 entry = int.from_bytes(data[8:12], 'big')
                 valid = data[:6] == bytes.fromhex('d001402b0009') and base <= entry < base + len(data)
                 row.update(classification='scene SH-2 candidate', base=f'{base:08X}', evidence=f'SF3Tools base; entry trampoline/in-file target={valid}; dynamic load unverified')

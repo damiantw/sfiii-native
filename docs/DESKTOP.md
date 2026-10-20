@@ -1,5 +1,17 @@
 # Automatic Windows preparation
 
+## Development launcher: CHD and Scenario 2
+
+The development launcher accepts CUE and CHD images and has separate selectors for Scenario 1 USA V1.001 and the registered Scenario 2 Translation Project v24 disc. Scenario 2 is experimental; recognizing or compiling its programs does not establish gameplay compatibility. The published v0.2.0 ZIP still supports Scenario 1 CUE input only.
+
+Local development tests have reached the Scenario 2 opening movie and Chapter 1 card through scripted startup/menu input. Towns, battles, saves and campaign transfers still require Scenario 2 validation. Static mapping/discovery findings remain separate from that executed coverage.
+
+Each selector remembers its own disc and data folder. Keep separate folders for the two scenarios; setup rejects switching revisions inside an existing installation. Internal/cartridge progress and replay checkpoints stay with that installation. The save-import button is enabled for Scenario 1 only; Scenario 2 raw imports and campaign transfers have not been validated.
+
+CHDs are verified and extracted locally with bundled `chdman` during preparation, then the native game reads the extracted CUE/BIN. This is a disc-container conversion, not an interpreter gameplay path. The original CHD remains unchanged. Allow additional space for the decompressed disc and keep `disc-cache` in the selected data folder. Its receipt records the source and extracted-file hashes; a changed cache is rejected. Parent/delta CHDs and ISO input are not supported. Disc identity checks include the IP area, every filesystem file and audio tracks, rather than trusting a filename or translation label.
+
+CHD input details are recorded in `disc-input.log`; compilation details remain under `preparation`. Extraction, preparation and save files never enter the source repository. The bundled MAME 0.289 tool requires an x86-64-v2 CPU. Its notices and corresponding source archive accompany the package.
+
 Download the **Windows ZIP asset** from the v0.2.0-alpha prerelease, rather than GitHub's automatically generated source archive. Extract the entire ZIP and open **SFIII Native.exe**. The included compiler, embedded Python, build tools and runtime source are application components; players do not install them separately or enter commands.
 
 ## First run

@@ -1,35 +1,68 @@
 {
-  "version": "0.2.0-alpha",
+  "version": "0.3.0-alpha",
   "licenses": [
-    {"file": "ninja-LICENSE.txt", "url": "https://raw.githubusercontent.com/ninja-build/ninja/v1.13.2/COPYING", "sha256": "eb7e9ab9690124c5c9f42bdc81383d886a3dede26345b6ed15bbad7caf81f7ea"}
+    {
+      "file": "ninja-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/ninja-build/ninja/v1.13.2/COPYING",
+      "sha256": "eb7e9ab9690124c5c9f42bdc81383d886a3dede26345b6ed15bbad7caf81f7ea"
+    }
   ],
   "archives": [
     {
-      "name": "compiler", "archive": "llvm-mingw.zip", "format": "zip",
+      "name": "compiler",
+      "archive": "llvm-mingw.zip",
+      "format": "zip",
       "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-x86_64.zip",
       "sha256": "1bcf74d06b724aeecaa6412ca85f5b26fb1da770e7cdcefa9263c9c5c3ad34b6",
       "strip": "llvm-mingw-20260908-ucrt-x86_64"
     },
     {
-      "name": "cmake", "archive": "cmake.zip", "format": "zip",
+      "name": "cmake",
+      "archive": "cmake.zip",
+      "format": "zip",
       "url": "https://github.com/Kitware/CMake/releases/download/v3.31.10/cmake-3.31.10-windows-x86_64.zip",
       "sha256": "13d1a463d7130df5339baedd63d8ae990aaf385062b2f42f372796143ae94086",
       "strip": "cmake-3.31.10-windows-x86_64"
     },
     {
-      "name": "ninja", "archive": "ninja.zip", "format": "zip",
+      "name": "ninja",
+      "archive": "ninja.zip",
+      "format": "zip",
       "url": "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip",
-      "sha256": "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65", "strip": ""
+      "sha256": "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65",
+      "strip": ""
     },
     {
-      "name": "sdl", "archive": "sdl-mingw.tar.gz", "format": "tar",
+      "name": "sdl",
+      "archive": "sdl-mingw.tar.gz",
+      "format": "tar",
       "url": "https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-devel-3.4.18-mingw.tar.gz",
-      "sha256": "049b9dd711e3fb3f8d84feb998dfec54a75e17cf539c4a80ff4d058d839771cf", "strip": "SDL3-3.4.18"
+      "sha256": "049b9dd711e3fb3f8d84feb998dfec54a75e17cf539c4a80ff4d058d839771cf",
+      "strip": "SDL3-3.4.18"
     },
     {
-      "name": "python", "archive": "python-3.14.8-embed-amd64.zip", "format": "zip",
+      "name": "python",
+      "archive": "python-3.14.8-embed-amd64.zip",
+      "format": "zip",
       "url": "https://www.python.org/ftp/python/3.14.8/python-3.14.8-embed-amd64.zip",
-      "sha256": "a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310", "strip": ""
+      "sha256": "a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310",
+      "strip": ""
+    },
+    {
+      "name": "chdman",
+      "archive": "mame0289b_x64.exe",
+      "format": "mame-sfx",
+      "strip": "",
+      "url": "https://github.com/mamedev/mame/releases/download/mame0289/mame0289b_x64.exe",
+      "sha256": "a1aa7912168c9d1b05e611906bc21b8b9be3935822aead36d12a1da363150b7d"
+    },
+    {
+      "name": "chdman-source",
+      "archive": "mame0289s.exe",
+      "format": "keep",
+      "strip": "",
+      "url": "https://github.com/mamedev/mame/releases/download/mame0289/mame0289s.exe",
+      "sha256": "6243eac3a80df6be602bf0af7889305691737bc26c2ded1433ec11b7c6a3c7b9"
     }
   ]
 }

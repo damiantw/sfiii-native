@@ -23,6 +23,7 @@
 !/profiles/
 /profiles/*
 !/profiles/usa-v1.001.json
+!/profiles/scenario2-v24.json
 !/tools/
 /tools/*
 !/tools/audit-modules.py
@@ -34,6 +35,7 @@
 !/tools/generate.py
 !/tools/module_entries.py
 !/tools/probe.py
+!/tools/disc_profile.py
 !/tools/setup-dependencies.ps1
 !/tools/package-desktop.py
 !/tools/prepare-game.ps1

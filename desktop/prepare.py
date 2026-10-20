@@ -17,6 +17,10 @@ sys.dont_write_bytecode = True
 APP = Path(__file__).resolve().parents[1]
 PAYLOAD = APP.parent
 PACKAGE = PAYLOAD.parent
+sys.path.insert(0,str(APP/'tools'))
+sys.path.insert(0,str(APP/'desktop'))
+from disc_profile import identify
+from disc_input import resolve_disc
 NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
 
 def sha(path):
@@ -69,14 +73,15 @@ def checked_disc(cue, app=APP):
     cue = Path(cue).resolve(strict=True)
     if cue.suffix.lower() != '.cue':raise ValueError('Select the CUE file beside your disc tracks.')
     sys.path.insert(0,str(app/'.local/saturn-recomp/src'))
-    from saturnrecomp.disc import Disc
+    from saturnrecomp.disc import Disc, manifest
     disc = Disc(str(cue))
-    if (disc.ip.product,disc.ip.version,disc.ip.areas) != ('MK-81383','V1.001','U'):
-        raise ValueError('This alpha supports only unpatched Scenario 1 USA MK-81383 V1.001.')
-    expected = json.loads((app/'profiles/usa-v1.001.json').read_text())['track1_sha256']
-    if sha(disc.data.path) != expected:
-        raise ValueError('The data track does not match the supported unpatched USA revision.')
+    identify(disc,manifest(disc),app/'profiles')
     return cue
+
+def disc_revision(cue):
+    from saturnrecomp.disc import Disc, manifest
+    disc = Disc(str(cue))
+    return identify(disc,manifest(disc))[1]
 
 @contextlib.contextmanager
 def preparation_lock(work):
@@ -99,7 +104,7 @@ def ensure_game_stopped(work):
     if result.returncode:raise RuntimeError('Could not check for a running game. Close the game and retry.')
     if result.stdout.strip():raise ValueError('Close the game before preparing this data folder.')
 
-def prepare(cue, work):
+def prepare(cue, work, scenario=None):
     manifest = json.loads((PAYLOAD/'package.json').read_text())
     build_id = manifest['build_id']
     work = external_work(work)
@@ -107,10 +112,22 @@ def prepare(cue, work):
     ensure_game_stopped(work)
     with preparation_lock(work):
         status('identify','Checking your disc. Your files stay on this PC...')
+        source = Path(cue).resolve(strict=True)
+        with (work/'disc-input.log').open('w',encoding='utf-8') as disc_log:
+            cue = resolve_disc(source,work,PAYLOAD/'chdman/chdman.exe',disc_log,status)
         cue = checked_disc(cue)
-        stage = work/'preparation'/build_id
+        profile = disc_revision(cue)
+        if scenario is not None and profile['scenario'] != scenario:
+            raise ValueError('The selected image belongs to Scenario '+str(profile['scenario'])+'. Choose that game in the launcher first.')
+        if (work/'game.json').exists():
+            previous = json.loads((work/'game.json').read_text())
+            old_profile = disc_revision(previous['cue'])
+            if old_profile['id'] != profile['id']:
+                raise ValueError('This folder belongs to another game revision. Choose a separate game-data folder to keep its saves and checkpoints safe.')
+        build_key = build_id+'-'+profile['id']
+        stage = work/'preparation'/build_key
         stage.mkdir(parents=True,exist_ok=True)
-        build = work/('build-desktop-'+build_id)
+        build = work/('build-desktop-'+build_key)
         python = PAYLOAD/'python/python.exe'
         cmake = PAYLOAD/'cmake/bin/cmake.exe'
         compiler = PAYLOAD/'compiler/bin'
@@ -119,11 +136,12 @@ def prepare(cue, work):
             status('inventory','Reading your disc and preparing local game files...')
             run([python,APP/'tools/probe.py','--cue',cue,'--framework',APP/'.local/saturn-recomp','--out',stage],env,log,'inventory')
             status('audit','Preparing game programs...')
-            run([python,APP/'tools/audit-modules.py','--work',stage,'--out',stage/'module-audit'],env,log,'audit')
+            revision = json.loads((stage/'revision.json').read_text())
+            run([python,APP/'tools/audit-modules.py','--work',stage,'--profile',APP/'profiles'/revision['profile'],'--out',stage/'module-audit'],env,log,'audit')
             status('generate','Preparing native game code. This can take a few minutes...')
             generated = stage/'recomp-bulk'
-            run([python,APP/'tools/generate.py','--framework','saturn-recomp','--work',stage,'--profile',stage/'module-audit/candidate-profile.json','--out',generated,'--optest'],env,log,'generate',cwd=APP)
-            run([python,APP/'tools/check-module-build.py','--audit',stage/'module-audit/module-audit.json','--generated',generated,'--out',stage/'emission.json'],env,log,'emission')
+            run([python,APP/'tools/generate.py','--framework','saturn-recomp','--work',stage,'--profile',stage/'module-audit/candidate-profile.json','--out',generated],env,log,'generate',cwd=APP)
+            run([python,APP/'tools/check-module-build.py','--audit',stage/'module-audit/module-audit.json','--generated',generated,'--out',stage/'emission.json','--player'],env,log,'emission')
             status('configure','Setting up the game for this PC...')
             run([cmake,'-S',generated,'-B',build,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release',
                  '-DCMAKE_C_COMPILER='+(compiler/'x86_64-w64-mingw32-clang.exe').as_posix(),
@@ -138,7 +156,7 @@ def prepare(cue, work):
             status('check','Checking the prepared game...')
             smoke = stage/'boot-check';smoke.mkdir(exist_ok=True)
             run([build/'saturn.exe','--headless','--cue',cue,'--save',smoke/'backup.bin','--settings','-',
-                 '--vblanks','120','--out',smoke,'--log',smoke/'run.log'],env,log,'boot-check')
+                 '--vblanks',str(profile.get('boot_check_vblanks',120)),'--out',smoke,'--log',smoke/'run.log'],env,log,'boot-check')
             # Never copy test backups into live progress. Activate only after a successful build/check.
             status('install','Finishing setup...')
             for name in ['controller_setup.exe']:
@@ -152,17 +170,18 @@ def prepare(cue, work):
             shutil.copyfile(db/'LICENSE',work/'CONTROLLER-DATABASE-LICENSE.txt')
             old = (work/'native-build.txt').read_text().strip() if (work/'native-build.txt').exists() else None
             atomic_json(stage/'activation.json',dict(previous_build=old,new_build=build.name,live_backups_replaced=False))
-            atomic_json(work/'game.json',dict(cue=str(cue)))
+            atomic_json(work/'game.json',dict(cue=str(cue),source=str(source),profile_id=profile['id']))
             (work/'save-import-python.txt').write_text(str(python),encoding='utf-8')
             selection = work/'native-build.txt.part';selection.write_text(build.name,encoding='utf-8');os.replace(selection,work/'native-build.txt')
-            atomic_json(work/'desktop-ready.json',dict(build_id=build_id,executable_sha256=sha(build/'saturn.exe'),cue=str(cue),version=manifest['version']))
+            atomic_json(work/'desktop-ready.json',dict(build_id=build_id,build_directory=build.name,profile_id=profile['id'],title=profile['title'],executable_sha256=sha(build/'saturn.exe'),cue=str(cue),source=str(source),version=manifest['version']))
         status('ready','Ready to play.')
 
 def main():
     p = argparse.ArgumentParser(__doc__)
     p.add_argument('--cue',type=Path,required=True);p.add_argument('--work',type=Path,required=True)
+    p.add_argument('--scenario',type=int,choices=[1,2])
     a = p.parse_args()
-    try:prepare(a.cue,a.work);return 0
+    try:prepare(a.cue,a.work,a.scenario);return 0
     except Exception as error:
         status('error',str(error));return 1
 

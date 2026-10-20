@@ -14,8 +14,11 @@ ap.add_argument('--audit',type=Path,required=True)
 ap.add_argument('--generated',type=Path,required=True)
 ap.add_argument('--out',type=Path,required=True)
 ap.add_argument('--require-complete',action='store_true',help='Also fail on unresolved static audit findings')
+ap.add_argument('--player',action='store_true',help='Reject synthetic instruction-test modules in player builds')
 a = ap.parse_args()
 generated, out = audit.external(a.generated), audit.external(a.out)
+if a.player and (generated/'p_optest_table.cpp').exists():
+    raise SystemExit('Synthetic instruction-test modules must not be included in a player build')
 report = json.loads(a.audit.read_text())
 profile = json.loads(a.audit.with_name('candidate-profile.json').read_text())
 names = {m['file']:m['name'] for m in profile['modules']}

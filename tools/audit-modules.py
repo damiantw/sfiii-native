@@ -11,7 +11,8 @@ from pathlib import Path
 import re
 import sys
 
-from module_entries import arithmetic_shift_entries, unrolled_copy_entries
+from module_entries import arithmetic_shift_entries, unrolled_copy_entries, registered_store_callback_entries
+from disc_profile import verify_inventory
 
 REPO = Path(__file__).resolve().parents[1]
 VENEER = bytes.fromhex('d001402b00090009')
@@ -60,10 +61,8 @@ def main():
     a = ap.parse_args()
     work, out = external(a.work), external(a.out)
     profile = json.loads(a.profile.read_text(encoding='utf-8-sig'))
-    hashes = json.loads((work/'hashes.json').read_text())
-    if not any(value['sha256'] == profile['track1_sha256'] for value in hashes.values()):
-        raise ValueError('Inventory revision does not match profile')
-    manifest = json.loads((work/'manifest.json').read_text())
+    manifest = verify_inventory(work, profile)
+    model_bases = {k:int(v,16) for k,v in profile.get('model_bases',{}).items()} if profile.get('scenario',1) != 1 else MODEL_BASES
     known = {m['file']: m for m in profile['modules']}
     ram = (a.session/'crash-wram-high.bin').read_bytes() if a.session else None
     out.mkdir(parents=True, exist_ok=True)
@@ -76,7 +75,7 @@ def main():
             continue  # IP.BIN is boot metadata, not a filesystem module.
         data = verified(file, manifest)
         raw_veneers = [at for at in range(0, len(data)-11, 4) if data[at:at+8] == VENEER]
-        if not raw_veneers and file.name not in known and file.stem not in MODEL_BASES:
+        if not raw_veneers and file.name not in known and file.stem not in model_bases:
             continue
         m = known.get(file.name)
         row = dict(file=file.name, size=len(data), sha256=hashlib.sha256(data).hexdigest(),
@@ -84,16 +83,16 @@ def main():
         base = int(m['base'], 16) if m else None
         source = 'existing-profile' if m else None
         if base is None and re.fullmatch(r'X1[A-Z0-9_]+', file.stem):
-            base = 0x06060000 if file.stem == 'X1BTL99' else 0x0605F000
-            source = 'SF3Tools Scenario1 X1 family; dynamically confirmed for opening/Saraband members'
-        if base is None and file.stem in MODEL_BASES:
-            base, source = MODEL_BASES[file.stem], 'SF3Tools Scenario1 file model'
-        if base is None and file.stem.startswith('X3') and raw_veneers:
+            base = 0x06060000 if file.stem == 'X1BTL99' else int(profile.get('scene_base','0605F000'),16)
+            source = 'SF3Tools scenario-specific X1 model; static mapping, see profile scenario'
+        if base is None and file.stem in model_bases:
+            base, source = model_bases[file.stem], 'SF3Tools scenario-specific file model'
+        if base is None and file.stem.startswith('X3') and raw_veneers and profile.get('effect_base','0604A800'):
             # X014's effect loader uses this destination; X3HEAL is also an
             # exact whole-image match in the 20261018-081749 crash. Require
             # every export to resolve inside its image before applying it to
             # another family member (X3ELEM5 fails and stays under review).
-            effect_base = 0x0604A800
+            effect_base = int(profile.get('effect_base','0604A800'),16)
             if all(effect_base <= int.from_bytes(data[at+8:at+12], 'big') < effect_base+len(data)
                    and not int.from_bytes(data[at+8:at+12], 'big') & 1
                    for at in raw_veneers):
@@ -115,6 +114,7 @@ def main():
         entries = veneers(image, base)
         entries.update(unrolled_copy_entries(image, base))
         entries.update(arithmetic_shift_entries(image, base))
+        entries.update(registered_store_callback_entries(image, base))
         if m:
             entries.update(int(s,16) for s in m['seeds'] if base <= int(s,16) < base+len(image))
         row.update(base=f'{base:08X}', image_bytes=len(image),

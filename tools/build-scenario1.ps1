@@ -16,7 +16,7 @@ if ($Session) { $argsList += @('--session', [IO.Path]::GetFullPath($Session)) }
 & $Python @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Module audit failed' }
 if ($AuditOnly) { return }
-& $Python (Join-Path $PSScriptRoot 'generate.py') --framework saturn-recomp --work $workPath --profile (Join-Path $audit 'candidate-profile.json') --out $generated --optest
+& $Python (Join-Path $PSScriptRoot 'generate.py') --framework saturn-recomp --work $workPath --profile (Join-Path $audit 'candidate-profile.json') --out $generated
 if ($LASTEXITCODE -ne 0) { throw 'Bulk generation failed' }
 & $Python (Join-Path $PSScriptRoot 'check-module-build.py') --audit (Join-Path $audit 'module-audit.json') --generated $generated --out (Join-Path $audit 'emission-check.json')
 if ($LASTEXITCODE -ne 0) { throw 'Audited module/entry emission gate failed' }

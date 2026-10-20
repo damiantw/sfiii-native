@@ -37,7 +37,7 @@ index 566fcfd..bfdb70e 100644
          else if (!std::strcmp(a, "--peek") && more) cfg.peek = argv[++i];
          else if (!std::strcmp(a, "--coverage") && more) cfg.coverage = argv[++i];
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..f87fae5 100644
+index cb6af72..e0a4c5b 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -4,6 +4,7 @@
@@ -48,7 +48,7 @@ index cb6af72..f87fae5 100644
  #include <cstring>
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
-@@ -113,8 +114,17 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +114,59 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -66,8 +66,25 @@ index cb6af72..f87fae5 100644
 +}
  
  const SH2Module* sh2_identify_containing(uint32_t addr, bool* exact) {
-     const SH2Module* by_entry = nullptr;
-@@ -135,20 +145,31 @@ const SH2Module* sh2_identify_containing(uint32_t addr, bool* exact) {
+-    const SH2Module* by_entry = nullptr;
+-    int entries = 0;
+     for (int i = 0; i < g_sh2_nmodules; ++i) {
+         const SH2Module* m = g_sh2_modules[i];
+         if (addr - m->base >= m->size) continue;
+         if (sh2_identify(m->base) == m) { *exact = true; return m; }
+-        if (has_entry(m, addr)) { by_entry = m; ++entries; }
+     }
+     *exact = false;
+-    if (entries == 1)
+-        for (const SH2Module* active : g_active) {
+-            if (active && active != by_entry && addr - active->base < active->size) return nullptr;
+-        }
+-    return entries == 1 ? by_entry : nullptr;
++    // Never select an unrecognized image merely because its entry address is
++    // unique. A different revision or test module can occupy the same address.
++    // Already identified modules with mutable data remain in the active slots.
++    return nullptr;
+ }
  
  int sh2_active_slots() { return kSlots; }
  const SH2Module* sh2_active_slot(int i) { return g_active[i]; }
@@ -94,16 +111,17 @@ index cb6af72..f87fae5 100644
 +        // the old dispatch table. A changed header triggers full-image identity
 +        // before trusting that entry. Data-only mutation retains its owner.
 +        uint64_t head=module_head(m);
-+        if(head!=g_active_heads[slot]) {
-+            g_active_heads[slot]=head;
++        if(m->callable_entry && head!=g_active_heads[slot]) {
 +            bool exact=false;
 +            const SH2Module* loaded=sh2_identify_containing(addr,&exact);
++            if(!exact) {g_active[slot]=nullptr;return nullptr;}
++            g_active_heads[slot]=head;
 +            if(exact && loaded && loaded!=m) {sh2_activate(loaded);return sh2_lookup(addr);}
 +        }
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -185,10 +206,28 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -185,10 +203,31 @@ static bool inside_loaded_program(uint32_t addr) {
  
  void sh2_call(SH2Context& c, uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;
@@ -123,11 +141,14 @@ index cb6af72..f87fae5 100644
 +        // A returning module may have changed its data since exact activation.
 +        // Keep calls to its base consistent with calls to its other entries.
 +        if (!m)
-+            for (const SH2Module* active : g_active)
++            for (int slot=0;slot<kSlots;++slot) {
++                const SH2Module* active=g_active[slot];
 +                if (active && active->base == addr && active->callable_entry && has_entry(active, addr)) {
++                    if(module_head(active)!=g_active_heads[slot]) {g_active[slot]=nullptr;continue;}
 +                    m = active;
 +                    break;
 +                }
++            }
          if (m && m->callable_entry) sh2_activate(m);
 -        else { sh2_program_start(c, addr); return; }
 +        else if (m || !inside_loaded_program(addr)) { sh2_program_start(c, addr); return; }
@@ -1080,6 +1101,35 @@ index 5b42ace..8bd21c1 100644
 +        }
      }
  }
+diff --git a/runtime/src/machine/cdrom.cpp b/runtime/src/machine/cdrom.cpp
+index e1918ba..453fb8f 100644
+--- a/runtime/src/machine/cdrom.cpp
++++ b/runtime/src/machine/cdrom.cpp
+@@ -98,11 +98,6 @@ static const CueFile* file_of(const Image& im, uint32_t fad) {
+     return nullptr;
+ }
+ 
+-bool cdrom_is_audio(uint32_t fad) {
+-    const CueFile* f = file_of(g_disc, fad);
+-    return f && f->audio;
+-}
+-
+ // The track holding `fad`, and where the next begins.
+ static const CueTrack* track_at(const Image& im, uint32_t fad, uint32_t& end) {
+     for (size_t i = 0; i < im.tracks.size(); ++i) {
+@@ -112,6 +107,12 @@ static const CueTrack* track_at(const Image& im, uint32_t fad, uint32_t& end) {
+     return nullptr;
+ }
+ 
++bool cdrom_is_audio(uint32_t fad) {
++    uint32_t end = 0;
++    const CueTrack* track = track_at(g_disc, fad, end);
++    return track && track->audio && file_of(g_disc, fad);
++}
++
+ static bool read_image(const Image& im, uint32_t fad, uint8_t* raw) {
+     const CueFile* f = file_of(im, fad);
+     if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
 index a17d926..efa62cb 100644
 --- a/runtime/src/machine/machine.cpp
@@ -2522,10 +2572,10 @@ index ebaa466..c68e655 100644
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
 diff --git a/src/saturnrecomp/recomp/discover.py b/src/saturnrecomp/recomp/discover.py
-index 3396388..5901589 100644
+index 3396388..70e2000 100644
 --- a/src/saturnrecomp/recomp/discover.py
 +++ b/src/saturnrecomp/recomp/discover.py
-@@ -776,6 +776,13 @@ class Program:
+@@ -776,11 +776,18 @@ class Program:
              f.code.add(a)
              self._code_literal(ins, data)
              op = ins.op
@@ -2539,6 +2589,12 @@ index 3396388..5901589 100644
              if ins.delay:
                  slot = a + 2
                  if self.inside(slot) and slot not in self.data:
+                     s = img.insn(slot)
+-                    if s.op == ".word" or s.delay:
++                    if s.op in (".word", "trapa") or s.op in _FLOW:
+                         f.bad = f.bad or ("bad slot", slot)
+                     else:
+                         if slot not in f.code:
 diff --git a/src/saturnrecomp/recomp/emit.py b/src/saturnrecomp/recomp/emit.py
 index 4cf69d5..c3d945f 100644
 --- a/src/saturnrecomp/recomp/emit.py

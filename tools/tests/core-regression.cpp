@@ -4,12 +4,12 @@
 #include <cstdlib>
 #include <initializer_list>
 
-static SH2Module modules[14];
-static SH2FuncEntry entries[14][2];
+static SH2Module modules[15];
+static SH2FuncEntry entries[15][2];
 extern const SH2Module* const g_sh2_modules[] = {
     &modules[0], &modules[1], &modules[2], &modules[3], &modules[4], &modules[5],
-    &modules[6], &modules[7], &modules[8], &modules[9], &modules[10], &modules[11], &modules[12], &modules[13]};
-extern const int g_sh2_nmodules = 14;
+    &modules[6], &modules[7], &modules[8], &modules[9], &modules[10], &modules[11], &modules[12], &modules[13], &modules[14]};
+extern const int g_sh2_nmodules = 15;
 static int calls, starts;
 static void entry(SH2Context&) { ++calls; }
 static void replacement(SH2Context&) { calls += 100; }
@@ -40,7 +40,7 @@ int main() {
     check(!sh2_mem_read(0x00100000,readback,1),"unmapped bulk read rejected");
     for (unsigned i = 0; i < 12; ++i) {
         auto base = 0x06010000u + i * 0x100;
-        uint8_t data[16];
+        uint8_t data[80];
         for (unsigned j = 0; j < sizeof data; ++j) data[j] = static_cast<uint8_t>(i + j);
         check(sh2_mem_write(base, data, sizeof data), "write RAM");
         entries[i][0] = {base, entry};
@@ -50,9 +50,9 @@ int main() {
     uint8_t newer[8] = {90,91,92,93,94,95,96,97};
     entries[12][0] = {modules[0].base + 8, replacement};
     modules[12] = {"replacement", modules[0].base + 8, 8, sh2_crc32(newer, 8), entries[12], 1, nullptr, nullptr, true};
-    uint8_t alternate[16]={42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57};
+    uint8_t alternate[80]={42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57};
     entries[13][0]={modules[1].base+8,replacement};
-    modules[13]={"same-base-alternate",modules[1].base,16,sh2_crc32(alternate,16),entries[13],1,nullptr,nullptr,true};
+    modules[13]={"same-base-alternate",modules[1].base,80,sh2_crc32(alternate,80),entries[13],1,nullptr,nullptr,true};
     for (unsigned i = 0; i < 12; ++i) {
         auto& m = modules[i];
         check(sh2_identify(m.base) == &m, "exact image identification");
@@ -60,7 +60,7 @@ int main() {
     }
     for (unsigned i = 0; i < 12; ++i) check(sh2_lookup(modules[i].base) == entry, "more than eight resident modules");
     uint8_t changed = 0xFF;
-    check(sh2_mem_write(modules[0].base + 15, &changed, 1), "mutate synthetic data");
+    check(sh2_mem_write(modules[0].base + 79, &changed, 1), "mutate synthetic data");
     check(sh2_identify(modules[0].base) == nullptr, "whole-image CRC must notice mutation");
     SH2Context cpu{};
     sh2_call(cpu, modules[0].base);
@@ -75,14 +75,27 @@ int main() {
     check(sh2_lookup(modules[1].base)==nullptr,"same-base stale entry must deactivate");
     check(sh2_lookup(modules[13].base+8+0x20000000)==replacement,"native lookup through cache-through alias");
     for(int i=0;i<64;++i) {
-        uint8_t original[16];for(unsigned j=0;j<16;++j) original[j]=uint8_t(1+j);
-        check(sh2_mem_write(modules[1].base,original,16),"restore original overlay");
+        uint8_t original[80];for(unsigned j=0;j<80;++j) original[j]=uint8_t(1+j);
+        check(sh2_mem_write(modules[1].base,original,80),"restore original overlay");
         sh2_call(cpu,modules[1].base+8);
         check(sh2_lookup(modules[1].base+8)==entry,"repeated original overlay activation");
-        check(sh2_mem_write(modules[13].base,alternate,16),"restore alternate overlay");
+        check(sh2_mem_write(modules[13].base,alternate,80),"restore alternate overlay");
         sh2_call(cpu,modules[13].base+8+0x20000000);
         check(sh2_lookup(modules[13].base+8)==replacement,"repeated alternate overlay activation");
     }
+    uint8_t unrecognized=0xF0;sh2_mem_write(modules[13].base,&unrecognized,1);
+    check(sh2_lookup(modules[13].base+8)==nullptr,"an unrecognized changed overlay header must invalidate stale entries");
+    modules[2].callable_entry=false;
+    sh2_mem_write(modules[2].base,&unrecognized,1);
+    check(sh2_lookup(modules[2].base+8)==entry,"a resident boot image may retain writable startup data in its header");
     check(sh2_lookup(0x060F1234)==nullptr,"unmapped function must not resolve spuriously");
+    // A synthetic instruction-test image or another revision can have the same
+    // entry address as real code. Address uniqueness is not image identity.
+    entries[14][0]={0x06044800,replacement};
+    uint8_t unrelated[16]={1,3,5,7,9,11,13,15};
+    modules[14]={"unrelated-image",0x06044800,16,sh2_crc32(unrelated,16),entries[14],1,nullptr,nullptr,true};
+    uint8_t actual[16]={2,4,6,8,10,12,14,16};sh2_mem_write(0x06044800,actual,16);
+    bool exact=true;
+    check(sh2_identify_containing(0x06044800,&exact)==nullptr && !exact,"unique entry in an unrecognized image must not activate unrelated compiled code");
     std::puts("PASS: 12 residents, data mutation, overlapping replacement, interior overlay switch and stale-entry invalidation");
 }

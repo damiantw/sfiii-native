@@ -15,6 +15,9 @@ class Launcher : Form {
     readonly TextBox cue = new TextBox(), work = new TextBox();
     readonly Button selectDisc = new Button(), selectWork = new Button(), prepare = new Button(), play = new Button(), cancel = new Button(), controller = new Button(), import = new Button(), openFolder = new Button();
     readonly Label state = new Label();
+    readonly ComboBox gameChoice = new ComboBox();
+    int activeGame;
+    string defaultDataRoot;
     readonly ProgressBar progress = new ProgressBar();
     Process worker, game;
     string settingsPath, packageId;
@@ -48,11 +51,20 @@ class Launcher : Form {
         Text="Shining Force III Native"; ClientSize=new Size(850,405);MinimumSize=Size;MaximumSize=Size;
         Font=new Font("Segoe UI",10);StartPosition=FormStartPosition.CenterScreen;FormBorderStyle=FormBorderStyle.FixedSingle;MaximizeBox=false;
         TextAt("Shining Force III Native",24,20,800,35).Font=new Font("Segoe UI",20,FontStyle.Bold);
-        TextAt("Experimental alpha - Scenario 1 USA (unpatched V1.001)",25,65,790,25);
+        TextAt("Game",25,65,120,25);
+        gameChoice.DropDownStyle=ComboBoxStyle.DropDownList;gameChoice.SetBounds(155,62,667,28);
+        gameChoice.Items.AddRange(new object[]{"Scenario 1 USA (unpatched V1.001)","Scenario 2 Translation v24 (experimental)"});
+        gameChoice.SelectedIndex=0;Controls.Add(gameChoice);
+        gameChoice.DrawMode=DrawMode.OwnerDrawFixed;
+        gameChoice.DrawItem+=delegate(object sender,DrawItemEventArgs e) {
+            e.DrawBackground();if(e.Index>=0)using(var brush=new SolidBrush(e.ForeColor))
+                e.Graphics.DrawString(gameChoice.Items[e.Index].ToString(),Font,brush,e.Bounds);
+            e.DrawFocusRectangle();
+        };
         TextAt("Choose your disc once. The app prepares it automatically, then you can play.\nNo compiler installation or commands needed. Your disc files stay on your PC.",25,99,790,48);
-        TextAt("Disc CUE file",25,160,120,25);cue.SetBounds(155,157,535,28);Controls.Add(cue);
+        TextAt("Disc CUE / CHD",25,160,120,25);cue.SetBounds(155,157,535,28);Controls.Add(cue);
         ButtonAt(selectDisc,"Browse...",702,154,120,delegate {
-            using(var d=new OpenFileDialog {Filter="Saturn disc cue (*.cue)|*.cue",Title="Choose your own Scenario 1 USA disc"}) if(d.ShowDialog(this)==DialogResult.OK) cue.Text=d.FileName;
+            using(var d=new OpenFileDialog {Filter="Saturn disc image (*.cue;*.chd)|*.cue;*.chd",Title="Choose your own supported Saturn disc"}) if(d.ShowDialog(this)==DialogResult.OK) cue.Text=d.FileName;
         });
         TextAt("Game-data folder",25,206,125,25);work.SetBounds(155,203,535,28);Controls.Add(work);
         ButtonAt(selectWork,"Choose...",702,200,120,delegate {
@@ -69,7 +81,18 @@ class Launcher : Form {
         settingsPath=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SFIII Native","launcher.json");
         work.Text=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SFIII Native","Game");
         if(testRoot!=null) {settingsPath=Path.Combine(testRoot,"launcher.json");work.Text=Path.Combine(testRoot,"Game");}
-        try {var s=Read(settingsPath);cue.Text=(string)s["cue"];work.Text=(string)s["work"];} catch { }
+        defaultDataRoot=work.Text;
+        try {var s=Read(settingsPath);cue.Text=(string)s["cue"];work.Text=(string)s["work"];
+            if(s.ContainsKey("selected")) {activeGame=Math.Max(0,Math.Min(1,Convert.ToInt32(s["selected"])));gameChoice.SelectedIndex=activeGame;}
+        } catch { }
+        gameChoice.SelectedIndexChanged+=delegate {
+            if(busy)return;SaveSettings();activeGame=gameChoice.SelectedIndex;busy=true;
+            cue.Text="";work.Text=activeGame==0 ? defaultDataRoot : defaultDataRoot+"-Scenario2-v24";
+            try {var s=Read(settingsPath);var games=(Dictionary<string,object>)s["games"];
+                var entry=(Dictionary<string,object>)games[activeGame.ToString()];cue.Text=(string)entry["cue"];work.Text=(string)entry["work"];
+            } catch { }
+            busy=false;SaveSettings();RefreshReady();
+        };
         try {packageId=(string)Read(Path.Combine(root,"payload","package.json"))["build_id"];} catch {state.Text="Extract the complete application ZIP before running it.";prepare.Enabled=false;}
         cue.TextChanged+=delegate {if(!busy)RefreshReady();};
         work.TextChanged+=delegate {if(!busy)RefreshReady();};
@@ -81,40 +104,47 @@ class Launcher : Form {
     }
     void SaveSettings() {
         Directory.CreateDirectory(Path.GetDirectoryName(settingsPath));
-        File.WriteAllText(settingsPath,json.Serialize(new Dictionary<string,object>{{"cue",cue.Text},{"work",work.Text}}));
+        Dictionary<string,object> games=new Dictionary<string,object>();
+        try {games=(Dictionary<string,object>)Read(settingsPath)["games"];} catch { }
+        games[activeGame.ToString()]=new Dictionary<string,object>{{"cue",cue.Text},{"work",work.Text}};
+        File.WriteAllText(settingsPath,json.Serialize(new Dictionary<string,object>{{"cue",cue.Text},{"work",work.Text},{"selected",activeGame},{"games",games}}));
     }
     bool Ready() {
         try {
             var prepared=Read(Path.Combine(work.Text,"desktop-ready.json"));
             string preparedCue=(string)prepared["cue"];
-            if(String.IsNullOrWhiteSpace(cue.Text))cue.Text=preparedCue;
-            if(!String.Equals(Path.GetFullPath(cue.Text),Path.GetFullPath(preparedCue),StringComparison.OrdinalIgnoreCase))return false;
+            string source=prepared.ContainsKey("source") ? (string)prepared["source"] : preparedCue;
+            string profile=activeGame==0 ? "scenario1-usa-v1_001" : "scenario2-translation-v24";
+            if(prepared.ContainsKey("profile_id") && (string)prepared["profile_id"]!=profile)return false;
+            if(String.IsNullOrWhiteSpace(cue.Text))cue.Text=source;
+            if(!String.Equals(Path.GetFullPath(cue.Text),Path.GetFullPath(source),StringComparison.OrdinalIgnoreCase))return false;
             string selected=File.ReadAllText(Path.Combine(work.Text,"native-build.txt")).Trim();
-            if(selected!="build-desktop-"+packageId || (string)prepared["build_id"]!=packageId)return false;
+            string expected=prepared.ContainsKey("build_directory") ? (string)prepared["build_directory"] : "build-desktop-"+packageId;
+            if(!System.Text.RegularExpressions.Regex.IsMatch(expected,@"^build-desktop-[A-Za-z0-9_-]+$") || selected!=expected || (string)prepared["build_id"]!=packageId)return false;
             string exe=Path.Combine(work.Text,selected,"saturn.exe");
-            return File.Exists(preparedCue) && Hash(exe)==(string)prepared["executable_sha256"];
+            return File.Exists(source) && File.Exists(preparedCue) && Hash(exe)==(string)prepared["executable_sha256"];
         } catch {return false;}
     }
     void RefreshReady() {
         if(busy)return;
         bool ready=Ready(),playing=game!=null;
-        play.Enabled=ready && !playing;controller.Enabled=ready && !playing;import.Enabled=ready && !playing;
-        prepare.Enabled=packageId!=null && !playing;selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!playing;
+        play.Enabled=ready && !playing;controller.Enabled=ready && !playing;import.Enabled=ready && !playing && activeGame==0;
+        gameChoice.Enabled=!playing;prepare.Enabled=packageId!=null && !playing;selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!playing;
         cancel.Enabled=false;
-        state.Text=packageId==null ? "Extract the complete application ZIP before running it." : playing ? "Game running. Close the game to change setup or import saves." : ready ? "Ready to play." : "Select your CUE file and click Prepare game.";
+        state.Text=packageId==null ? "Extract the complete application ZIP before running it." : playing ? "Game running. Close the game to change setup or import saves." : ready ? "Ready to play." : "Select your CUE or CHD image and click Prepare game.";
     }
     void SetBusy(bool value) {
-        busy=value;prepare.Enabled=play.Enabled=controller.Enabled=import.Enabled=selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!value;
+        busy=value;gameChoice.Enabled=!value;prepare.Enabled=play.Enabled=controller.Enabled=import.Enabled=selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!value;
         cancel.Enabled=value;progress.Style=value ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;progress.Value=0;
         if(!value)RefreshReady();
     }
     void Prepare(object sender,EventArgs e) {
-        if(!File.Exists(cue.Text)) {MessageBox.Show(this,"Choose the CUE file beside your disc tracks first.");return;}
+        if(!File.Exists(cue.Text)) {MessageBox.Show(this,"Choose your supported CUE or CHD image first.");return;}
         try {
             work.Text=Path.GetFullPath(work.Text);cue.Text=Path.GetFullPath(cue.Text);SaveSettings();
             cancelled=false;lastError=null;
             string python=Path.Combine(root,"payload","python","python.exe"),script=Path.Combine(root,"payload","app","desktop","prepare.py");
-            worker=new Process {StartInfo=new ProcessStartInfo(python,"-X utf8 -B "+Quote(script)+" --cue "+Quote(cue.Text)+" --work "+Quote(work.Text)) {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true},EnableRaisingEvents=true};
+            worker=new Process {StartInfo=new ProcessStartInfo(python,"-X utf8 -B "+Quote(script)+" --cue "+Quote(cue.Text)+" --work "+Quote(work.Text)+" --scenario "+(activeGame+1)) {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true},EnableRaisingEvents=true};
             worker.OutputDataReceived+=delegate(object s,DataReceivedEventArgs output) {
                 if(output.Data==null || !output.Data.StartsWith("SF3_STATUS "))return;
                 try {var data=json.Deserialize<Dictionary<string,object>>(output.Data.Substring(11));Ui(delegate {
@@ -171,10 +201,16 @@ class Launcher : Form {
         string testRoot=args.Length==2 && (args[0]=="--self-test" || args[0]=="--self-test-ready") ? Path.GetFullPath(args[1]) : null;
         var form=new Launcher(testRoot);
         if(testRoot!=null && args[0]=="--self-test-ready") {
+            try {
+                var ready=form.Read(Path.Combine(testRoot,"desktop-ready.json"));
+                if(ready.ContainsKey("profile_id") && (string)ready["profile_id"]=="scenario2-translation-v24") {
+                    form.busy=true;form.activeGame=1;form.gameChoice.SelectedIndex=1;form.busy=false;
+                }
+            } catch { }
             form.work.Text=testRoot;form.smokePlayRoot=testRoot;
             form.Shown+=delegate {
                 form.RefreshReady();
-                if(!form.Ready() || !form.play.Enabled || !form.controller.Enabled || !form.import.Enabled) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared controls are not ready");Environment.ExitCode=1;form.Close();return;}
+                if(!form.Ready() || !form.play.Enabled || !form.controller.Enabled || form.import.Enabled!=(form.activeGame==0)) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared controls are not ready");Environment.ExitCode=1;form.Close();return;}
                 using(var image=new Bitmap(form.Width,form.Height)) {form.DrawToBitmap(image,new Rectangle(Point.Empty,form.Size));image.Save(Path.Combine(testRoot,"ready-launcher.png"));}
                 form.Play(null,EventArgs.Empty);
             };
@@ -185,6 +221,11 @@ class Launcher : Form {
                 Directory.CreateDirectory(testRoot);form.SetBusy(true);
                 if(form.prepare.Enabled || form.play.Enabled || !form.cancel.Enabled)throw new Exception("Busy controls are invalid");
                 form.SetBusy(false);if(form.play.Enabled)throw new Exception("Unprepared installation must not be playable");
+                string firstWork=form.work.Text;form.cue.Text=Path.Combine(testRoot,"first.cue");
+                form.gameChoice.SelectedIndex=1;
+                if(form.work.Text==firstWork || form.cue.Text!="")throw new Exception("Game selection must isolate progress");
+                form.cue.Text=Path.Combine(testRoot,"second.chd");form.gameChoice.SelectedIndex=0;
+                if(form.work.Text!=firstWork || form.cue.Text!=Path.Combine(testRoot,"first.cue") || form.gameChoice.SelectedIndex!=0 || !form.gameChoice.Text.Contains("Scenario 1"))throw new Exception("Game selection did not remember per-game paths");
                 using(var image=new Bitmap(form.Width,form.Height)) {form.DrawToBitmap(image,new Rectangle(Point.Empty,form.Size));image.Save(Path.Combine(testRoot,"launcher.png"));}
                 form.SaveSettings();File.WriteAllText(Path.Combine(testRoot,"passed.txt"),"PASS: first-run state, busy/cancel controls, settings and UI rendering");
             } catch(Exception error) {File.WriteAllText(Path.Combine(testRoot,"failed.txt"),error.ToString());Environment.ExitCode=1;}

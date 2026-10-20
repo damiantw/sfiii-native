@@ -4,6 +4,8 @@ An experimental Windows native static recompilation project for **Shining Force 
 
 **Work in progress.** Recorded gameplay routes, real Saturn save imports and rendering checks work, but the complete game has not been validated. Scenarios 2–3, the Premium Disc and translated editions are planned, **not supported** by this build profile.
 
+**Development branch:** the launcher is being extended with CHD ingestion, a game selector and a separate experimental Scenario 2 Translation Project v24 profile. See [development launcher details](docs/DESKTOP.md#development-launcher-chd-and-scenario-2). These changes are not present in the published v0.2.0 Windows ZIP; Scenario 2 gameplay validation is ongoing.
+
 ## Features
 
 - Keyboard and SDL controllers, including PlayStation, Xbox, generic USB and configurable Saturn USB controllers.
@@ -47,7 +49,7 @@ Close the game, click **Import saves** in the desktop application (or open **Imp
 
 ## Status and validation
 
-The current local audit compiles 250 configured/candidate modules, including 169 X1 scene modules. The nine-route regression suite exercises 12 X1 scenes; it does not validate all 169 scenes. Five mapping/entry reviews, nine discovery findings and 918 unresolved indirect sites remain review items. Compilation, emitted entry coverage, executed gameplay and hardware fidelity are separate claims.
+The Scenario 1 v0.2.0 baseline audit compiles 250 configured/candidate modules, including 169 X1 scene modules. Its nine-route regression suite exercises 12 X1 scenes; it does not validate all 169 scenes. Five mapping/entry reviews, nine discovery findings and 918 unresolved indirect sites remain review items. Compilation, emitted entry coverage, executed gameplay and hardware fidelity are separate claims.
 
 Synthetic tests cover arithmetic/DSP, storage, DMA, background composition, controller input, checkpoint integrity and GPU rendering. Captured gameplay diagnostics and historical route fixtures stay local. See [development and publication rules](docs/DEVELOPMENT.md).
 
