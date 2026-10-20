@@ -43,7 +43,7 @@ Source builds write **Launch Native SFIII.cmd** into the work folder. See [build
 
 ## Bring your own saves
 
-The included **Import Saturn Saves.cmd** utility lets you bring your existing progress into the native application. Supported raw Scenario 1 `SFORCE31_XX.BIN` exports from a real Saturn have been tested. Exports from emulators or Saroo carts must match that same supported format; arbitrary `.bin` files, whole backup-memory images and emulator save states are not automatically compatible.
+The included **Import Saturn Saves.cmd** utility lets you bring your existing progress into the native application. The development launcher accepts raw `SFORCE31_XX.BIN` / `SFORCE32_XX.BIN` saves and version-1 JSON `.ysbak` exports containing those saves. The public v0.2.0 package supports raw Scenario 1 exports only. Scenario 2 requires the experimental translated-v24 profile. Arbitrary `.bin` files, whole backup-memory images and emulator save states are not automatically compatible.
 
 Close the game, click **Import saves** in the desktop application (or open **Import Saturn Saves.cmd** in your work folder), select your exported saves, and choose **internal memory** or **cartridge memory**. Then launch the game and use its own load menu. The importer validates the save layout and checksum, leaves your original export untouched, and backs up an existing destination before writing. The desktop package includes Python; source builds require Python 3.11+. See [save formats and storage details](docs/USAGE.md#game-saves).
 

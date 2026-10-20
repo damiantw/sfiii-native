@@ -14,7 +14,9 @@ Use **1× / 2× / 4×** for supported geometry resolution. Source texture detail
 
 Use the game's save command for ordinary persistent progress. The external files are `experimental-backup.bin` (32 KiB internal capacity) and `experimental-backup.bin.cartridge` (512 KiB cartridge capacity). They contain native backup records, **not raw emulator memory images**. Back them up before changing versions or importing saves. The full game's save behavior has not been validated.
 
-**Import Saturn Saves.cmd** accepts the supported per-save raw Scenario 1 `SFORCE31_XX.BIN` export format, with a choice of internal or cartridge storage. Imports preserve payloads and back up the destination. Real Saturn exports have been tested locally. Emulator and Saroo exports are usable only when they match that supported format; arbitrary `.bin` files, whole memory dumps, compressed exports and emulator save states are not automatically interchangeable. Stop the game before importing. The desktop package supplies Python; source builds need Python 3.11+ installed.
+The development **Import Saturn Saves.cmd** accepts per-save raw `SFORCE31_XX.BIN` (12904 bytes), `SFORCE32_XX.BIN` (16248 bytes), and version-1 JSON `.ysbak` exports with matching filename, size and checksum. The public v0.2.0 package accepts raw Scenario 1 exports only. Scenario 2 gameplay requires the experimental translated-v24 profile; accepting a save format does not validate every scene it can load.
+
+Choose internal or cartridge storage. A Scenario 2 save occupies 33 cartridge blocks; internal storage fits one Scenario 2 save. Imports preserve payloads and back up the destination. YSBAK filename, ASCII comment, language and save date are retained; embedded screenshots and remote URLs are ignored. Raw BIN imports generate comment/date metadata. Emulator and Saroo exports must match a supported format; whole memory dumps and emulator save states are not interchangeable. Stop the game before importing. The desktop package supplies Python; source builds need Python 3.11+ installed.
 
 ## Replay checkpoints
 

@@ -128,7 +128,7 @@ class Launcher : Form {
     void RefreshReady() {
         if(busy)return;
         bool ready=Ready(),playing=game!=null;
-        play.Enabled=ready && !playing;controller.Enabled=ready && !playing;import.Enabled=ready && !playing && activeGame==0;
+        play.Enabled=ready && !playing;controller.Enabled=ready && !playing;import.Enabled=ready && !playing;
         gameChoice.Enabled=!playing;prepare.Enabled=packageId!=null && !playing;selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!playing;
         cancel.Enabled=false;
         state.Text=packageId==null ? "Extract the complete application ZIP before running it." : playing ? "Game running. Close the game to change setup or import saves." : ready ? "Ready to play." : "Select your CUE or CHD image and click Prepare game.";
@@ -210,7 +210,7 @@ class Launcher : Form {
             form.work.Text=testRoot;form.smokePlayRoot=testRoot;
             form.Shown+=delegate {
                 form.RefreshReady();
-                if(!form.Ready() || !form.play.Enabled || !form.controller.Enabled || form.import.Enabled!=(form.activeGame==0)) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared controls are not ready");Environment.ExitCode=1;form.Close();return;}
+                if(!form.Ready() || !form.play.Enabled || !form.controller.Enabled || !form.import.Enabled) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared controls are not ready");Environment.ExitCode=1;form.Close();return;}
                 using(var image=new Bitmap(form.Width,form.Height)) {form.DrawToBitmap(image,new Rectangle(Point.Empty,form.Size));image.Save(Path.Combine(testRoot,"ready-launcher.png"));}
                 form.Play(null,EventArgs.Empty);
             };

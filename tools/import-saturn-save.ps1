@@ -8,8 +8,8 @@ try {
     }
     if ($running) { throw 'Close Native SFIII before importing saves.' }
     $picker = New-Object System.Windows.Forms.OpenFileDialog
-    $picker.Title = 'Import real Saturn saves - SFORCE31_XX.BIN'
-    $picker.Filter = 'Raw SFIII Scenario 1 saves (*.bin)|*.bin'
+    $picker.Title = 'Import Saturn saves - Scenarios 1 and 2'
+    $picker.Filter = 'SFIII save exports (*.bin;*.ysbak)|*.bin;*.ysbak'
     $picker.Multiselect = $true
     if ($picker.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 0 }
     $choice = [System.Windows.Forms.MessageBox]::Show("Import into cartridge memory?`n`nYes: Cartridge (512 KiB)`nNo: Internal (32 KiB)`nCancel: Leave saves unchanged", 'Save destination', 'YesNoCancel')
@@ -20,7 +20,7 @@ try {
     if (-not $python) { throw 'Python 3 is required. Put its executable path in save-import-python.txt beside the launcher.' }
     function Invoke-Importer([switch]$Replace) {
         $ErrorActionPreference = 'Continue' # Capture native stderr for the dialog, including duplicate-name errors.
-        $arguments = @((Join-Path $root 'import-saturn-save.py'), '--backup', (Join-Path $root 'experimental-backup.bin'), '--device', $device)
+        $arguments = @('-X', 'utf8', '-B', (Join-Path $root 'import-saturn-save.py'), '--backup', (Join-Path $root 'experimental-backup.bin'), '--device', $device)
         if ($Replace) { $arguments += '--replace' }
         $arguments += $picker.FileNames
         $lines = & $python @arguments 2>&1

@@ -1,5 +1,7 @@
-"""Import validated raw Scenario 1 saves into a native backup, without editing payloads."""
+"""Import validated SFIII raw BIN or version-1 JSON YSBAK saves without editing payloads."""
 import argparse
+import base64
+import binascii
 import datetime
 import hashlib
 import json
@@ -27,18 +29,48 @@ def records(data):
 
 
 def raw_record(path):
+    if path.stat().st_size > 16 * 1024 * 1024:
+        raise ValueError('Save export exceeds the supported 16 MiB limit')
     data = path.read_bytes()
-    if not re.fullmatch(r'SFORCE31_[0-9]{2}', path.stem, re.IGNORECASE):
-        raise ValueError('Raw saves must retain their Saturn filename: SFORCE31_XX.BIN')
-    if len(data) != 12904 or int.from_bytes(data[:4], 'big') != len(data)-8:
-        raise ValueError('Unsupported raw save layout; expected Scenario 1, 12904 bytes')
+    metadata = None
+    if path.suffix.lower() == '.ysbak':
+        try:
+            export = json.loads(data)
+            if type(export['version']) is not int or export['version'] != 1:
+                raise ValueError('Unsupported YSBAK version')
+            metadata = export['metadata']
+            name = metadata['filename']
+            data = base64.b64decode(export['dataBase64'], validate=True)
+            if type(metadata['dataSize']) is not int or metadata['dataSize'] != len(data):
+                raise ValueError('YSBAK dataSize does not match its payload')
+        except (KeyError, TypeError, UnicodeError, binascii.Error, json.JSONDecodeError) as e:
+            raise ValueError('Invalid version-1 JSON YSBAK export') from e
+    elif path.suffix.lower() == '.bin':
+        name = path.stem.upper()
+    else:
+        raise ValueError('Choose a raw BIN or version-1 JSON YSBAK save export')
+    if not isinstance(name, str) or not re.fullmatch(r'SFORCE3[12]_[0-9]{2}', name):
+        raise ValueError('Supported save names are SFORCE31_XX and SFORCE32_XX')
+    expected = 12904 if name.startswith('SFORCE31_') else 16248
+    if len(data) != expected or int.from_bytes(data[:4], 'big') != len(data)-8:
+        raise ValueError(f'Unsupported save layout for {name}; expected {expected} bytes')
     if int.from_bytes(data[4:8], 'big') != sum(data[8:]):
         raise ValueError('SFIII payload checksum mismatch; original file was not changed')
-    name = path.stem.upper()
     # Raw exports have no directory metadata. Date/comment below are import
     # metadata, not a reconstruction of the original Saturn directory entry.
     date = max(0, int((datetime.datetime.now()-datetime.datetime(1980, 1, 1)).total_seconds()/60))
-    head = name.encode().ljust(12, b'\0') + b'Imported'.ljust(11, b'\0') + b'\x01' + struct.pack('<II', date, len(data))
+    comment, language = b'Imported', 1
+    if metadata is not None:
+        try:
+            comment = metadata['comment'].encode('ascii')
+            language = metadata['language']
+            saved = datetime.datetime.strptime(metadata['saveDate'], '%Y/%m/%d %H:%M:%S')
+            date = int((saved-datetime.datetime(1980, 1, 1)).total_seconds()/60)
+            if len(comment) > 11 or b'\0' in comment or type(language) is not int or not 0 <= language <= 5 or not 0 <= date <= 0xffffffff:
+                raise ValueError('Invalid YSBAK directory metadata')
+        except (KeyError, AttributeError, TypeError, UnicodeError) as e:
+            raise ValueError('Invalid YSBAK directory metadata') from e
+    head = name.encode().ljust(12, b'\0') + comment.ljust(11, b'\0') + bytes([language]) + struct.pack('<II', date, len(data))
     return name, head+data
 
 
@@ -61,7 +93,8 @@ def import_files(backup, device, sources, replace=False):
         seen.add(name)
         existing[name] = record
         added.append(dict(name=name, source=str(path), bytes=len(record)-32,
-                          payload_sha256=hashlib.sha256(record[32:]).hexdigest()))
+                          payload_sha256=hashlib.sha256(record[32:]).hexdigest(),
+                          source_sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
     size, block = (32768, 64) if device == 'internal' else (524288, 512)
     used = sum(((len(v)-32+34+block-1)//block)+1 for v in existing.values())
     if used > size//block-2:
@@ -87,7 +120,7 @@ def import_files(backup, device, sources, replace=False):
             os.unlink(temporary)
     report = dict(device=device, target=str(target), previous=str(previous) if previous.exists() else None,
                   imported=added, used_blocks=used, available_blocks=size//block-2,
-                  metadata='Filename retained; comment/date generated at import because raw BIN lacks directory metadata')
+                  metadata='YSBAK directory metadata retained; raw BIN comment/date generated at import. Payloads unchanged.')
     Path(str(target)+'.import-'+stamp+'.json').write_text(json.dumps(report, indent=2)+'\n')
     return report
 
