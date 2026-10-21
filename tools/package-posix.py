@@ -110,7 +110,7 @@ def main():
         shutil.copytree(source,payload/component,symlinks=True)
     compiler=payload/'compiler/bin'
     compiler.mkdir(parents=True)
-    for driver,mode in [('cc','cc'),('c++','c++')]:
+    for driver,mode in [('cc','cc'),('c++','c++'),('ar','ar'),('ranlib','ranlib')]:
         script=compiler/driver
         script.write_text('#!/bin/sh\nexec "$(dirname "$0")/../../zig/zig" '+mode+' "$@"\n')
         script.chmod(0o755)

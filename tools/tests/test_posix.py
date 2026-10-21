@@ -30,6 +30,8 @@ class PortableTests(unittest.TestCase):
         with patch.object(worker.sys,'platform','darwin'):
             args=list(map(str,worker.configure_args(Path('/generated'),Path('/build'),Path('/payload'))))
         self.assertIn('-DCMAKE_CXX_COMPILER='+str(Path('/payload/compiler/bin/c++')),args)
+        self.assertIn('-DCMAKE_AR='+str(Path('/payload/compiler/bin/ar')),args)
+        self.assertIn('-DCMAKE_RANLIB='+str(Path('/payload/compiler/bin/ranlib')),args)
         self.assertIn('-DCMAKE_INSTALL_RPATH=@executable_path/lib',args)
         self.assertNotIn('-DCMAKE_EXE_LINKER_FLAGS=-static',args)
         with patch.object(worker.sys,'platform','linux'):

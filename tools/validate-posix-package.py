@@ -71,6 +71,7 @@ def main():
     checks=out/'checks'
     configure=[cmake,'-S',payload/'app/tools/tests','-B',checks,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release',
                '-DCMAKE_C_COMPILER='+str(payload/'compiler/bin/cc'),'-DCMAKE_CXX_COMPILER='+str(payload/'compiler/bin/c++'),
+               '-DCMAKE_AR='+str(payload/'compiler/bin/ar'),'-DCMAKE_RANLIB='+str(payload/'compiler/bin/ranlib'),
                '-DCMAKE_MAKE_PROGRAM='+str(payload/'ninja/ninja'),'-DSATURN_RUNTIME='+str(runtime)]
     check('configure-regressions',configure,compiler_env)
     gates=['dsp_regression','core_regression','bup_regression','machine_regression','background_regression','audio_buffer']
@@ -143,6 +144,12 @@ target_link_libraries(relocation PRIVATE SDL3::SDL3 Threads::Threads)
         check('relocated-native-host',[moved_build/'relocation'])
     finally:
         relocated.rename(package)
+    inventory=json.loads((resources/'PACKAGE-FILES.json').read_text())
+    changed=[name for name,digest in inventory.items() if not (resources/name).is_file() or worker.common.sha(resources/name)!=digest]
+    added={p.relative_to(resources).as_posix() for p in resources.rglob('*') if p.is_file()}-set(inventory)-{'PACKAGE-FILES.json'}
+    changed.extend('added: '+name for name in sorted(added))
+    results.append(dict(name='package-files-unchanged',passed=not changed,changed_files=changed))
+    if changed:raise RuntimeError('Validation changed packaged resources: '+', '.join(changed[:10]))
     report=dict(synthetic_passed=all(r['passed'] for r in results if r['name']!='gpu-shader-cases'),
                 gameplay_validated=False,transition_fixtures='unavailable: game data is never uploaded to CI',
                 physical_controller_audio_validation='unavailable',results=results)

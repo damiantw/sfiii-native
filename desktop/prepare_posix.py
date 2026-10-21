@@ -37,7 +37,7 @@ def environment(payload=PAYLOAD):
     for key in ['CC','CXX','CFLAGS','CXXFLAGS','LDFLAGS','SDKROOT','CPATH','CPLUS_INCLUDE_PATH','LIBRARY_PATH']:
         env.pop(key, None)
     env.update(PATH=os.pathsep.join(map(str, [payload/'compiler/bin', payload/'cmake/bin', payload/'ninja', '/usr/bin', '/bin'])),
-               PYTHONUNBUFFERED='1', NINJA_STATUS='[%f/%t] ',
+               PYTHONUNBUFFERED='1', PYTHONDONTWRITEBYTECODE='1', NINJA_STATUS='[%f/%t] ',
                ZIG_GLOBAL_CACHE_DIR=str(Path.home()/'.cache/sfiii-native/zig'))
     return env
 
@@ -48,6 +48,8 @@ def configure_args(generated, build, payload=PAYLOAD):
             '-DCMAKE_BUILD_TYPE=Release', '-DSATURN_VDP1_GPL=OFF',
             '-DCMAKE_C_COMPILER='+str(payload/'compiler/bin/cc'),
             '-DCMAKE_CXX_COMPILER='+str(payload/'compiler/bin/c++'),
+            '-DCMAKE_AR='+str(payload/'compiler/bin/ar'),
+            '-DCMAKE_RANLIB='+str(payload/'compiler/bin/ranlib'),
             '-DCMAKE_MAKE_PROGRAM='+str(payload/'ninja/ninja'),
             '-DSATURN_RUNTIME='+str(payload/'app/.local/saturn-recomp/runtime'),
             '-DSATURN_EXTRA='+str(payload/'app/tools/windows.cmake'),
