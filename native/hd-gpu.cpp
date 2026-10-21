@@ -1,19 +1,21 @@
 #include "hd-gpu.h"
+#include "gpu-shader.h"
 #include <cstring>
 
 namespace sf3 {
 static constexpr uint32_t scene_bytes=8*1024*1024;
 SDL_Renderer* HdGpu::create_renderer(SDL_Window* window) {
     const char* requested=std::getenv("SF3_GPU_BACKEND");
-    for(const char* backend:{"vulkan","direct3d12"}) {
+    for(const char* backend:{"vulkan","direct3d12","metal"}) {
         if(requested && *requested && std::strcmp(requested,backend)) continue;
         auto props=SDL_CreateProperties();
         SDL_SetStringProperty(props,SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING,backend);
         SDL_SetBooleanProperty(props,SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN,true);
+        SDL_SetBooleanProperty(props,SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN,true);
         SDL_SetBooleanProperty(props,SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN,true);
         SDL_SetBooleanProperty(props,SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN,std::getenv("SF3_GPU_DEBUG")!=nullptr);
         SDL_SetBooleanProperty(props,SDL_PROP_GPU_DEVICE_CREATE_PREFERLOWPOWER_BOOLEAN,std::getenv("SF3_GPU_LOW_POWER")!=nullptr);
-        SDL_SetBooleanProperty(props,SDL_PROP_GPU_DEVICE_CREATE_VULKAN_REQUIRE_HARDWARE_ACCELERATION_BOOLEAN,true);
+        SDL_SetBooleanProperty(props,SDL_PROP_GPU_DEVICE_CREATE_VULKAN_REQUIRE_HARDWARE_ACCELERATION_BOOLEAN,std::getenv("SF3_GPU_ALLOW_SOFTWARE")==nullptr);
         SDL_SetBooleanProperty(props,SDL_PROP_GPU_DEVICE_CREATE_D3D12_ALLOW_FEWER_RESOURCE_SLOTS_BOOLEAN,true);
         // The presentation shader does not use these optional Vulkan features.
         SDL_SetBooleanProperty(props,SDL_PROP_GPU_DEVICE_CREATE_FEATURE_CLIP_DISTANCE_BOOLEAN,false);
@@ -48,12 +50,9 @@ bool HdGpu::initialize(SDL_Renderer* renderer,const HdAssets& assets,const std::
     renderer_=renderer;
     if(!device_ || SDL_GetGPURendererDevice(renderer)!=device_) return SDL_SetError("GPU shader renderer not available");
     if(assets.assets_.empty()) return SDL_SetError("No HD asset pack loaded");
-    auto format=SDL_GetGPUShaderFormats(device_)&SDL_GPU_SHADERFORMAT_SPIRV ? SDL_GPU_SHADERFORMAT_SPIRV:SDL_GPU_SHADERFORMAT_DXIL;
-    std::ifstream file(std::filesystem::path(dir)/(format==SDL_GPU_SHADERFORMAT_SPIRV?"hd-assets.spv":"hd-assets.dxil"),std::ios::binary);
-    std::vector<uint8_t> code((std::istreambuf_iterator<char>(file)),{});
-    if(code.empty()) return SDL_SetError("HD shader file missing in %s",dir.c_str());
-    SDL_GPUShaderCreateInfo si{};si.code=code.data();si.code_size=code.size();si.entrypoint="main";
-    si.format=format;si.stage=SDL_GPU_SHADERSTAGE_FRAGMENT;si.num_samplers=1;si.num_storage_buffers=2;
+    FragmentShader code;if(!code.read(device_,dir,"hd-assets"))return false;
+    SDL_GPUShaderCreateInfo si{};si.code=code.bytes.data();si.code_size=code.bytes.size();si.entrypoint=code.entry;
+    si.format=code.format;si.stage=SDL_GPU_SHADERSTAGE_FRAGMENT;si.num_samplers=1;si.num_storage_buffers=2;
     shader_=SDL_CreateGPUShader(device_,&si);if(!shader_) return false;
     std::vector<uint32_t> art;
     for(const auto& asset:assets.assets_) {offsets_.push_back(uint32_t(art.size()));art.insert(art.end(),asset.replacement.px.begin(),asset.replacement.px.end());}

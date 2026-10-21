@@ -10,6 +10,8 @@
 !/.github/
 /.github/*
 !/.github/FUNDING.yml
+!/.github/workflows/
+!/.github/workflows/portable.yml
 !/LICENSES/
 /LICENSES/*
 !/LICENSES/saturn-recomp.txt
@@ -19,6 +21,7 @@
 !/docs/USAGE.md
 !/docs/DEVELOPMENT.md
 !/docs/DESKTOP.md
+!/docs/POSIX.md
 !/native/
 !/profiles/
 /profiles/*
@@ -39,6 +42,8 @@
 !/tools/disc_profile.py
 !/tools/setup-dependencies.ps1
 !/tools/package-desktop.py
+!/tools/package-posix.py
+!/tools/validate-posix-package.py
 !/tools/prepare-game.ps1
 !/tools/run-native.ps1
 !/tools/publish-replay-save.ps1
