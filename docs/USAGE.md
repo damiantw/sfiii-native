@@ -8,6 +8,8 @@ Keyboard defaults: arrows for movement, Enter for Start, Z/X/C for A/B/C, A/S/D 
 
 Use **1× / 2× / 4× / 5×** for supported geometry resolution. 5× renders 56% more pixels than 4×, so it needs more GPU headroom. Source texture detail remains original. Vulkan is preferred; Direct3D 12 is another supported backend. `SF3_GPU_BACKEND=vulkan` or `direct3d12` can force one for troubleshooting. Unsupported GPU/video paths retain a native fallback, with different performance and enhancement coverage.
 
+Gameplay and audio keep the original roughly 59.8 Hz NTSC clock. Presentation targets that rate; higher monitor refresh does not speed up the game, and individual animations can update less often. Internal resolution stays at your chosen value: there is no automatic quality reduction. GPU tile binning and parallel composition of supported background rows reduce rendering overhead on suitable hardware, but performance in untested scenes is not guaranteed.
+
 **Menu > Aspect ratio (beta) > 16:9** adds horizontal scenery; choose **4:3** for original framing. HUD/dialogue remain centered. The rotation-floor viewport window expands horizontally, retaining its vertical limits. Game-side object culling still uses original assumptions, so missing objects or pop-in at new edges can remain. Higher resolution and widescreen are experimental presentation features, not a claim of exact hardware output.
 
 ## Game saves

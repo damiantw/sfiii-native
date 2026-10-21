@@ -44,7 +44,7 @@ class AuditTests(unittest.TestCase):
             (w/'hashes.json').write_text(json.dumps({'invented Track 1':{'sha256':'invented-revision'}}))
             (w/'profile.json').write_text(json.dumps({'track1_sha256':'invented-revision','modules':modules}))
             if corrupt:(w/'extract/OTHER.BIN').write_bytes(b'changed')
-            result = subprocess.run([sys.executable,str(TOOL),'--work',str(w),'--out',str(w/'out'),
+            result = subprocess.run([sys.executable,'-B',str(TOOL),'--work',str(w),'--out',str(w/'out'),
                                      '--profile',str(w/'profile.json')],capture_output=True,text=True)
             if corrupt:
                 self.assertNotEqual(result.returncode,0)

@@ -113,6 +113,17 @@ int main(int argc,char** argv) {
                 ++cases;
             }
         }
+        // Small bins must retain inclusive coverage at every edge, including
+        // negative coordinates and quads crossing multiple tile boundaries.
+        for(int scale:{2,4,5})for(int x0:{-4,-1,0,3,4,7,8,15,16,31,32,39}) {
+            auto f=fixture(40,8);f.hd->quads.push_back(quad({0x801F},1,1,x0,2,x0+6,4));
+            auto out=rendered(gpu,f,scale);
+            for(int y=0;y<out.h;++y)for(int x=0;x<out.w;++x) {
+                bool covered=x/scale>=x0 && x/scale<=x0+6 && y/scale>=2 && y/scale<=4;
+                check(out.px[y*out.w+x]==(covered?0xFF0000:0x112233),"Small-bin inclusive and clipped coverage");
+            }
+            ++cases;
+        }
         Frame disabled;std::memset(g_vdp2_regs,0,sizeof g_vdp2_regs);check(!vdp2_compose_wide(disabled),"Display-off must retain original framing");++cases;
         for(int scale:{1,2,4,5}) {
             auto f=fixture();f.hd->quads.push_back(quad({0x801F},1,1,0,0,3,3));
@@ -151,6 +162,8 @@ int main(int argc,char** argv) {
             Frame reference;vdp2_compose_reference(reference);
             check(source.px==reference.px && source.hd && reference.hd && source.hd->composition.size()==reference.hd->composition.size(),"Optimized composition changed native pixels");
             check(std::memcmp(source.hd->composition.data(),reference.hd->composition.data(),source.hd->composition.size()*sizeof(GpuPixel))==0,"Optimized metadata differs from reference");
+            check(source.hd->visible==reference.hd->visible && source.hd->fingerprint==reference.hd->fingerprint && source.hd->geometry==reference.hd->geometry,"Parallel raster rows changed ordered provenance");
+            check(source.hd->effects.size()==reference.hd->effects.size() && std::memcmp(source.hd->effects.data(),reference.hd->effects.data(),source.hd->effects.size()*sizeof(HdEffect))==0,"Parallel raster rows changed effects");
             auto same_video=[&](const Frame& a,const Frame& b) {
                 check(a.px==b.px && bool(a.hd)==bool(b.hd),"Cached native picture differs from fresh reference");
                 if(a.hd)check(a.hd->composition.size()==b.hd->composition.size() &&

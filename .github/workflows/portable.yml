@@ -1,0 +1,136 @@
+name: Linux and macOS candidates
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/linux-macos]
+permissions:
+  contents: read
+concurrency:
+  group: portable-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  shaders:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile project-owned shaders
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess,tarfile,urllib.request
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'sfiii-shaders';root.mkdir()
+          spec=json.loads(Path('desktop/posix-dependencies.json').read_text())['dxc']
+          archive=root/'dxc.tar.gz'
+          urllib.request.urlretrieve(spec['url'],archive)
+          assert hashlib.sha256(archive.read_bytes()).hexdigest()==spec['sha256']
+          with tarfile.open(archive) as t:t.extractall(root,filter='data')
+          out=root/'output';out.mkdir()
+          for name in ['geometry','hd-assets']:
+              subprocess.run([str(root/'bin/dxc'),'-T','ps_6_0','-E','main','-O3','-spirv','-fspv-target-env=vulkan1.0',f'native/{name}.hlsl','-Fo',str(out/(name+'.spv'))],check=True,env={**os.environ,'LD_LIBRARY_PATH':str(root/'lib')})
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: project-shaders
+          path: ${{ runner.temp }}/sfiii-shaders/output
+          retention-days: 1
+  package:
+    needs: shaders
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: linux-x86_64
+          - runner: macos-14
+            target: darwin-aarch64
+          - runner: macos-15-intel
+            target: darwin-x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 100
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: project-shaders
+          path: ${{ runner.temp }}/sfiii-shaders
+      - name: Maintainer-only Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf libgl1-mesa-dev libegl1-mesa-dev libdrm-dev libgbm-dev libdecor-0-dev libibus-1.0-dev libsndio-dev libxinerama-dev libxv-dev libxxf86vm-dev libx11-dev libxcursor-dev libxext-dev libxi-dev libxrandr-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libasound2-dev libpulse-dev libdbus-1-dev libudev-dev libvulkan-dev mesa-vulkan-drivers xvfb xauth
+      - uses: actions/cache/restore@v4
+        id: dependency-cache
+        with:
+          path: ${{ runner.temp }}/sfiii-cache
+          key: portable-v2-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}-${{ hashFiles('tools/package-posix.py') }}
+          restore-keys: |
+            portable-v2-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}-
+            portable-v1-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}
+      - name: Audit source selection
+        run: python -B tools/check-source-package.py --tracked --out "$RUNNER_TEMP/source-check.json"
+      - name: Build self-contained candidate
+        run: python -B tools/package-posix.py --out "$RUNNER_TEMP/sfiii-package" --cache "$RUNNER_TEMP/sfiii-cache" --shaders "$RUNNER_TEMP/sfiii-shaders"
+      - name: Synthetic native validation
+        shell: bash
+        run: |
+          PACKAGE=$(cat "$RUNNER_TEMP/sfiii-package/package-path.txt")
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a python -B tools/validate-posix-package.py --package "$PACKAGE" --out "$RUNNER_TEMP/sfiii-validation"
+          else
+            python -B tools/validate-posix-package.py --package "$PACKAGE" --out "$RUNNER_TEMP/sfiii-validation"
+          fi
+      - name: Archive candidate and checksum
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib,json,os,subprocess,tarfile
+          root=Path(os.environ['RUNNER_TEMP']);package=Path((root/'sfiii-package/package-path.txt').read_text())
+          report=json.loads((root/'sfiii-validation/report.json').read_text())
+          assert report['synthetic_passed'] and not report['gameplay_validated']
+          if package.suffix=='.app':
+              subprocess.run(['codesign','--force','--deep','--sign','-',str(package)],check=True)
+              resources=package/'Contents/Resources'
+              files={p.relative_to(resources).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in resources.rglob('*') if p.is_file() and p.name!='PACKAGE-FILES.json'}
+              (resources/'PACKAGE-FILES.json').write_text(json.dumps(files,indent=2)+'\n')
+              subprocess.run(['codesign','--force','--sign','-',str(package)],check=True)
+              subprocess.run(['codesign','--verify','--deep','--strict',str(package)],check=True)
+          out=root/'sfiii-artifacts';out.mkdir()
+          name='SFIII-Native-0.4.0-preview1-'+os.environ['TARGET']+'.tar.gz'
+          archive=out/name
+          with tarfile.open(archive,'w:gz') as t:t.add(package,arcname=package.name)
+          with archive.open('rb') as f:digest=hashlib.file_digest(f,'sha256').hexdigest()
+          (out/(name+'.sha256')).write_text(digest+'  '+name+'\n')
+          (out/'validation.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SFIII-Native-0.4.0-preview1-${{ matrix.target }}
+          path: ${{ runner.temp }}/sfiii-artifacts
+          retention-days: 1
+      - name: Cache verified downloads and native build intermediates
+        if: always() && steps.dependency-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/sfiii-cache
+          key: portable-v2-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}-${{ hashFiles('tools/package-posix.py') }}
+      - name: Preserve build diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/sfiii-validation/*.log
+            ${{ runner.temp }}/sfiii-validation/report.json
+          retention-days: 1

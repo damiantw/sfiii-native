@@ -10,7 +10,7 @@
 
 TEST(cd_track_types_follow_track_boundaries_in_shared_and_split_files) {
     namespace fs=std::filesystem;
-    const auto parent=fs::temp_directory_path();
+    const auto parent=fs::canonical(fs::temp_directory_path());
     const auto dir=parent/("sf3-cd-track-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(dir);
     auto track=[&](const char* name,int first,int count) {
@@ -37,7 +37,7 @@ TEST(cd_track_types_follow_track_boundaries_in_shared_and_split_files) {
     }
     // Closing a synthetic image releases Windows handles before fixture cleanup.
     CHECK_EQ(cdrom_open((dir/"missing.cue").string()),false);
-    if(dir.parent_path()!=parent)throw std::runtime_error("Unexpected CD fixture cleanup path");fs::remove_all(dir);
+    if(fs::canonical(dir).parent_path()!=parent)throw std::runtime_error("Unexpected CD fixture cleanup path");fs::remove_all(dir);
 }
 
 TEST(division_handles_signs_boundaries_zero_and_wide_overflow_on_both_cpus) {

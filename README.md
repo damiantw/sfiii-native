@@ -1,6 +1,6 @@
 # Shining Force III Native
 
-An experimental Windows native static recompilation project for **Shining Force III**, with profiles for **Scenario 1 USA MK-81383 V1.001** and **Scenario 2 Translation Project v24**. Game SH-2 code is generated locally as C++ and compiled for the PC. The runtime supplies Saturn graphics, sound, storage and other hardware services; static recompilation does not remove the need to model those systems.
+An experimental native static recompilation project for **Shining Force III**, with profiles for **Scenario 1 USA MK-81383 V1.001** and **Scenario 2 Translation Project v24**. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; experimental Linux x64, Apple Silicon and Intel Mac candidates are built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services; static recompilation does not remove the need to model those systems.
 
 **Work in progress.** Recorded gameplay routes, real Saturn save imports and rendering checks work, but the complete game has not been validated. Scenario 2 translated-v24 support is experimental and has limited gameplay coverage. Scenario 3, the Premium Disc and other disc/translation revisions are not supported.
 
@@ -26,7 +26,9 @@ The current runtime provides BIOS services at a high level and **does not load o
 
 ## Get started
 
-**Players:** download **SFIII-Native-0.3.0-alpha-win64.zip** from this repository's **Releases** page, extract the **whole ZIP**, and open **SFIII Native.exe**. Choose the scenario, your CUE or CHD image and a separate game-data folder, click **Prepare game**, then **Play**. Preparation runs offline using bundled tools; there is no compiler installation, manual compilation, Python installation or terminal command to perform. Keep the application folder after preparation. See [desktop setup](docs/DESKTOP.md).
+**Windows players:** download **SFIII-Native-0.3.0-alpha-win64.zip** from this repository's **Releases** page, extract the **whole ZIP**, and open **SFIII Native.exe**. Choose the scenario, your CUE or CHD image and a separate game-data folder, click **Prepare game**, then **Play**. Preparation runs offline using bundled tools; there is no compiler installation, manual compilation, Python installation or terminal command to perform. Keep the application folder after preparation. See [desktop setup](docs/DESKTOP.md).
+
+**Linux/macOS:** see [portable platform candidates](docs/POSIX.md) for the separate launchers, bundled tools, minimum OS targets and validation limits. Hosted native builds do not certify real-disc gameplay.
 
 The application compiles game code locally during preparation. No generated game executable is distributed. The complete game is still unvalidated; this is an experimental alpha.
 

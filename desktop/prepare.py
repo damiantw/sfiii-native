@@ -57,7 +57,7 @@ def build_environment(payload=PAYLOAD):
 
 def run(command, env, log, phase, cwd=None, progress=False):
     command = list(map(str,command))
-    if Path(command[0]).name.lower() == 'python.exe':command[1:1]=['-X','utf8','-B']
+    if Path(command[0]).name.lower() in {'python.exe','python3','python'}:command[1:1]=['-X','utf8','-B']
     log.write('\nCOMMAND '+json.dumps(list(map(str,command)))+'\n');log.flush()
     proc = subprocess.Popen(list(map(str,command)),env=env,cwd=cwd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
                             text=True,encoding='utf-8',errors='replace',creationflags=NO_WINDOW)
@@ -86,6 +86,13 @@ def disc_revision(cue):
 @contextlib.contextmanager
 def preparation_lock(work):
     # OS lock releases even after Cancel terminates the worker. The file may remain.
+    if os.name != 'nt':
+        import fcntl
+        with (work/'preparation.lock').open('a+b') as file:
+            try:fcntl.flock(file,fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:raise ValueError('Another preparation is already using this game-data folder.')
+            yield
+        return
     import msvcrt
     lock = (work/'preparation.lock').open('a+b')
     if lock.seek(0,2) == 0:lock.write(b'0');lock.flush()
