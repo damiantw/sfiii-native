@@ -14,19 +14,19 @@ Use **1× / 2× / 4× / 5×** for supported geometry resolution. 5× renders 56%
 
 Use the game's save command for ordinary persistent progress. The external files are `experimental-backup.bin` (32 KiB internal capacity) and `experimental-backup.bin.cartridge` (512 KiB cartridge capacity). They contain native backup records, **not raw emulator memory images**. Back them up before changing versions or importing saves. The full game's save behavior has not been validated.
 
-The development **Import Saturn Saves.cmd** accepts per-save raw `SFORCE31_XX.BIN` (12904 bytes), `SFORCE32_XX.BIN` (16248 bytes), and version-1 JSON `.ysbak` exports with matching filename, size and checksum. The public v0.2.0 package accepts raw Scenario 1 exports only. Scenario 2 gameplay requires the experimental translated-v24 profile; accepting a save format does not validate every scene it can load.
+**Import Saturn Saves.cmd** accepts per-save raw `SFORCE31_XX.BIN` (12904 bytes), `SFORCE32_XX.BIN` (16248 bytes), and version-1 JSON `.ysbak` exports with matching filename, size and checksum. Scenario 2 gameplay requires the experimental translated-v24 profile; accepting a save format does not validate every scene it can load.
 
 Choose internal or cartridge storage. A Scenario 2 save occupies 33 cartridge blocks; internal storage fits one Scenario 2 save. Imports preserve payloads and back up the destination. YSBAK filename, ASCII comment, language and save date are retained; embedded screenshots and remote URLs are ignored. Raw BIN imports generate comment/date metadata. Emulator and Saroo exports must match a supported format; whole memory dumps and emulator save states are not interchangeable. Stop the game before importing. The desktop package supplies Python; source builds need Python 3.11+ installed.
 
-## Replay checkpoints
+## Native save states and replay checkpoints
 
-Development builds with native state continuations provide **Save state / Load state** in the toolbar and menu, or **F5 / F9**. They capture and restore the machine directly, including both CPUs, RAM, video, sound, CD state and internal/cartridge backup contents. Loading briefly restarts the native process; it does not replay earlier inputs. **Load Native State.cmd** loads the latest compatible state without first playing through the title screen.
+v0.3.0 builds with native state continuations provide **Save state / Load state** in the toolbar and menu, or **F5 / F9**. They capture and restore the machine directly, including both CPUs, RAM, video, sound, CD state and internal/cartridge backup contents. Loading briefly restarts the native process; it does not replay earlier inputs. **Load Native State.cmd** loads the latest compatible state without first playing through the title screen.
 
 There is one quick slot per exact executable/disc identity under `native-states` in the game-data folder. Wait for the window title to confirm the write. Corrupt and incompatible states are rejected. Updating the executable requires a new state; older slots remain intact. Native states are currently validated on limited Scenario 2 translated-v24 routes, not the complete game.
 
 **Loading a native state restores its backup memory too.** Exact pre-load internal/cartridge files and the loaded state are retained in that session directory. Ordinary game saves and older replay checkpoints remain available. Replay checkpoint creation/loading within a session restored from a native state is disabled; use native states there.
 
-The public v0.2.0 build and older native builds retain the replay controls described below. Development builds keep them as separate menu actions.
+The public v0.2.0 build and older native builds retain the replay controls described below. v0.3.0 keeps them as separate menu actions; F5/F9 now select native states.
 
 Toolbar/menu Save checkpoint and Load checkpoint, or F5 and F9, record a route and restart/fast-forward it. **Load Replay Checkpoint.cmd** loads the latest compatible checkpoint. Keep the complete checkpoint, including initial internal/cartridge backups, clock, settings and input. They are tied to the exact disc and native executable and are not instant save states. New executable versions can invalidate them.
 
