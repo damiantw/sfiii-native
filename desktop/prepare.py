@@ -162,7 +162,7 @@ def prepare(cue, work, scenario=None):
             for name in ['controller_setup.exe']:
                 shutil.copyfile(build/name,work/'controller-setup.exe')
             shutil.copyfile(build/'SDL3.dll',work/'SDL3.dll')
-            for name in ['run-native.ps1','publish-replay-save.ps1','Launch Native SFIII.cmd','Load Replay Checkpoint.cmd',
+            for name in ['run-native.ps1','publish-replay-save.ps1','Launch Native SFIII.cmd','Load Replay Checkpoint.cmd','Load Native State.cmd',
                          'Controller Setup.cmd','Controller Test.cmd','Import Saturn Saves.cmd','import-saturn-save.ps1','import-saturn-save.py']:
                 shutil.copyfile(APP/'tools'/name,work/name)
             db = APP/'.local/controllerdb'

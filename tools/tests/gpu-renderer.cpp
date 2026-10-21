@@ -1,6 +1,7 @@
 // Original, synthetic shader tests. Optional local video dump stays external.
 #include "gpu-renderer.h"
 #include "saturn.h"
+#include "state.h"
 #include <filesystem>
 #include <fstream>
 #include <chrono>
@@ -136,6 +137,15 @@ int main(int argc,char** argv) {
             std::memcpy(g_vdp2_vram,bytes.data()+v2,sizeof g_vdp2_vram);std::memcpy(g_vdp2_cram,bytes.data()+v2+sizeof g_vdp2_vram,sizeof g_vdp2_cram);
             std::memcpy(g_vdp2_regs,bytes.data()+v2+sizeof g_vdp2_vram+sizeof g_vdp2_cram,sizeof g_vdp2_regs);
             Frame source;vdp2_compose(source);check(source.w<=704 && source.h<=512,"GPU mode must retain native CPU composition size");
+            State snapshot;vdp1_state(snapshot);
+            auto before_state=rendered(gpu,source,4);
+            vdp1_fb_write(0,0xFC00,2);g_vdp1_vram[0x200]^=0xFF;
+            snapshot.loading=true;vdp1_state(snapshot);
+            Frame restored_state;vdp2_compose(restored_state);
+            check(restored_state.px==source.px,"State restore changed native pixels");
+            check(rendered(gpu,restored_state,4).px==before_state.px,"State restore changed GPU geometry, texture sharing or composition");
+            check(snapshot.pos==snapshot.data.size(),"Incomplete VDP1 state restoration");
+            std::printf("PASS: native and 4x GPU snapshot round trip\n");
             Frame reference;vdp2_compose_reference(reference);
             check(source.px==reference.px && source.hd && reference.hd && source.hd->composition.size()==reference.hd->composition.size(),"Optimized composition changed native pixels");
             check(std::memcmp(source.hd->composition.data(),reference.hd->composition.data(),source.hd->composition.size()*sizeof(GpuPixel))==0,"Optimized metadata differs from reference");

@@ -20,7 +20,7 @@ class Launcher : Form {
     string defaultDataRoot;
     readonly ProgressBar progress = new ProgressBar();
     Process worker, game;
-    string settingsPath, packageId;
+    string settingsPath, fallbackSettingsPath, packageId;
     bool busy;
     bool cancelled;
     string lastError;
@@ -40,6 +40,9 @@ class Launcher : Form {
         using(var f=File.OpenRead(path)) using(var h=SHA256.Create()) return BitConverter.ToString(h.ComputeHash(f)).Replace("-","").ToLowerInvariant();
     }
     Dictionary<string,object> Read(string path) {return json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path));}
+    Dictionary<string,object> ReadSavedSettings() {
+        return Read(File.Exists(settingsPath) || String.IsNullOrEmpty(fallbackSettingsPath) ? settingsPath : fallbackSettingsPath);
+    }
     void Ui(Action action) {if(!IsDisposed && IsHandleCreated) BeginInvoke(action);}
     Label TextAt(string text,int x,int y,int width,int height) {
         var label=new Label {Text=text,Left=x,Top=y,Width=width,Height=height}; Controls.Add(label);return label;
@@ -78,17 +81,18 @@ class Launcher : Form {
         ButtonAt(import,"Import saves",430,346,125,delegate {LaunchScript("import-saturn-save.ps1",true);});
         ButtonAt(openFolder,"Open data folder",565,346,145,delegate {if(Directory.Exists(work.Text)) Process.Start("explorer.exe",Quote(work.Text));});
         ButtonAt(cancel,"Cancel",720,346,100,delegate {CancelWorker();});
-        settingsPath=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SFIII Native","launcher.json");
+        fallbackSettingsPath=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SFIII Native","launcher.json");
+        settingsPath=Path.Combine(root,"launcher-settings.json");
         work.Text=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SFIII Native","Game");
-        if(testRoot!=null) {settingsPath=Path.Combine(testRoot,"launcher.json");work.Text=Path.Combine(testRoot,"Game");}
+        if(testRoot!=null) {settingsPath=Path.Combine(testRoot,"launcher.json");fallbackSettingsPath=null;work.Text=Path.Combine(testRoot,"Game");}
         defaultDataRoot=work.Text;
-        try {var s=Read(settingsPath);cue.Text=(string)s["cue"];work.Text=(string)s["work"];
+        try {var s=ReadSavedSettings();cue.Text=(string)s["cue"];work.Text=(string)s["work"];
             if(s.ContainsKey("selected")) {activeGame=Math.Max(0,Math.Min(1,Convert.ToInt32(s["selected"])));gameChoice.SelectedIndex=activeGame;}
         } catch { }
         gameChoice.SelectedIndexChanged+=delegate {
             if(busy)return;SaveSettings();activeGame=gameChoice.SelectedIndex;busy=true;
             cue.Text="";work.Text=activeGame==0 ? defaultDataRoot : defaultDataRoot+"-Scenario2-v24";
-            try {var s=Read(settingsPath);var games=(Dictionary<string,object>)s["games"];
+            try {var s=ReadSavedSettings();var games=(Dictionary<string,object>)s["games"];
                 var entry=(Dictionary<string,object>)games[activeGame.ToString()];cue.Text=(string)entry["cue"];work.Text=(string)entry["work"];
             } catch { }
             busy=false;SaveSettings();RefreshReady();
@@ -105,9 +109,13 @@ class Launcher : Form {
     void SaveSettings() {
         Directory.CreateDirectory(Path.GetDirectoryName(settingsPath));
         Dictionary<string,object> games=new Dictionary<string,object>();
-        try {games=(Dictionary<string,object>)Read(settingsPath)["games"];} catch { }
+        try {games=(Dictionary<string,object>)ReadSavedSettings()["games"];} catch { }
         games[activeGame.ToString()]=new Dictionary<string,object>{{"cue",cue.Text},{"work",work.Text}};
-        File.WriteAllText(settingsPath,json.Serialize(new Dictionary<string,object>{{"cue",cue.Text},{"work",work.Text},{"selected",activeGame},{"games",games}}));
+        string text=json.Serialize(new Dictionary<string,object>{{"cue",cue.Text},{"work",work.Text},{"selected",activeGame},{"games",games}});
+        try {File.WriteAllText(settingsPath,text);} catch(Exception error) {
+            if(String.IsNullOrEmpty(fallbackSettingsPath) || !(error is IOException || error is UnauthorizedAccessException))throw;
+            Directory.CreateDirectory(Path.GetDirectoryName(fallbackSettingsPath));File.WriteAllText(fallbackSettingsPath,text);
+        }
     }
     bool Ready() {
         try {
@@ -227,7 +235,14 @@ class Launcher : Form {
                 form.cue.Text=Path.Combine(testRoot,"second.chd");form.gameChoice.SelectedIndex=0;
                 if(form.work.Text!=firstWork || form.cue.Text!=Path.Combine(testRoot,"first.cue") || form.gameChoice.SelectedIndex!=0 || !form.gameChoice.Text.Contains("Scenario 1"))throw new Exception("Game selection did not remember per-game paths");
                 using(var image=new Bitmap(form.Width,form.Height)) {form.DrawToBitmap(image,new Rectangle(Point.Empty,form.Size));image.Save(Path.Combine(testRoot,"launcher.png"));}
-                form.SaveSettings();File.WriteAllText(Path.Combine(testRoot,"passed.txt"),"PASS: first-run state, busy/cancel controls, settings and UI rendering");
+                form.SaveSettings();
+                string legacy=Path.Combine(testRoot,"legacy-settings.json"),original=File.ReadAllText(form.settingsPath);
+                File.WriteAllText(legacy,original);form.fallbackSettingsPath=legacy;form.settingsPath=Path.Combine(testRoot,"portable-settings.json");
+                if((string)form.ReadSavedSettings()["work"]!=firstWork)throw new Exception("Legacy settings migration failed");
+                form.work.Text=Path.Combine(testRoot,"remembered-game");form.SaveSettings();
+                if(!File.Exists(form.settingsPath) || (string)form.ReadSavedSettings()["work"]!=form.work.Text || File.ReadAllText(legacy)!=original)
+                    throw new Exception("Portable settings must retain game paths without rewriting the legacy settings");
+                File.WriteAllText(Path.Combine(testRoot,"passed.txt"),"PASS: first-run state, busy/cancel controls, per-game paths, portable settings migration and UI rendering");
             } catch(Exception error) {File.WriteAllText(Path.Combine(testRoot,"failed.txt"),error.ToString());Environment.ExitCode=1;}
             form.Close();
         };

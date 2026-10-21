@@ -1,6 +1,7 @@
 // Synthetic hardware regressions: no game bytes or assets.
 #include "saturn.h"
 #include "video.h"
+#include "state.h"
 #include "test.h"
 #include <cstring>
 
@@ -338,5 +339,31 @@ TEST(widescreen_rotation_floor_extends_viewport_windows_but_preserves_masks_and_
         reg16(0xD4,2<<(window*2));CHECK_EQ(vdp2_compose_wide(wide),true);
         CHECK_EQ(at(0,100),0x00F800);CHECK_EQ(at(wide.w-1,100),0x00F800);
     }
+    vdp1_gpu_available(false);vdp1_render_scale(1);vdp1_hd_collect(false);vdp1_init();
+}
+
+TEST(native_state_restores_gpu_geometry_and_shared_textures) {
+    vdp1_init();vdp1_gpu_available(true);vdp1_render_scale(2);vdp1_hd_collect(true);
+    std::memset(g_vdp1_vram,0,sizeof g_vdp1_vram);
+    auto cmd=[](unsigned a,unsigned o,uint16_t v){mem_wr(g_vdp1_vram,a+o,v,2);};
+    cmd(0,0,9);cmd(0,20,319);cmd(0,22,239);cmd(32,0,10);
+    for(int i=0;i<8;++i)cmd(0x200,i*2,0x83E0);
+    for(int i=0;i<3;++i) {
+        const unsigned at=64+i*32;cmd(at,0,2);cmd(at,4,0xA8);cmd(at,8,0x40);cmd(at,10,0x101);
+        const int xy[]={10,10+i*4,18,10+i*4,18,12+i*4,10,12+i*4};
+        for(int j=0;j<8;++j)cmd(at,12+j*2,xy[j]);
+    }
+    cmd(160,0,0x8000);vdp1_reg_write(4,1,2);vdp1_vblank_out();
+    const auto before=vdp1_hd_scene();CHECK_EQ(bool(before),true);CHECK_EQ(before->quads.size(),3u);
+    State snapshot;vdp1_state(snapshot);
+    // Disturb both RAM and the displayed framebuffer before restoration.
+    cmd(0x200,0,0xFC00);vdp1_fb_write(0,0xFC00,2);
+    snapshot.loading=true;vdp1_state(snapshot);
+    const auto after=vdp1_hd_scene();CHECK_EQ(bool(after),true);CHECK_EQ(after->quads.size(),3u);
+    CHECK_EQ(after->quads[0].texture==after->quads[1].texture,true);
+    CHECK_EQ(after->quads[1].texture==after->quads[2].texture,true);
+    CHECK_EQ(after->quads[0].texture->raw==before->quads[0].texture->raw,true);
+    CHECK_EQ(std::memcmp(after->quads[0].xy,before->quads[0].xy,sizeof after->quads[0].xy),0);
+    CHECK_EQ(snapshot.pos,snapshot.data.size());
     vdp1_gpu_available(false);vdp1_render_scale(1);vdp1_hd_collect(false);vdp1_init();
 }

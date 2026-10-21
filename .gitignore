@@ -30,6 +30,7 @@
 !/tools/build-headless.ps1
 !/tools/build-scenario1.ps1
 !/tools/check-module-build.py
+!/tools/validate-native-states.py
 !/tools/check-source-package.py
 !/tools/dev-env.ps1
 !/tools/generate.py
@@ -48,6 +49,7 @@
 !/tools/Controller Test.cmd
 !/tools/Launch Native SFIII.cmd
 !/tools/Load Replay Checkpoint.cmd
+!/tools/Load Native State.cmd
 !/tools/runtime-diagnostics.patch
 !/tools/windows.cmake
 !/tools/tests/

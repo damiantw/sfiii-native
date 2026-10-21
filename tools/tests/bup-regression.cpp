@@ -1,5 +1,6 @@
 #include "saturn.h"
 #include "test.h"
+#include "state.h"
 #include <filesystem>
 #include <chrono>
 #include <fstream>
@@ -42,6 +43,25 @@ TEST(full_internal_memory_rejects_new_and_growing_saves_without_losing_old_data)
     f.prepare("A",20000,9);CHECK_EQ(f.call(4,0,f.dir,f.data),4);
     f.reload();f.prepare("A",0,0);CHECK_EQ(f.call(5,0),0);
     for(unsigned i=0;i<12904;++i) CHECK_EQ(ld8(f.out+i),uint8_t(3+i));
+}
+
+TEST(native_snapshot_captures_lazy_internal_and_cartridge_backups_before_first_bup_call) {
+    BackupFixture f;
+    for(unsigned device=0;device<2;++device) {
+        f.prepare("A",8,uint8_t(40+device));CHECK_EQ(f.call(4,device,f.dir,f.data),0);
+    }
+    f.reload(); // Neither device is loaded now, as before the first title-screen BUP call.
+    State snapshot;bios_state(snapshot);
+    for(unsigned device=0;device<2;++device) {
+        f.prepare("A",8,99);CHECK_EQ(f.call(4,device,f.dir,f.data),0);
+    }
+    f.reload();snapshot.loading=true;bios_state(snapshot);bios_save();
+    CHECK_EQ(snapshot.pos,snapshot.data.size());
+    f.reload();
+    for(unsigned device=0;device<2;++device) {
+        f.prepare("A",0,0);CHECK_EQ(f.call(5,device),0);
+        for(unsigned i=0;i<8;++i) CHECK_EQ(ld8(f.out+i),uint8_t(40+device+i));
+    }
 }
 
 TEST(backup_directory_limits_prefixes_and_invalid_devices_do_not_overwrite_buffers) {

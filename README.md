@@ -12,7 +12,7 @@ An experimental Windows native static recompilation project for **Shining Force 
 - Original textures with 1×, 2× and 4× rendering of supported geometry through Vulkan or Direct3D 12.
 - Experimental 16:9 rendering with centered original framing and additional scenery. Game-side object culling is still incomplete, so edge gaps and pop-in can remain.
 - Persistent internal and cartridge backup storage, with import of supported raw Scenario 1 `SFORCE31_XX.BIN` saves.
-- Replay checkpoints. Loading reconstructs progress by fast-forwarding recorded input; these are **not instant save states**.
+- Replay checkpoints, plus experimental direct native save states in development builds. Native states are currently validated on limited Scenario 2 translated-v24 routes; the public v0.2.0 package uses input replays.
 - A portable Windows first-run application that prepares your own disc automatically, with controller setup and save import buttons.
 
 ## What you supply
@@ -63,7 +63,7 @@ Planned directions, with no release dates or compatibility guarantees. Faithful 
 - **Scenarios 2–3, Premium Disc and translations:** add revision-specific compilation profiles and validation, including explicit identification of supported translation patch versions.
 - **Save portability and campaign transfers:** expand verified emulator/Saroo import and export formats, and validate backed-up progress transfers between compatible scenarios and editions.
 - **Optional faithful high-resolution artwork:** revisit sharper replacement assets after gameplay and rendering correctness are further established, while retaining the original-art option.
-- **Instant native save states:** investigate full runtime-state restoration beyond the existing replay checkpoints; this requires additional runtime work.
+- **Broader native save-state validation:** extend snapshot tests across battles, transitions and additional scenarios, beyond the currently tested Scenario 2 routes.
 
 These are roadmap items, not features already supported by the current Scenario 1 build.
 

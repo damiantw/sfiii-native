@@ -56,4 +56,4 @@ else:
     sys.path.insert(0, str(repo / '.local' / 'saturn-recomp' / 'src'))
     from saturnrecomp.recomp.__main__ import generate
     generate(specs, str(out), callable_entries=overlays,
-             runtime_literals={m['name'] for m in profile['modules']}, optest=a.optest)
+             runtime_literals={m['name'] for m in profile['modules']}, optest=a.optest, native_states=True)

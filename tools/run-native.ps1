@@ -5,6 +5,8 @@ param(
     [int]$VBlanks = 0,
     [switch]$ReplayLatest,
     [string]$ReplayCheckpoint = '',
+    [string]$NativeState = '',
+    [switch]$LoadNativeLatest,
     [switch]$Diagnostics
 )
 $ErrorActionPreference = 'Stop'
@@ -44,6 +46,11 @@ if (-not $trackInfo.Count) { throw 'No quoted FILE entries were found in the CUE
 $hasher = [System.Security.Cryptography.SHA256]::Create()
 try { $discId = ([BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes(($discParts -join "`n"))))).Replace('-', '').ToLowerInvariant() }
 finally { $hasher.Dispose() }
+$nativeStateRoot = Join-Path (Join-Path $Work 'native-states') ($buildId.Substring(0,16) + '-' + $discId.Substring(0,16))
+if ($LoadNativeLatest) {
+    $NativeState = Join-Path $nativeStateRoot 'latest.satstate'
+    if (-not (Test-Path -LiteralPath $NativeState)) { throw 'No native state has been saved for this executable and disc yet.' }
+}
 $replayRoot = Join-Path $Work 'replay-checkpoints'
 if ($ReplayLatest) {
     $name = [System.IO.File]::ReadAllText((Join-Path $replayRoot 'latest.txt'))
@@ -51,7 +58,7 @@ if ($ReplayLatest) {
     $ReplayCheckpoint = Join-Path $replayRoot $name
 }
 $previousEnvironment = @{}
-foreach ($name in @('SF3_CONTROLLER_DIR', 'SF3_RAM_DUMP', 'SF3_CRASH_DIR', 'SF3_REPLAY_ROOT', 'SF3_REPLAY_SEED')) {
+foreach ($name in @('SF3_CONTROLLER_DIR', 'SF3_RAM_DUMP', 'SF3_CRASH_DIR', 'SF3_REPLAY_ROOT', 'SF3_REPLAY_SEED', 'SF3_STATE_ROOT', 'SF3_STATE_ID')) {
     $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 $result = 1
@@ -104,6 +111,22 @@ try {
         $clockText = if ($context.clock -is [DateTime]) { $context.clock.ToString('yyyy-MM-ddTHH:mm:ss') } else { [string]$context.clock }
         $options = @('--cue', $cuePath, '--save', $save, '--settings', $settings, '--clock', $clockText, '--out', $run,
             '--log', (Join-Path $run 'run.log'), '--record-input', (Join-Path $run 'input.txt'))
+        if ($NativeState) {
+            if ($ReplayCheckpoint) { throw 'Choose a native state or a replay, not both.' }
+            $NativeState = [IO.Path]::GetFullPath($NativeState)
+            $stateRoot = [IO.Path]::GetFullPath((Join-Path $Work 'native-states')) + '\'
+            if (-not $NativeState.StartsWith($stateRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Native state must be in this game-data folder''s native-states directory.' }
+            # Keep the exact pre-load progress and source state before restoring.
+            Copy-Item -LiteralPath $NativeState -Destination (Join-Path $run 'loaded.satstate')
+            $presence = [ordered]@{}
+            foreach ($name in @('experimental-backup.bin', 'experimental-backup.bin.cartridge')) {
+                $source = Join-Path $Work $name
+                $presence[$name] = Test-Path -LiteralPath $source
+                if ($presence[$name]) { Copy-Item -LiteralPath $source -Destination (Join-Path $run ('before-native-state-load-' + $name)) }
+            }
+            $presence | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $run 'before-native-state-load.json') -Encoding utf8
+            $options += @('--state-in', (Join-Path $run 'loaded.satstate'))
+        }
         if ($Diagnostics) { $options += @('--coverage', (Join-Path $run 'coverage.tsv'), '--checkpoint', '10', '--trace') }
         if ($ReplayCheckpoint) { $options += @('--input', ('@' + (Join-Path $ReplayCheckpoint 'input.txt')), '--resume', "$resumeFrame", '--resume-label', 'Loading replay checkpoint') }
         if ($Headless) { $options += '--headless' }
@@ -113,13 +136,15 @@ try {
         $manifestPath = Join-Path $run 'session.json'
         $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8
         Write-Host "Native SFIII session: $run"
-        Write-Host 'F5: save replay checkpoint. F9: restart and fast-forward to latest checkpoint.'
-        Write-Host 'These are input replays, not instant machine states. Console and input are logged.'
+        Write-Host 'Native-state builds: F5 saves a machine snapshot; F9 loads it directly, without replay.'
+        Write-Host 'Earlier builds retain replay checkpoints. Console and input are logged.'
         $env:SF3_CONTROLLER_DIR = $Work
         $env:SF3_RAM_DUMP = Join-Path $run 'crash-wram-high.bin'
         $env:SF3_CRASH_DIR = $run
         $env:SF3_REPLAY_ROOT = $replayRoot
         $env:SF3_REPLAY_SEED = $seed
+        $env:SF3_STATE_ROOT = $nativeStateRoot
+        $env:SF3_STATE_ID = $buildId + ':' + $discId
         try {
             & $exe @options
             $result = $LASTEXITCODE
@@ -135,9 +160,12 @@ try {
             Write-Host "Session saved: $run"
         }
         $ReplayCheckpoint = ''
+        $NativeState = ''
         $request = Join-Path $run 'reload-request.txt'
         if ($result -eq 0 -and (Test-Path -LiteralPath $request)) { $ReplayCheckpoint = [IO.File]::ReadAllText($request) }
-    } while ($ReplayCheckpoint)
+        $stateRequest = Join-Path $run 'native-state-request.txt'
+        if ($result -eq 0 -and (Test-Path -LiteralPath $stateRequest)) { $NativeState = [IO.File]::ReadAllText($stateRequest) }
+    } while ($ReplayCheckpoint -or $NativeState)
 } finally {
     foreach ($name in $previousEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process') }
     Pop-Location
