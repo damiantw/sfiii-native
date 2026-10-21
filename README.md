@@ -4,20 +4,24 @@ An experimental native static recompilation project for **Shining Force III**, w
 
 **Work in progress.** Recorded gameplay routes, real Saturn save imports and rendering checks work, but the complete game has not been validated. Scenario 2 translated-v24 support is experimental and has limited gameplay coverage. Scenario 3, the Premium Disc and other disc/translation revisions are not supported.
 
-**v0.3.0-alpha:** adds CHD input, a Scenario 1/2 launcher selector, Scenario 2 BIN/YSBAK save imports, direct native save states and 5× GPU rendering. See [release changes and desktop setup](docs/DESKTOP.md).
+**Windows v0.3.0-alpha:** adds CHD input, a Scenario 1/2 launcher selector, Scenario 2 BIN/YSBAK save imports, direct native save states and 5× GPU rendering. See [release changes and desktop setup](docs/DESKTOP.md).
+
+**Linux/macOS v0.4.0-preview1:** [download the experimental native packages](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.4.0-preview1) for Linux x86-64, Apple Silicon or Intel Macs. Build and synthetic checks passed; real-disc gameplay on these platforms remains unvalidated. See [portable setup and validation limits](docs/POSIX.md).
 
 ## Features
 
 - Keyboard and SDL controllers, including PlayStation, Xbox, generic USB and configurable Saturn USB controllers.
-- Original textures with 1×, 2×, 4× and 5× rendering of supported geometry through Vulkan or Direct3D 12.
+- Original textures with 1×, 2×, 4× and 5× rendering of supported geometry through Vulkan, Direct3D 12 or Metal (macOS preview).
 - Experimental 16:9 rendering with centered original framing and additional scenery. Game-side object culling is still incomplete, so edge gaps and pop-in can remain.
 - Persistent internal and cartridge backup storage, with import of supported Scenario 1/2 raw BIN and version-1 JSON YSBAK saves.
 - Direct native save states (F5/F9), with separate legacy replay checkpoints. Snapshot validation covers limited Scenario 2 translated-v24 routes; broader snapshot compatibility remains unvalidated.
 - A portable Windows first-run application that prepares your own disc automatically, with controller setup and save import buttons.
+- Experimental Linux/macOS launchers with bundled offline preparation tools, controller setup and save imports.
 
 ## What you supply
 
-- Windows 10 (1903 or newer)/11 x64 with .NET Framework 4.8 (normally included), a Vulkan or Direct3D 12 capable GPU, and several GB of free disk space.
+- **Windows:** Windows 10 (1903 or newer)/11 x64 with .NET Framework 4.8 (normally included), a Vulkan or Direct3D 12 capable GPU, and several GB of free disk space.
+- **Linux/macOS preview:** Ubuntu 22.04 or newer x86-64 desktop, or macOS 13 or newer on Apple Silicon/Intel; see [platform requirements](docs/POSIX.md).
 - Your own supported **BIN/CUE or standalone CHD** disc: unpatched Scenario 1 USA V1.001, or the registered Scenario 2 Translation Project v24 edition. Disc contents are verified; a filename or patch label alone is insufficient. The Scenario 1 data-track SHA-256 is:
 
   `089c77470dec14f1dbffaad1ab50d584f06df5e28b475fc712b8e67e5890f951`
@@ -28,7 +32,7 @@ The current runtime provides BIOS services at a high level and **does not load o
 
 **Windows players:** download **SFIII-Native-0.3.0-alpha-win64.zip** from this repository's **Releases** page, extract the **whole ZIP**, and open **SFIII Native.exe**. Choose the scenario, your CUE or CHD image and a separate game-data folder, click **Prepare game**, then **Play**. Preparation runs offline using bundled tools; there is no compiler installation, manual compilation, Python installation or terminal command to perform. Keep the application folder after preparation. See [desktop setup](docs/DESKTOP.md).
 
-**Linux/macOS:** see [portable platform candidates](docs/POSIX.md) for the separate launchers, bundled tools, minimum OS targets and validation limits. Hosted native builds do not certify real-disc gameplay.
+**Linux/macOS:** download your platform archive from [v0.4.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.4.0-preview1), extract the complete archive, and open **SFIII Native** (**SFIII Native.app** on Mac). See [portable platform setup](docs/POSIX.md) for preparation and validation limits. Hosted native builds do not certify real-disc gameplay.
 
 The application compiles game code locally during preparation. No generated game executable is distributed. The complete game is still unvalidated; this is an experimental alpha.
 
