@@ -68,14 +68,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libsdl2-dev libx11-dev libxcursor-dev libxext-dev libxi-dev libxrandr-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libasound2-dev libpulse-dev libdbus-1-dev libudev-dev libvulkan-dev mesa-vulkan-drivers xvfb xauth
-      - name: Maintainer-only macOS build dependencies
-        if: runner.os == 'macOS'
-        run: brew install sdl2
       - uses: actions/cache/restore@v4
         id: dependency-cache
         with:
           path: ${{ runner.temp }}/sfiii-cache
-          key: portable-v1-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}
+          key: portable-v2-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}-${{ hashFiles('tools/package-posix.py') }}
+          restore-keys: |
+            portable-v2-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}-
+            portable-v1-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}
       - name: Audit source selection
         run: python -B tools/check-source-package.py --tracked --out "$RUNNER_TEMP/source-check.json"
       - name: Build self-contained candidate
@@ -123,7 +123,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/sfiii-cache
-          key: portable-v1-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}
+          key: portable-v2-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}-${{ hashFiles('tools/package-posix.py') }}
       - name: Preserve build diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4

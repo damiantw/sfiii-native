@@ -36,7 +36,6 @@ def main():
         if required and not result['passed']:raise RuntimeError(name+' failed:\n'+text[-6000:])
         return result,text
     check('python-tests',[python,'-X','utf8','-B','-m','unittest','discover','-s',payload/'app/tools/tests','-p','test_*.py'])
-    check('chd-converter',[payload/'chdman/chdman','help'])
     # Native tools must not depend on maintainer-only Homebrew or checkout paths.
     command=['otool','-L'] if sys.platform=='darwin' else ['ldd']
     _,text=check('chd-library-dependencies',[*command,payload/'chdman/chdman'])
@@ -52,6 +51,7 @@ def main():
     (disc/'source.cue').write_text('FILE "source.bin" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    INDEX 01 00:04:00\n')
     converter=payload/'chdman/chdman'
     check('chd-create',[converter,'createcd','-i',disc/'source.cue','-o',disc/'synthetic.chd'])
+    check('chd-info',[converter,'info','-i',disc/'synthetic.chd'])
     check('chd-verify',[converter,'verify','-i',disc/'synthetic.chd'])
     check('chd-extract',[converter,'extractcd','-i',disc/'synthetic.chd','-o',disc/'output.cue','-ob',disc/'output.bin'])
     if (disc/'output.bin').read_bytes()!=invented:
@@ -117,7 +117,7 @@ include("${SATURN_EXTRA}")
         moved_payload=relocated/relative_resources/'payload'
         moved_entry=relocated/entry.relative_to(package)
         check('relocated-launcher-ui',[moved_entry,'--self-test',out/'relocated-launcher'])
-        check('relocated-chd-converter',[moved_payload/'chdman/chdman','help'])
+        check('relocated-chd-converter',[moved_payload/'chdman/chdman','info','-i',disc/'synthetic.chd'])
         probe=out/'relocation-source'
         probe.mkdir()
         (probe/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.20)
