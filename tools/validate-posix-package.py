@@ -45,8 +45,20 @@ def main():
     command=['otool','-L'] if sys.platform=='darwin' else ['ldd']
     _,text=check('chd-library-dependencies',[*command,payload/'chdman/chdman'])
     dependencies='\n'.join(text.splitlines()[1:]) if sys.platform=='darwin' else text
-    if 'not found' in dependencies or any(prefix in dependencies for prefix in ['/opt/homebrew/','/usr/local/','/Users/','/home/runner/']):
+    if 'not found' in dependencies:
         raise RuntimeError('The CHD converter has an unbundled build-machine dependency:\n'+text)
+    for line in dependencies.splitlines():
+        target=line.split(' => ',1)[-1].strip().rsplit(' (',1)[0]
+        bundled=target.startswith('/') and Path(target).resolve().is_relative_to(package)
+        if not bundled and any(prefix in target for prefix in ['/opt/homebrew/','/usr/local/','/Users/','/home/runner/']):
+            raise RuntimeError('The CHD converter has an unbundled build-machine dependency:\n'+line)
+    if sys.platform=='linux':
+        if 'libSDL2' in dependencies:raise RuntimeError('The CHD converter still requires unbundled SDL2.')
+        sdl=next((line.split(' => ',1)[1].rsplit(' (',1)[0] for line in dependencies.splitlines() if 'libSDL3.so' in line and ' => ' in line),None)
+        if not sdl or not Path(sdl).resolve().is_relative_to(payload/'sdl'):
+            raise RuntimeError('The CHD converter did not resolve the bundled SDL3 library.')
+        _,rpath=check('chd-runtime-path',['patchelf','--print-rpath',payload/'chdman/chdman'])
+        if rpath.strip()!='$ORIGIN/../sdl/lib':raise RuntimeError('The CHD converter runtime path is not relocatable.')
     # Invented mixed data/audio sectors exercise the actual converter, never a game.
     disc=out/'synthetic disc é'
     disc.mkdir()

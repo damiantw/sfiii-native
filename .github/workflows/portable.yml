@@ -67,7 +67,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsdl2-dev libx11-dev libxcursor-dev libxext-dev libxi-dev libxrandr-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libasound2-dev libpulse-dev libdbus-1-dev libudev-dev libvulkan-dev mesa-vulkan-drivers xvfb xauth
+          sudo apt-get install -y patchelf libx11-dev libxcursor-dev libxext-dev libxi-dev libxrandr-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libasound2-dev libpulse-dev libdbus-1-dev libudev-dev libvulkan-dev mesa-vulkan-drivers xvfb xauth
       - uses: actions/cache/restore@v4
         id: dependency-cache
         with:

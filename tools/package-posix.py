@@ -118,11 +118,18 @@ def main():
     sources={n:git_source(cache,n,spec) for n,spec in lock['git'].items()}
     jobs=str(min(4,os.cpu_count() or 1))
     prefix=payload/'sdl'
+    # MAME's pkg-config parser cannot handle spaces in library paths. Install
+    # once into the external cache, then relocate SDL into the player package.
+    sdl_install=cache/'sdl-install' if sys.platform=='linux' else prefix
     build=cache/'build-sdl'
     run([cmake,'-S',sources['sdl'],'-B',build,'-DCMAKE_BUILD_TYPE=Release','-DSDL_SHARED=ON','-DSDL_STATIC=OFF',
-         '-DSDL_TESTS=OFF','-DSDL_TEST_LIBRARY=OFF','-DSDL_FRAMEWORK=OFF','-DCMAKE_INSTALL_NAME_DIR=@rpath','-DCMAKE_INSTALL_PREFIX='+str(prefix)])
+         '-DSDL_TESTS=OFF','-DSDL_TEST_LIBRARY=OFF','-DSDL_FRAMEWORK=OFF','-DCMAKE_INSTALL_NAME_DIR=@rpath','-DCMAKE_INSTALL_PREFIX='+str(sdl_install)])
     run([cmake,'--build',build,'--parallel',jobs])
     run([cmake,'--install',build])
+    if sdl_install!=prefix:shutil.copytree(sdl_install,prefix,symlinks=True)
+    for pc in (prefix/'lib/pkgconfig').glob('*.pc'):
+        text=pc.read_text()
+        pc.write_text('\n'.join('prefix=${pcfiledir}/../..' if line.startswith('prefix=') else line for line in text.splitlines())+'\n')
     run([cmake,'-S',sources['ninja'],'-B',cache/'build-ninja','-DCMAKE_BUILD_TYPE=Release','-DBUILD_TESTING=OFF'])
     run([cmake,'--build',cache/'build-ninja','--parallel',jobs])
     (payload/'ninja').mkdir()
@@ -139,15 +146,18 @@ def main():
             if 'fragmentMain' not in code or '[[buffer(0)]]' not in code or '[[buffer(1)]]' not in code:
                 raise ValueError('Metal shader resource mapping was not verified.')
     # Build only the disc conversion utility. No emulator binary enters the package.
-    osd='mac' if sys.platform=='darwin' else 'sdl'
+    osd='mac' if sys.platform=='darwin' else 'sdl3'
     project='build/projects/'+osd+'/mame/gmake-'+('osx-clang' if sys.platform=='darwin' else 'linux')
     options=['OSD='+osd,'TOOLS=1','EMULATOR=0','REGENIE=1','USE_QTDEBUG=0','NO_USE_PORTAUDIO=1',
              'NO_USE_PULSEAUDIO=1','NO_OPENGL=1','USE_TAPTUN=0','USE_PCAP=0','IGNORE_GIT=1']
     # The top-level makefile generates projects; tool targets live in that project.
-    run(['make','-C',sources['mame'],'-j'+jobs,*options,'generate',project+'/Makefile'])
-    run(['make','-C',sources['mame']/project,'-j'+jobs,'config=release64','chdman'])
+    tool_env={**os.environ}
+    if sys.platform=='linux':tool_env['PKG_CONFIG_PATH']=str(sdl_install/'lib/pkgconfig')+os.pathsep+tool_env.get('PKG_CONFIG_PATH','')
+    run(['make','-C',sources['mame'],'-j'+jobs,*options,'generate',project+'/Makefile'],env=tool_env)
+    run(['make','-C',sources['mame']/project,'-j'+jobs,'config=release64','chdman'],env=tool_env)
     (payload/'chdman').mkdir()
     shutil.copy2(sources['mame']/'chdman',payload/'chdman/chdman')
+    if sys.platform=='linux':run(['patchelf','--set-rpath','$ORIGIN/../sdl/lib',payload/'chdman/chdman'])
     licenses=resources/'LICENSES'
     licenses.mkdir()
     for name,source in [('SDL',sources['sdl']/'LICENSE.txt'),('Ninja',sources['ninja']/'COPYING'),('SPIRV-Cross',sources['spirv-cross']/'LICENSE'),('MAME',sources['mame']/'COPYING')]:
