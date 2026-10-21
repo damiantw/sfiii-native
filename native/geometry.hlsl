@@ -54,7 +54,8 @@ float4 main(Input input):SV_Target {
     uint w=S(0),h=S(1),scale=S(2);uint2 pixel=uint2(input.position.xy),cell=min(pixel/scale,uint2(w-1,h-1));
     uint p=S(4)+(cell.y*w+cell.x)*10,mode=S(p+3);
     if(mode&0x100)return output_color(S(p));
-    uint bin=S(6)+(cell.y/16*S(8)+cell.x/16)*2,start=S(bin),count=S(bin+1),color=0;bool found=false;
+    uint tile=S(10);
+    uint bin=S(6)+(cell.y/tile*S(8)+cell.x/tile)*2,start=S(bin),count=S(bin+1),color=0;bool found=false;
     int origin=int(S(9));int2 native_cell=int2(cell)-int2(origin,0);
     float2 position=(float2(int2(pixel)-int2(origin*int(scale),0))+.5)/scale-.5;
     [loop]for(uint i=count;i>0;--i) {

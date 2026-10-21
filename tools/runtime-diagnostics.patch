@@ -2283,7 +2283,7 @@ index 15c677f..55ec3b7 100644
          Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
          int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
 diff --git a/runtime/src/video/vdp2.cpp b/runtime/src/video/vdp2.cpp
-index 4c8bcb1..8d81cae 100644
+index 4c8bcb1..e382fc0 100644
 --- a/runtime/src/video/vdp2.cpp
 +++ b/runtime/src/video/vdp2.cpp
 @@ -5,9 +5,10 @@
@@ -2298,7 +2298,7 @@ index 4c8bcb1..8d81cae 100644
  // NBG3); special priority and special colour calculation by screen or by
  // character, and colour calculation by the colour's MSB; colour calculation
  // of the top two layers (the top one's ratio or the second's, or add), with
-@@ -21,13 +22,14 @@
+@@ -21,16 +22,20 @@
  // fields' lines (448, 480 or 512), the scroll screens a dot row a line;
  // shadows (normal, MSB and transparent) on the scroll screens, the back
  // screen and the sprite itself.
@@ -2314,7 +2314,13 @@ index 4c8bcb1..8d81cae 100644
  #include <algorithm>
  #include <cstring>
  #include <vector>
-@@ -43,8 +45,12 @@ static int32_t signed_bits(uint32_t value, int bits) {
++#include <cstdlib>
++#include <thread>
++#include <system_error>
+ 
+ uint8_t g_vdp2_vram[0x80000], g_vdp2_cram[0x1000], g_vdp2_regs[0x200];
+ 
+@@ -43,8 +48,12 @@ static int32_t signed_bits(uint32_t value, int bits) {
      return (int32_t)((value & (sign * 2 - 1)) ^ sign) - (int32_t)sign;
  }
  
@@ -2329,7 +2335,7 @@ index 4c8bcb1..8d81cae 100644
      uint32_t table = (((uint32_t)(reg(0xBC) & 7) << 16 | reg(0xBE)) & ~0x41u) * 2;
      auto parameter = [&](uint32_t off, int bits, int shift) {
          return signed_bits(((uint32_t)vw(table + off) << 16 | vw(table + off + 2)) >> shift, bits);
-@@ -100,7 +106,7 @@ struct Pix {
+@@ -100,7 +109,7 @@ struct Pix {
      bool shade;                                 // an MSB shadow: the sprite dot at half brightness
  };
  
@@ -2338,7 +2344,7 @@ index 4c8bcb1..8d81cae 100644
  
  // ---- the scroll screens ---------------------------------------------------------------------
  struct Nbg {
-@@ -267,6 +273,238 @@ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
+@@ -267,6 +276,238 @@ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
      return dot(s, base, px & 7, py & 7, 8, pal, p);
  }
  
@@ -2577,7 +2583,7 @@ index 4c8bcb1..8d81cae 100644
  // ---- the sprite layer -----------------------------------------------------------------------
  struct SpriteType { int pr_shift, pr_mask, cc_shift, cc_mask, dc_mask; };
  static const SpriteType kTypes[16] = {
-@@ -367,7 +605,7 @@ static void note_unsupported() {
+@@ -367,7 +608,7 @@ static void note_unsupported() {
      auto once = [&](int i, bool cond, const char* what, uint16_t v) {
          if (cond && !noted[i]) { noted[i] = fresh = true; sat_note("VDP2: %s (%04X) is not done", what, v); }
      };
@@ -2586,7 +2592,7 @@ index 4c8bcb1..8d81cae 100644
      once(1, reg(0x9A) & 0x3F3F, "line or vertical cell scroll (SCRCTL)", reg(0x9A));
      once(2, reg(0x22) & 0xF, "mosaic (MZCTL)", reg(0x22));
      once(3, (reg(0xD0) | reg(0xD2) | reg(0xD4) | reg(0xD6)) & 0x2020, "the sprite window (WCTL)", reg(0xD0));
-@@ -393,18 +631,37 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
+@@ -393,18 +634,37 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
      return (uint32_t)out;
  }
  
@@ -2626,7 +2632,7 @@ index 4c8bcb1..8d81cae 100644
      uint32_t bk = ((uint32_t)(reg(0xAC) & 7) << 16 | reg(0xAE)) * 2;
      bool bk_lines = reg(0xAC) & 0x8000;
      bool add = reg(0xEC) >> 8 & 1;
-@@ -420,7 +677,7 @@ void vdp2_compose(Frame& f) {
+@@ -420,7 +680,7 @@ void vdp2_compose(Frame& f) {
      Pix line_colour{};
      line_colour.ratio = (uint8_t)(reg(0x10E) & 0x1F);
      uint16_t sfprmd = reg(0xEA), sfccmd = reg(0xEE);
@@ -2635,7 +2641,7 @@ index 4c8bcb1..8d81cae 100644
                               (uint8_t)reg(0xD2), (uint8_t)(reg(0xD2) >> 8)};
      uint8_t cc_wctl = (uint8_t)(reg(0xD6) >> 8);
      uint16_t sdctl = reg(0xE2);
-@@ -428,10 +685,36 @@ void vdp2_compose(Frame& f) {
+@@ -428,10 +688,40 @@ void vdp2_compose(Frame& f) {
      // top or second image of a colour calculation
      static const int kGradLayer[8] = {L_SPRITE, -1, L_NBG0, -1, L_NBG1, L_NBG2, L_NBG3, -1};
      int grad = reg(0xEC) & 0x8000 && hreso < 2 && cram_mode() == 0 ? kGradLayer[reg(0xEC) >> 12 & 7] : -1;
@@ -2650,12 +2656,16 @@ index 4c8bcb1..8d81cae 100644
 +        && current->px.size()==size_t(current->w)*current->h && current->hd
 +        && current->hd->composition.size()==current->px.size() && current->hd->visible.size()==current->px.size()
 +        && current->hd->effects.size()==current->px.size();
++    // GPU metadata composition has independent rows. Keep the serial reference
++    // and unsupported video paths, and merge provenance in original raster order.
++    const bool parallel=gpu && !reference_metadata && std::thread::hardware_concurrency()>=4 && !std::getenv("SF3_SERIAL_COMPOSITION");
++    auto rows=[&,rbg,back,line_colour](int begin,int end) mutable {
      std::vector<uint32_t> blur(grad >= 0 ? f.w : 0);
 -    for (int y = 0; y < f.h; ++y) {
 +    // Backgrounds use native pixel coordinates in this first enhancement.
 +    // Cache them once per native row instead of resampling them scale^2 times.
 +    std::vector<std::array<Pix,L_COUNT-1>> background_row(scale>1 ? f.w/scale : 0);
-+    for (int output_y = 0; output_y < f.h; ++output_y) {
++    for (int output_y = begin; output_y < end; ++output_y) {
 +        const int y=output_y/scale,suby=output_y%scale;
          int line = dd ? y >> 1 : y;
 +        if (rbg.on) rbg_line(rbg, y);
@@ -2673,7 +2683,7 @@ index 4c8bcb1..8d81cae 100644
          back.rgb = rgb555(vw(bk + (bk_lines ? (uint32_t)line * 2 : 0)));
          // a table word a line, a line of either field in double-density interlace
          line_colour.rgb = cram(vw(lc_table + (lc_lines ? (uint32_t)y * 2 : 0)) & 0x7FF, nullptr);
-@@ -439,18 +722,26 @@ void vdp2_compose(Frame& f) {
+@@ -439,18 +729,26 @@ void vdp2_compose(Frame& f) {
              // each dot averaged with the average of the two before it; a dot the screen does not draw is black
              auto avg = [](uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; };
              uint32_t prev[2] = {0, 0};
@@ -2699,12 +2709,12 @@ index 4c8bcb1..8d81cae 100644
 +                const size_t src=size_t(y)*current->w+x,dst=size_t(y)*f.w+output_x;
 +                f.px[dst]=current->px[src];f.hd->composition[dst]=current->hd->composition[src];
 +                f.hd->visible[dst]=current->hd->visible[src];f.hd->effects[dst]=current->hd->effects[src];
-+                provenance_hash(f,dst);continue;
++                if(!parallel)provenance_hash(f,dst);continue;
 +            }
              Pix l[L_COUNT];
              int top = -1, second = -1;
              auto consider = [&](int i) {
-@@ -458,16 +749,32 @@ void vdp2_compose(Frame& f) {
+@@ -458,16 +756,32 @@ void vdp2_compose(Frame& f) {
                  if (top < 0 || l[i].prio > l[top].prio) { second = top; top = i; }
                  else if (second < 0 || l[i].prio > l[second].prio) second = i;
              };
@@ -2740,7 +2750,7 @@ index 4c8bcb1..8d81cae 100644
              for (int n = 0; n < 4; ++n) {
                  Pix& p = l[L_NBG0 + n];
                  p = {};
-@@ -485,10 +792,12 @@ void vdp2_compose(Frame& f) {
+@@ -485,10 +799,12 @@ void vdp2_compose(Frame& f) {
                  p.ratio = s.ratio; p.offset = s.offset; p.offset_b = s.offset_b;
                  consider(L_NBG0 + n);
              }
@@ -2755,7 +2765,7 @@ index 4c8bcb1..8d81cae 100644
              uint32_t rgb = t.rgb;
              if (top >= 0 && t.cc && !windowed(cc_wctl, win, x)) {
                  uint32_t out = 0;
-@@ -504,11 +813,116 @@ void vdp2_compose(Frame& f) {
+@@ -504,11 +820,128 @@ void vdp2_compose(Frame& f) {
              if (t.offset) rgb = apply_offset(rgb, t.offset_b);
              // A shadow halves the top screen under it when SDCTL enables that screen (bit 5: the back screen).
              bool shaded = top == L_SPRITE ? t.shade
@@ -2834,13 +2844,24 @@ index 4c8bcb1..8d81cae 100644
 +                    unsigned off=(t.offset_b?0x11A:0x114)+ch*2;
 +                    e.offset[ch]=(int16_t)((int32_t)((uint32_t)(reg(off)&0x1FF)<<23)>>23);
 +                }
-+                provenance_hash(f,(size_t)y*f.w+output_x);
++                if(!parallel)provenance_hash(f,(size_t)y*f.w+output_x);
 +            }
          }
      }
- }
- 
--void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
++    };
++    if(parallel) {
++        {
++            std::array<std::jthread,3> workers;
++            int next=1;
++            try {for(;next<4;++next)workers[next-1]=std::jthread(rows,f.h*next/4,f.h*(next+1)/4);}
++            catch(const std::system_error&) {} // Finish any unavailable worker chunks locally.
++            rows(0,f.h/4);
++            for(;next<4;++next)rows(f.h*next/4,f.h*(next+1)/4);
++        } // Join every worker before hashing or handing pixels to the GPU.
++        for(size_t at=0;at<f.px.size();++at)provenance_hash(f,at);
++    } else rows(0,f.h);
++}
++
 +static Frame g_cached_frame;
 +static std::vector<uint8_t> g_cache_input,g_cache_previous;
 +static bool g_cache_valid;
@@ -2872,8 +2893,9 @@ index 4c8bcb1..8d81cae 100644
 +    compose_frame(f,true,current);
 +    if(same_current) {g_cached_wide=f;g_wide_cache_version=g_cache_version;}
 +    return f.origin_x>0;
-+}
-+
+ }
+ 
+-void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
 index 88d1642..c9182c1 100644

@@ -9,6 +9,7 @@
 
 namespace sf3 {
 static constexpr uint32_t capacity=32*1024*1024;
+static constexpr uint32_t tile_size=4;
 SDL_Renderer* GpuRenderer::create_renderer(SDL_Window* window) {
     const char* requested=std::getenv("SF3_GPU_BACKEND");
     for(const char* backend:{"vulkan","direct3d12"}) {
@@ -79,13 +80,13 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
     }
     const bool geometry=f.hd && f.hd->composition.size()==f.px.size();
     const size_t count=geometry?f.hd->quads.size():0;
-    const uint32_t columns=(f.w+15)/16,rows=(f.h+15)/16,pixels=uint32_t(f.px.size());
+    const uint32_t columns=(f.w+tile_size-1)/tile_size,rows=(f.h+tile_size-1)/tile_size,pixels=uint32_t(f.px.size());
     const uint32_t quad_at=12+pixels*10,bin_at=quad_at+uint32_t(count)*40,index_at=bin_at+columns*rows*2;
     std::vector<uint32_t> data(index_at),tex(1,0);
     std::vector<std::vector<uint32_t>> bins(columns*rows);
     data[0]=f.w;data[1]=f.h;data[2]=scale;data[3]=uint32_t(count);data[4]=12;data[5]=quad_at;
     data[6]=bin_at;data[7]=index_at;data[8]=columns;
-    data[9]=f.origin_x;
+    data[9]=f.origin_x;data[10]=tile_size;
     for(uint32_t i=0;i<pixels;++i) {
         const auto at=12+i*10;data[at]=f.px[i];data[at+3]=0x100;
         if(geometry) {
@@ -129,8 +130,8 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
         for(int k=1;k<4;++k){minx=std::min(minx,xy[2*k]);maxx=std::max(maxx,xy[2*k]);miny=std::min(miny,xy[2*k+1]);maxy=std::max(maxy,xy[2*k+1]);}
         minx+=f.origin_x;maxx+=f.origin_x;
         if(maxx<-.5f || maxy<-.5f || minx>f.w || miny>f.h)continue;
-        const int x0=std::clamp(int(std::floor((minx-1)/16)),0,int(columns)-1),x1=std::clamp(int(std::floor((maxx+1)/16)),0,int(columns)-1);
-        const int y0=std::clamp(int(std::floor((miny-1)/16)),0,int(rows)-1),y1=std::clamp(int(std::floor((maxy+1)/16)),0,int(rows)-1);
+        const int x0=std::clamp(int(std::floor((minx-1)/tile_size)),0,int(columns)-1),x1=std::clamp(int(std::floor((maxx+1)/tile_size)),0,int(columns)-1);
+        const int y0=std::clamp(int(std::floor((miny-1)/tile_size)),0,int(rows)-1),y1=std::clamp(int(std::floor((maxy+1)/tile_size)),0,int(rows)-1);
         for(int y=y0;y<=y1;++y)for(int x=x0;x<=x1;++x)bins[y*columns+x].push_back(i);
     }
     for(uint32_t i=0;i<bins.size();++i) {
