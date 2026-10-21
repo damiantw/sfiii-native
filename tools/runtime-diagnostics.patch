@@ -3026,6 +3026,39 @@ index ebaa466..c68e655 100644
  
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
+diff --git a/runtime/tests/bup_test.cpp b/runtime/tests/bup_test.cpp
+index 6943552..0c64057 100644
+--- a/runtime/tests/bup_test.cpp
++++ b/runtime/tests/bup_test.cpp
+@@ -118,14 +118,27 @@ TEST(save_dash_keeps_saves_for_the_run_alone) {
+ 
+ TEST(saves_default_to_a_folder_per_disc_in_the_data_directory) {
+     fs::path dir = scratch();
++#ifdef __APPLE__
++    const char* home = std::getenv("HOME");
++    const bool had_home = home != nullptr;
++    const std::string previous_home = home ? home : "";
++    setenv("HOME", dir.c_str(), 1);
++    const fs::path data = dir / "Library" / "Application Support";
++#else
+     setenv("XDG_DATA_HOME", dir.c_str(), 1);
++    const fs::path data = dir;
++#endif
+     run("");
+     CHECK_EQ(write("DEFAULT", 10, 3), 0);
+-    CHECK_EQ(fs::exists(dir / "saturn-recomp" / "T-1234H_V1.001" / "backup.bin"), 1);
++    CHECK_EQ(fs::exists(data / "saturn-recomp" / "T-1234H_V1.001" / "backup.bin"), 1);
+     run("", "T-9999H   ");
+     CHECK_EQ(read_back("DEFAULT", 10, 3), 5);
+     run("");
+     CHECK_EQ(read_back("DEFAULT", 10, 3), 0);
++#ifdef __APPLE__
++    if (had_home) setenv("HOME", previous_home.c_str(), 1);
++    else unsetenv("HOME");
++#endif
+ }
+ 
+ TEST(a_damaged_file_keeps_the_saves_before_the_damage) {
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
 index de3d7ec..02390ca 100644
 --- a/src/saturnrecomp/recomp/__main__.py

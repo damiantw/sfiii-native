@@ -26,6 +26,9 @@ def main():
     python,cmake=payload/'python/bin/python3',payload/'cmake/bin/cmake'
     env=worker.environment(payload)
     env['SDL_AUDIODRIVER']='dummy'
+    home,temp=out/'test-home',out/'test-temp'
+    home.mkdir();temp.mkdir()
+    env.update(HOME=str(home),TMPDIR=str(temp),TMP=str(temp),TEMP=str(temp))
     results=[]
     def check(name,args,extra=None,required=True,expected=0):
         print('CHECK '+name,flush=True)
