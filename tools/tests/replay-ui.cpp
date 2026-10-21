@@ -37,6 +37,13 @@ int main(int argc, char** argv) {
     click(5);
     if(vdp1_render_scale()!=2 || picture.px!=initial_pixels)return 20;
     click(6);if(vdp1_render_scale()!=4)return 21;
+    click(7);if(vdp1_render_scale()!=5 || choice_at(M_RESOLUTION)!=3)return 41;
+    load_settings(g_cfg.settings);if(vdp1_render_scale()!=5)return 42;
+    for(int i=0;i<4+kRenderScaleCount;++i) {
+        auto a=replay_bar_button(i);
+        if(a.x<0 || a.x+a.w>g_out_w)return 43;
+        if(i && replay_bar_button(i-1).x+replay_bar_button(i-1).w>a.x)return 44;
+    }
     click(4);if(vdp1_render_scale()!=1)return 22;
     click(5);
     click(0);
@@ -71,6 +78,7 @@ int main(int argc, char** argv) {
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=4)return 29;
     {std::ofstream saved(g_cfg.settings);saved<<"[display]\ninternal_scale = 1\n";}
     load_settings(g_cfg.settings);if(vdp1_render_scale()!=4)return 30;
+    menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=5)return 45;
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=1)return 31;
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=2)return 32;
     upload_frame(picture);

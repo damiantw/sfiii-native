@@ -42,7 +42,7 @@ index ecf1dde..4a9e784 100644
  add_library(saturn_m68k STATIC
      ${_m68k}/m68kcpu.c ${_m68k}/m68kops.c ${_m68k}/m68kdasm.c ${_m68k}/softfloat/softfloat.c
 diff --git a/runtime/src/app/main.cpp b/runtime/src/app/main.cpp
-index 566fcfd..bfdb70e 100644
+index 566fcfd..d5bb5fc 100644
 --- a/runtime/src/app/main.cpp
 +++ b/runtime/src/app/main.cpp
 @@ -98,6 +98,13 @@ static int parse_args(SaturnConfig& cfg, bool& launcher, int argc, char** argv)
@@ -51,8 +51,8 @@ index 566fcfd..bfdb70e 100644
          else if (!std::strcmp(a, "--starts") && more) cfg.stop_starts = std::atoi(argv[++i]);
 +        else if (!std::strcmp(a, "--render-scale") && more) {
 +            const char* value=argv[++i];
-+            if(std::strcmp(value,"1") && std::strcmp(value,"2") && std::strcmp(value,"4")) {
-+                std::fprintf(stderr,"--render-scale: 1, 2 or 4\n");return 2;
++            if(std::strcmp(value,"1") && std::strcmp(value,"2") && std::strcmp(value,"4") && std::strcmp(value,"5")) {
++                std::fprintf(stderr,"--render-scale: 1, 2, 4 or 5\n");return 2;
 +            }
 +            cfg.render_scale=std::atoi(value);
 +        }
@@ -181,7 +181,7 @@ index cb6af72..08eaa4b 100644
      if (SH2Func f = sh2_lookup(addr)) f(c);
      else sh2_call_unknown(c, addr);
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..fc183d4 100644
+index feded39..eddd264 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
 @@ -42,6 +42,14 @@
@@ -460,7 +460,7 @@ index feded39..fc183d4 100644
  enum class Control { Action, Choice, Slider, Switch };
  struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
  struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
-@@ -456,10 +595,16 @@ static void setting_change(const char* key, const char* value) {
+@@ -456,10 +595,17 @@ static void setting_change(const char* key, const char* value) {
      host_settings_save();
  }
  
@@ -468,18 +468,19 @@ index feded39..fc183d4 100644
 -static const char* choice_name(MenuId id, int i) { return id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
 +static void resolution_set(int scale);
 +static void aspect_set(bool wide);
-+static const int kRenderScales[]={1,2,4};
-+static const char* kRenderNames[]={"1x","2x","4x"};
-+static int choice_count(MenuId id) { return id == M_PAD || id==M_RESOLUTION ? 3 : 2; }
++static const int kRenderScales[]={1,2,4,5};
++static constexpr int kRenderScaleCount=sizeof(kRenderScales)/sizeof(kRenderScales[0]);
++static const char* kRenderNames[]={"1x","2x","4x","5x"};
++static int choice_count(MenuId id) { return id==M_RESOLUTION ? kRenderScaleCount : id==M_PAD ? 3 : 2; }
 +static const char* choice_name(MenuId id, int i) { return id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
  
  static int choice_at(MenuId id) {
 +    if(id==M_ASPECT)return vdp1_widescreen()?1:0;
-+    if(id==M_RESOLUTION) {for(int i=0;i<3;++i) if(vdp1_render_scale()==kRenderScales[i]) return i;return 0;}
++    if(id==M_RESOLUTION) {for(int i=0;i<kRenderScaleCount;++i) if(vdp1_render_scale()==kRenderScales[i]) return i;return 0;}
      std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
      for (int i = 0; i < choice_count(id); ++i)
          if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
-@@ -468,6 +613,8 @@ static int choice_at(MenuId id) {
+@@ -468,6 +614,8 @@ static int choice_at(MenuId id) {
  
  static void choose(MenuId id, int i) {
      i = (i + choice_count(id)) % choice_count(id);
@@ -488,7 +489,7 @@ index feded39..fc183d4 100644
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -482,6 +629,13 @@ static const char* menu_label(MenuId id) {
+@@ -482,6 +630,13 @@ static const char* menu_label(MenuId id) {
      case M_RESUME: return "Resume";
      case M_SAVES: return "Save files";
      case M_QUIT: return "Quit";
@@ -502,7 +503,7 @@ index feded39..fc183d4 100644
      case M_PAD: return "Show pad";
      case M_SIZE: return "Size";
      case M_STYLE: return "Style";
-@@ -492,6 +646,14 @@ static const char* menu_label(MenuId id) {
+@@ -492,6 +647,14 @@ static const char* menu_label(MenuId id) {
  static MenuLayout menu_layout() {
      const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 340, between = 24;
      std::vector<std::pair<MenuId, Control>> game = {{M_RESUME, Control::Action}};
@@ -517,7 +518,7 @@ index feded39..fc183d4 100644
      if (!g_cfg.after.empty()) game.push_back({M_SAVES, Control::Action});
      game.push_back({M_QUIT, Control::Action});
      const std::vector<std::pair<MenuId, Control>> touch = {
-@@ -527,7 +689,7 @@ static MenuLayout menu_layout() {
+@@ -527,7 +690,7 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
@@ -526,7 +527,7 @@ index feded39..fc183d4 100644
      return {r.r.x + r.r.w - w - 10 * l.u, r.r.y + 9 * l.u, w, r.r.h - 18 * l.u};
  }
  
-@@ -563,12 +725,176 @@ static void menu_quit(bool to_saves) {
+@@ -563,12 +726,176 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -645,7 +646,7 @@ index feded39..fc183d4 100644
 +#endif
 +}
 +
-+static float replay_bar_scale() { return std::min(display_scale(), g_out_w / 704.0f); }
++static float replay_bar_scale() { return std::min(display_scale(), g_out_w / (530.0f + 58.0f*kRenderScaleCount)); }
 +static float replay_bar_height() {
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    return 36 * replay_bar_scale();
@@ -704,7 +705,7 @@ index feded39..fc183d4 100644
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +906,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +907,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
@@ -713,7 +714,7 @@ index feded39..fc183d4 100644
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -656,8 +982,18 @@ static void on_event(const SDL_Event& e) {
+@@ -656,8 +983,18 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -732,7 +733,7 @@ index feded39..fc183d4 100644
          if (k == SDL_SCANCODE_F12 && !e.key.repeat) save_shot();
          if ((k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.mod & SDL_KMOD_ALT))) && !e.key.repeat) {
              SDL_SetWindowFullscreen(g_win, !(SDL_GetWindowFlags(g_win) & SDL_WINDOW_FULLSCREEN));
-@@ -686,10 +1022,19 @@ static void on_event(const SDL_Event& e) {
+@@ -686,10 +1023,20 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -750,11 +751,12 @@ index feded39..fc183d4 100644
 +            else if(inside(replay_bar_button(4),x,y))resolution_set(1);
 +            else if(inside(replay_bar_button(5),x,y))resolution_set(2);
 +            else if(inside(replay_bar_button(6),x,y))resolution_set(4);
++            else if(inside(replay_bar_button(7),x,y))resolution_set(5);
 +#endif
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -894,12 +1239,39 @@ static void draw_catching_up() {
+@@ -894,12 +1241,39 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -784,7 +786,7 @@ index feded39..fc183d4 100644
 +#endif
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    ui_fill_rounded({0, 0, (float)g_out_w, replay_bar_height()}, 0, rgba(0.07f, 0.08f, 0.11f, 1));
-+    for (int i=0; i<7; ++i) {
++    for (int i=0; i<4+kRenderScaleCount; ++i) {
 +        auto r = replay_bar_button(i);
 +        ui_fill_rounded(r, 5*replay_bar_scale(), i>=4 && vdp1_render_scale()==kRenderScales[i-4] ? rgba(0.22f,0.43f,0.9f,1):rgba(0.18f, 0.22f, 0.3f, 1));
 +        ui_text(r.x+r.w/2, r.y+r.h/2, 13*replay_bar_scale(),
@@ -795,7 +797,7 @@ index feded39..fc183d4 100644
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,8 +1284,10 @@ static void draw() {
+@@ -912,8 +1286,10 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -808,7 +810,7 @@ index feded39..fc183d4 100644
  }
  
  // The menu, open until it is closed; the game waits.
-@@ -933,36 +1307,76 @@ static void menu_loop() {
+@@ -933,36 +1309,76 @@ static void menu_loop() {
      }
      g_base += Clock::now() - t;
      --g_host_paused;
@@ -905,7 +907,7 @@ index feded39..fc183d4 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,7 +1387,7 @@ void host_present(const Frame& f) {
+@@ -973,7 +1389,7 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {
@@ -915,14 +917,14 @@ index feded39..fc183d4 100644
          g_base = Clock::now() - std::chrono::nanoseconds(now);
          return;
 diff --git a/runtime/src/host/settings.cpp b/runtime/src/host/settings.cpp
-index 15eaa96..f151c9a 100644
+index 15eaa96..520c1ba 100644
 --- a/runtime/src/host/settings.cpp
 +++ b/runtime/src/host/settings.cpp
 @@ -16,6 +16,12 @@ static const char kDefaults[] = R"(; saturn-recomp's settings, read when a game
  fullscreen = false
  ; the window is 320x240 times this
  scale = 3
-+; VDP1 geometry: 1 (original), 2 or 4. Separate from window size and HD artwork.
++; VDP1 geometry: 1 (original), 2, 4 or 5. Separate from window size and HD artwork.
 +internal_scale = 1
 +; 16:9 expands supported world views; game culling at new edges is experimental.
 +aspect = 4:3
@@ -931,12 +933,14 @@ index 15eaa96..f151c9a 100644
  
  [audio]
  ; percent
-@@ -81,7 +87,7 @@ multitap = 0
+@@ -80,8 +86,8 @@ multitap = 0
+ )";
  
  // The values a word may take, by key.
- static const struct { const char* key; const char* values[3]; } kChoices[] = {
+-static const struct { const char* key; const char* values[3]; } kChoices[] = {
 -    {"controls", {"auto", "on", "off"}}, {"style", {"western", "japanese"}}};
-+    {"controls", {"auto", "on", "off"}}, {"style", {"western", "japanese"}}, {"internal_scale", {"1","2","4"}}, {"aspect", {"4:3","16:9"}}};
++static const struct { const char* key; const char* values[4]; } kChoices[] = {
++    {"controls", {"auto", "on", "off"}}, {"style", {"western", "japanese"}}, {"internal_scale", {"1","2","4","5"}}, {"aspect", {"4:3","16:9"}}};
  
  // The range a number may take, by key.
  static const struct { const char* key; int lo, hi; } kRanges[] = {
@@ -1887,7 +1891,7 @@ index 91d606c..387ded9 100644
          if (n) raw(s.data(), n);
      }
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..7b23ce1 100644
+index 8589d33..bee2cc3 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
 @@ -38,6 +38,7 @@
@@ -1919,7 +1923,7 @@ index 8589d33..7b23ce1 100644
 +        std::fill_n(g_scaled[plane].data()+(y*g_render_scale+dy)*width+x*g_render_scale,g_render_scale,value);
 +}
 +void vdp1_render_scale(int scale) {
-+    scale=scale==2 || scale==4 ? scale : 1;
++    scale=scale==2 || scale==4 || scale==5 ? scale : 1;
 +#if SATURN_VDP1_GPL
 +    scale=1; // This companion path belongs to the MIT raster only.
 +#endif

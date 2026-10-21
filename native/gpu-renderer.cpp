@@ -68,7 +68,7 @@ bool GpuRenderer::initialize(SDL_Renderer* renderer,const std::string& dir) {
     return true;
 }
 SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
-    if(!ready() || (scale!=1 && scale!=2 && scale!=4) || f.w<1 || f.h<1 || f.w>1024 || f.h>512 || f.px.size()!=size_t(f.w)*f.h)return nullptr;
+    if(!ready() || (scale!=1 && scale!=2 && scale!=4 && scale!=5) || f.w<1 || f.h<1 || f.w>1024 || f.h>512 || f.px.size()!=size_t(f.w)*f.h)return nullptr;
     const int width=f.w*scale,height=f.h*scale;
     if(width!=width_ || height!=height_) {
         last_scene_.clear();last_textures_.clear();

@@ -12,7 +12,7 @@
 #endif
 
 int main(int argc, char** argv) {
-    if (argc < 3 || argc > 11) { std::fprintf(stderr, "usage: render_dump dump.bin output.png [--redraw] [--hd] [--assets PACK] [--bench] [--raster-bench] [--render-scale 1|2|4]\n"); return 2; }
+    if (argc < 3 || argc > 11) { std::fprintf(stderr, "usage: render_dump dump.bin output.png [--redraw] [--hd] [--assets PACK] [--bench] [--raster-bench] [--render-scale 1|2|4|5]\n"); return 2; }
     bool redraw=false, hd=false;
     bool bench=false,raster_bench=false;
     std::string pack;
@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
         else if(std::string(argv[i])=="--raster-bench") raster_bench=true;
         else if(std::string(argv[i])=="--render-scale" && i+1<argc) {
             const std::string value=argv[++i];
-            if(value!="1" && value!="2" && value!="4") return 2;
+            if(value!="1" && value!="2" && value!="4" && value!="5") return 2;
             vdp1_render_scale(std::stoi(value));
         }
         else return 2;

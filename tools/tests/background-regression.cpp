@@ -242,7 +242,7 @@ TEST(internal_resolution_rerasterizes_sloped_edges_without_changing_native_frame
     };
     vdp1_render_scale(1);polygon();
     uint16_t native[32*32];for(int y=0;y<32;++y) for(int x=0;x<32;++x) native[y*32+x]=vdp1_dot(x,y,false);
-    for(int scale : {2,4}) {
+    for(int scale : {2,4,5}) {
         vdp1_render_scale(scale);polygon();unsigned mixed=0;
         for(int y=0;y<32;++y) for(int x=0;x<32;++x) {
             CHECK_EQ(vdp1_dot(x,y,false),native[y*32+x]);
@@ -258,7 +258,7 @@ TEST(internal_resolution_rerasterizes_sloped_edges_without_changing_native_frame
 }
 
 TEST(internal_resolution_retains_sprite_texels_flips_and_cpu_framebuffer_writes) {
-    for(int scale : {2,4}) for(unsigned flip=0;flip<4;++flip) {
+    for(int scale : {2,4,5}) for(unsigned flip=0;flip<4;++flip) {
         vdp1_render_scale(scale);sprite_fixture(flip,2,2,0,0);
         for(int y=0;y<2;++y) for(int x=0;x<8;++x) {
             const int u=flip&1 ? 7-x : x,v=flip&2 ? 1-y : y,index=v*8+u;
@@ -279,20 +279,21 @@ TEST(internal_resolution_retains_sprite_texels_flips_and_cpu_framebuffer_writes)
 
 TEST(internal_resolution_composition_dimensions_and_invalid_choices_are_bounded) {
     std::memset(g_vdp2_regs,0,sizeof g_vdp2_regs);
-    for(int scale : {1,2,4}) {
+    for(int scale : {1,2,4,5}) {
         vdp1_render_scale(scale);Frame frame;vdp2_compose(frame);
         CHECK_EQ(frame.w,320*scale);CHECK_EQ(frame.h,224*scale);
         CHECK_EQ(frame.px.size(),size_t(320*224*scale*scale));
         for(auto pixel:frame.px) CHECK_EQ(pixel,0);
     }
     vdp1_render_scale(3);CHECK_EQ(vdp1_render_scale(),1);
+    vdp1_render_scale(6);CHECK_EQ(vdp1_render_scale(),1);
     vdp1_render_scale(-1);CHECK_EQ(vdp1_render_scale(),1);
 }
 
 TEST(internal_resolution_keeps_native_background_colours_and_cached_layer_order) {
     vdp1_render_scale(1);rotation_bitmap();
     Frame original;vdp2_compose(original);
-    for(int scale : {2,4}) {
+    for(int scale : {2,4,5}) {
         vdp1_render_scale(scale);Frame enhanced;vdp2_compose(enhanced);
         for(int y=0;y<enhanced.h;++y) for(int x=0;x<enhanced.w;++x)
             CHECK_EQ(enhanced.px[y*enhanced.w+x],original.px[(y/scale)*original.w+x/scale]);

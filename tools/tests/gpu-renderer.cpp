@@ -33,7 +33,7 @@ int main(int argc,char** argv) {
         check(scratch && SDL_SetRenderTarget(renderer,scratch),"Offscreen fixture render target");
         std::printf("GPU %s: %s\n",gpu.backend(),gpu.adapter());
         unsigned cases=0;
-        for(int scale:{2,4})for(bool hflip:{false,true})for(bool vflip:{false,true}) {
+        for(int scale:{2,4,5})for(bool hflip:{false,true})for(bool vflip:{false,true}) {
             auto f=fixture();auto q=quad({0x801F,0x83E0,0xFC00,0xFFFF},2,2,1,1,2,2);q.hflip=hflip;q.vflip=vflip;f.hd->quads.push_back(q);
             const auto original=f.px;auto out=rendered(gpu,f,scale);
             check(out.w==4*scale && out.h==4*scale,"Output dimensions");check(f.px==original,"GPU mutated native frame");
@@ -55,7 +55,7 @@ int main(int argc,char** argv) {
             }
             for(auto p:out.px)check(p==expected,"VDP2 ratio/addition/offset ordering");++cases;
         }
-        for(int scale:{2,4}) {
+        for(int scale:{2,4,5}) {
             auto f=fixture(8,2);auto q=quad({0x801F,0x7FFF,0x83E0,0x7FFF,0xFC00,0xFC00,0xFC00,0xFC00},8,1,0,0,7,0);q.gpu_flags=0;f.hd->quads.push_back(q);
             auto out=rendered(gpu,f,scale);
             for(int x=0;x<8*scale;++x){uint32_t expected=x/scale==0?0xFF0000:x/scale==2?0x00FF00:0x112233;check(out.px[x]==expected,"Two distinct source end codes terminate texture row");}
@@ -68,7 +68,7 @@ int main(int argc,char** argv) {
             out=rendered(gpu,f,scale);for(auto p:out.px)check(p==0x112233,"Unsupported native effects remain intact");
             ++cases;
         }
-        for(int scale:{2,4})for(bool outside:{false,true}) {
+        for(int scale:{2,4,5})for(bool outside:{false,true}) {
             auto f=fixture();auto q=quad({0x801F},1,1,0,0,3,3);
             q.gpu_flags|=0x400|(outside?0x200:0);q.clip[0]=2;q.clip[1]=2;
             q.clip[2]=1;q.clip[3]=1;q.clip[4]=2;q.clip[5]=2;f.hd->quads.push_back(q);
@@ -78,7 +78,7 @@ int main(int argc,char** argv) {
                 check(out.px[y*out.w+x]==((cx<=2 && cy<=2 && inside!=outside)?0xFF0000:0x112233),"System and user clipping boundaries");
             }++cases;
         }
-        for(int scale:{2,4}) {
+        for(int scale:{2,4,5}) {
             auto f=fixture();f.hd->quads.push_back(quad({0x801F},1,1,0,0,3,3));
             f.hd->quads.push_back(quad({0,0x83E0},2,1,0,0,3,3));
             auto out=rendered(gpu,f,scale);
@@ -97,7 +97,7 @@ int main(int argc,char** argv) {
         write_png((fs::path(argv[1])/"synthetic-geometry.png").string(),out);
         // Translation of the viewport/tile bins must not change coverage.
         // Skewed convex quads expose spurious Newton roots outside geometry.
-        for(int scale:{1,2,4}) {
+        for(int scale:{1,2,4,5}) {
             auto source=fixture(96,64);
             for(int i=0;i<12;++i) {
                 auto shape=quad({uint16_t(0x801F+i*64)},1,1,0,0,0,0);shape.gpu_flags|=2<<16;
@@ -114,7 +114,7 @@ int main(int argc,char** argv) {
             }
         }
         Frame disabled;std::memset(g_vdp2_regs,0,sizeof g_vdp2_regs);check(!vdp2_compose_wide(disabled),"Display-off must retain original framing");++cases;
-        for(int scale:{1,2,4}) {
+        for(int scale:{1,2,4,5}) {
             auto f=fixture();f.hd->quads.push_back(quad({0x801F},1,1,0,0,3,3));
             auto first=rendered(gpu,f,scale);auto draws=gpu.submissions(),hits=gpu.cache_hits();
             for(int i=0;i<3;++i)check(rendered(gpu,f,scale).px==first.px,"Repeated-field cache changed pixels");
@@ -139,13 +139,15 @@ int main(int argc,char** argv) {
             Frame source;vdp2_compose(source);check(source.w<=704 && source.h<=512,"GPU mode must retain native CPU composition size");
             State snapshot;vdp1_state(snapshot);
             auto before_state=rendered(gpu,source,4);
+            auto before_state5=rendered(gpu,source,5);
             vdp1_fb_write(0,0xFC00,2);g_vdp1_vram[0x200]^=0xFF;
             snapshot.loading=true;vdp1_state(snapshot);
             Frame restored_state;vdp2_compose(restored_state);
             check(restored_state.px==source.px,"State restore changed native pixels");
             check(rendered(gpu,restored_state,4).px==before_state.px,"State restore changed GPU geometry, texture sharing or composition");
+            check(rendered(gpu,restored_state,5).px==before_state5.px,"State restore changed 5x GPU geometry");
             check(snapshot.pos==snapshot.data.size(),"Incomplete VDP1 state restoration");
-            std::printf("PASS: native and 4x GPU snapshot round trip\n");
+            std::printf("PASS: native, 4x and 5x GPU snapshot round trip\n");
             Frame reference;vdp2_compose_reference(reference);
             check(source.px==reference.px && source.hd && reference.hd && source.hd->composition.size()==reference.hd->composition.size(),"Optimized composition changed native pixels");
             check(std::memcmp(source.hd->composition.data(),reference.hd->composition.data(),source.hd->composition.size()*sizeof(GpuPixel))==0,"Optimized metadata differs from reference");
@@ -186,11 +188,11 @@ int main(int argc,char** argv) {
             measured("side-column CPU composition reusing native center",[&]{vdp2_compose_wide(composed,&reference);});
             measured("wide unchanged-field cache",[&]{vdp2_compose_wide(composed,&source);});
             Frame profile_wide;
-            if(vdp2_compose_wide(profile_wide))for(int scale:{2,4}) {
+            if(vdp2_compose_wide(profile_wide))for(int scale:{2,4,5}) {
                 std::string label="wide GPU "+std::to_string(scale)+"x with submission/readback";
                 measured(label.c_str(),[&]{profile_wide.px[0]^=1;rendered(gpu,profile_wide,scale);});
             }
-            for(int scale:{2,4}) {
+            for(int scale:{2,4,5}) {
                 auto result=rendered(gpu,source,scale);write_png((fs::path(argv[1])/("scene-"+std::to_string(scale)+"x.png")).string(),result);
                 auto start=std::chrono::steady_clock::now();
                 for(int i=0;i<10;++i){source.px[0]^=1;rendered(gpu,source,scale);}
