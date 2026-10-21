@@ -175,8 +175,8 @@ def main():
     script+='exec "$BASE/payload/python/bin/python3" -X utf8 -B "$BASE/payload/app/desktop/launcher_posix.py" "$@"\n'
     executable.write_text(script)
     executable.chmod(0o755)
-    bootstrap=executable if sys.platform=='darwin' else package/'SFIII Native'
-    run([payload/'compiler/bin/cc',ROOT/'native/launcher-bootstrap.c','-O2','-o',bootstrap])
+    bootstrap_exe=executable if sys.platform=='darwin' else package/'SFIII Native'
+    run([payload/'compiler/bin/cc',ROOT/'native/launcher-bootstrap.c','-O2','-o',bootstrap_exe])
     (resources/'START HERE.txt').write_text('Shining Force III Native '+lock['version']+'\n\nOpen the SFIII Native application/launcher. Choose your supported Scenario 1 USA or Scenario 2 translated-v24 CUE/CHD and an external data folder. Click Prepare game, then Play.\n\nThe compiler, Python, SDL, CMake, Ninja and CHD converter are bundled. No game data or BIOS is included. Preparation stays local.\n\nExperimental platform candidate: native unit/build checks are separate from gameplay validation. Real-disc gameplay and hardware GPU/controller/audio checks on this OS remain unvalidated unless specifically documented. Keep backups of saves; native states are build-specific.\n',encoding='utf-8')
     inventory={f.relative_to(resources).as_posix():sha(f) for f in resources.rglob('*') if f.is_file()}
     (resources/'PACKAGE-FILES.json').write_text(json.dumps(inventory,indent=2)+'\n')

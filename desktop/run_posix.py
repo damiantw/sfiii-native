@@ -92,6 +92,10 @@ def play(work, native_state=None, headless=0):
                 resume = int(result.stdout.strip())
                 for name in ['context.json','build-id.txt','disc-id.txt','backup.bin','backup.bin.cartridge','settings.ini']:
                     copy_if_present(replay/'seed'/name,seed/name)
+                if not (replay/'seed/backup.bin.cartridge').exists():
+                    (seed/'backup.bin.cartridge').write_bytes(b'')
+                if not (replay/'seed/settings.ini').exists():
+                    (seed/'settings.ini').unlink(missing_ok=True)
                 context = json.loads((seed/'context.json').read_text(encoding='utf-8-sig'))
                 save, settings = session/'replay-backup.bin', session/'replay-settings.ini'
                 shutil.copy2(seed/'backup.bin',save)
