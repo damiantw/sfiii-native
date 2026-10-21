@@ -89,5 +89,39 @@ class PortableTests(unittest.TestCase):
             self.assertEqual((session/'loaded.satstate').read_bytes(),state.read_bytes())
             self.assertFalse(json.loads((session/'session.json').read_text())['live_replay_progress_published'])
 
+    def test_legacy_replay_without_cartridge_or_settings_does_not_use_live_values(self):
+        with tempfile.TemporaryDirectory() as d:
+            work=Path(d)/'data';work.mkdir()
+            (work/'native-build.txt').write_text('build-synthetic')
+            (work/'build-synthetic').mkdir()
+            cue=Path(d)/'synthetic.cue';cue.write_text('Invented test disc')
+            (work/'game.json').write_text(json.dumps({'cue':str(cue)}))
+            (work/'experimental-backup.bin').write_bytes(b'live-internal')
+            (work/'experimental-backup.bin.cartridge').write_bytes(b'live-cartridge')
+            (work/'settings.ini').write_text('live-settings')
+            replay=work/'replay-checkpoints/123-5'
+            (replay/'seed').mkdir(parents=True)
+            for name,data in {'backup.bin':b'old-internal','build-id.txt':b'build','disc-id.txt':b'disc',
+                              'context.json':json.dumps({'clock':'2000-01-02T03:04:05'}).encode()}.items():
+                (replay/'seed'/name).write_bytes(data)
+            (replay/'input.txt').write_text('1:START,2:,')
+            games=[]
+            def run(args,**kwargs):
+                if args[1]=='verify':return SimpleNamespace(returncode=0,stdout='5\n')
+                games.append(args)
+                out=Path(args[args.index('--out')+1])
+                if len(games)==1:(out/'reload-request.txt').write_text(str(replay))
+                else:
+                    save=Path(args[args.index('--save')+1])
+                    self.assertEqual(save.read_bytes(),b'old-internal')
+                    self.assertEqual(Path(str(save)+'.cartridge').read_bytes(),b'')
+                    self.assertFalse(Path(args[args.index('--settings')+1]).exists())
+                    self.assertEqual(args[args.index('--clock')+1],'2000-01-02T03:04:05')
+                return SimpleNamespace(returncode=0)
+            with patch.object(sessions,'lock',return_value=contextlib.nullcontext()),patch.object(sessions,'identities',return_value=('build','disc')),patch.object(sessions.subprocess,'run',side_effect=run):sessions.play(work)
+            self.assertEqual(len(games),2)
+            self.assertEqual((work/'experimental-backup.bin').read_bytes(),b'live-internal')
+            self.assertEqual((work/'experimental-backup.bin.cartridge').read_bytes(),b'live-cartridge')
+
 
 if __name__=='__main__':unittest.main()

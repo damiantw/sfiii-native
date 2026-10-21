@@ -139,8 +139,12 @@ def main():
             if 'fragmentMain' not in code or '[[buffer(0)]]' not in code or '[[buffer(1)]]' not in code:
                 raise ValueError('Metal shader resource mapping was not verified.')
     # Build only the disc conversion utility. No emulator binary enters the package.
-    run(['make','-C',sources['mame'],'-j'+jobs,'TOOLS=1','EMULATOR=0','REGENIE=1','USE_QTDEBUG=0',
-         'NO_USE_PORTAUDIO=1','NO_USE_PULSEAUDIO=1','NO_OPENGL=1','USE_TAPTUN=0','USE_PCAP=0','chdman'])
+    project='build/projects/sdl/mame/gmake-'+('osx-clang' if sys.platform=='darwin' else 'linux')
+    options=['TOOLS=1','EMULATOR=0','REGENIE=1','USE_QTDEBUG=0','NO_USE_PORTAUDIO=1',
+             'NO_USE_PULSEAUDIO=1','NO_OPENGL=1','USE_TAPTUN=0','USE_PCAP=0','IGNORE_GIT=1']
+    # The top-level makefile generates projects; tool targets live in that project.
+    run(['make','-C',sources['mame'],'-j'+jobs,*options,'generate',project+'/Makefile'])
+    run(['make','-C',sources['mame']/project,'-j'+jobs,'config=release64','chdman'])
     (payload/'chdman').mkdir()
     shutil.copy2(sources['mame']/'chdman',payload/'chdman/chdman')
     licenses=resources/'LICENSES'

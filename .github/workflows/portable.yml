@@ -71,7 +71,8 @@ jobs:
       - name: Maintainer-only macOS build dependencies
         if: runner.os == 'macOS'
         run: brew install sdl2
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: dependency-cache
         with:
           path: ${{ runner.temp }}/sfiii-cache
           key: portable-v1-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}
@@ -117,6 +118,12 @@ jobs:
           name: SFIII-Native-0.4.0-preview1-${{ matrix.target }}
           path: ${{ runner.temp }}/sfiii-artifacts
           retention-days: 1
+      - name: Cache verified downloads and native build intermediates
+        if: always() && steps.dependency-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/sfiii-cache
+          key: portable-v1-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}
       - name: Preserve build diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4

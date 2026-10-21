@@ -9,3 +9,6 @@
 *.patch -text whitespace=-blank-at-eol
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
+
+*.c text eol=lf
+*.yml text eol=lf
