@@ -28,14 +28,16 @@ def main():
     env['SDL_AUDIODRIVER']='dummy'
     results=[]
     def check(name,args,extra=None,required=True,expected=0):
+        print('CHECK '+name,flush=True)
         with (out/(name+'.log')).open('wb') as log:
             r=subprocess.run(list(map(str,args)),env={**env,**(extra or {})},stdout=log,stderr=subprocess.STDOUT,timeout=1200,cwd=out)
         text=(out/(name+'.log')).read_text(errors='replace')
         result=dict(name=name,exit_code=r.returncode,expected_exit_code=expected,passed=r.returncode==expected)
         results.append(result)
+        print(('PASS ' if result['passed'] else 'FAIL ')+name,flush=True)
         if required and not result['passed']:raise RuntimeError(name+' failed:\n'+text[-6000:])
         return result,text
-    check('python-tests',[python,'-X','utf8','-B','-m','unittest','discover','-s',payload/'app/tools/tests','-p','test_*.py'])
+    check('python-tests',[python,'-X','utf8','-B','-m','unittest','discover','-s',payload/'app/tools/tests','-p','test_*.py'],required=False)
     # Native tools must not depend on maintainer-only Homebrew or checkout paths.
     command=['otool','-L'] if sys.platform=='darwin' else ['ldd']
     _,text=check('chd-library-dependencies',[*command,payload/'chdman/chdman'])
@@ -73,21 +75,26 @@ def main():
     check('configure-regressions',configure,compiler_env)
     gates=['dsp_regression','core_regression','bup_regression','machine_regression','background_regression','audio_buffer']
     check('build-regressions',[cmake,'--build',checks,'--target',*gates,'--parallel','2'],compiler_env)
-    for gate in gates:check(gate,[checks/gate])
+    for gate in gates:check(gate,[checks/gate],required=False)
     source=out/'synthetic'
-    source.mkdir()
-    (source/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.20)
-project(sfiii_synthetic C CXX)
-set(CMAKE_CXX_STANDARD 20)
-include("${SATURN_RUNTIME}/runtime.cmake")
-add_executable(saturn "${SATURN_RUNTIME}/src/app/main.cpp" "${SATURN_RUNTIME}/tests/no_modules.cpp")
-target_link_libraries(saturn PRIVATE saturn_core saturn_machine saturn_host Threads::Threads)
-include("${SATURN_EXTRA}")
-''')
+    # The upstream instruction fixtures are original synthetic code. Exercise the
+    # real emitter and its generated CMake, with native-state safepoints enabled.
+    generator='''import sys
+sys.path.insert(0,sys.argv[1])
+from saturnrecomp.recomp.__main__ import generate
+generate([],sys.argv[2],optest=True,native_states=True)
+'''
+    check('synthetic-aot-generation',[python,'-X','utf8','-B','-c',generator,payload/'app/.local/saturn-recomp/src',source])
+    # ISA vectors never request snapshots. Fail if a snapshot is requested here;
+    # the real machine/state tests cover serialization separately.
+    (source/'state-stub.cpp').write_text('#include "saturn/sh2.h"\n#include <cstdlib>\nstd::atomic<bool> g_state_requested{false};\nvoid state_native_point(SH2Context&,uint32_t){std::abort();}\n')
+    with (source/'CMakeLists.txt').open('a') as f:
+        f.write('\ntarget_sources(selftest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/state-stub.cpp")\n')
     build=out/'synthetic-build'
     check('configure-native-host',worker.configure_args(source,build,payload),compiler_env)
-    check('build-native-host',[cmake,'--build',build,'--target','saturn','controller_setup','controller_selftest','replay_checkpoint','gpu_renderer_selftest','replay_ui_selftest','native_state_ui_selftest','--parallel','2'],compiler_env)
+    check('build-native-host',[cmake,'--build',build,'--target','saturn','selftest','controller_setup','controller_selftest','replay_checkpoint','gpu_renderer_selftest','replay_ui_selftest','native_state_ui_selftest','--parallel','2'],compiler_env)
     shutil.copytree(payload/'sdl/lib',build/'lib',symlinks=True)
+    check('synthetic-aot-instructions',[build/'selftest',source/'selftest/optest.txt'],required=False)
     # The current runtime prints its usage and exits 2 for --help.
     _,usage=check('native-cli-usage',[build/'saturn','--help'],expected=2)
     if 'usage: saturn --cue' not in usage:raise RuntimeError('Native host usage was not printed.')

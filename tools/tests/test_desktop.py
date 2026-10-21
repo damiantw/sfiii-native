@@ -22,7 +22,7 @@ class DesktopTests(unittest.TestCase):
                 with self.assertRaises(ValueError):worker.external_work(path,package)
             repo=root/'source';repo.mkdir();(repo/'.git').mkdir()
             with self.assertRaises(ValueError):worker.external_work(repo/'data',package)
-            self.assertEqual(worker.external_work(root/'data',package),root/'data')
+            self.assertEqual(worker.external_work(root/'data',package),(root/'data').resolve())
 
     def test_build_environment_isolates_system_compilers_and_runtime_overrides(self):
         fake={'SystemRoot':str(Path(tempfile.gettempdir())/'windows'),'PATH':'external-compiler','INCLUDE':'external-sdk',

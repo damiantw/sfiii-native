@@ -44,7 +44,7 @@ class DiscInputTests(unittest.TestCase):
     def test_cue_passthrough_needs_no_chd_tool(self):
         with tempfile.TemporaryDirectory() as d:
             cue=Path(d)/'disc.cue';cue.touch()
-            self.assertEqual(disc_input.resolve_disc(cue,Path(d)/'work','missing',None,None),cue)
+            self.assertEqual(disc_input.resolve_disc(cue,Path(d)/'work','missing',None,None),cue.resolve())
 
     def test_manifest_identity_detects_code_audio_and_ip_changes(self):
         original={'files':{'/BOOT':{'sha1':'synthetic','size':10}},'audio':{'02':{'sha1':'audio'}},'ip_sha1':'header'}
