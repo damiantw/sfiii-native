@@ -140,7 +140,7 @@ def main():
                 raise ValueError('Metal shader resource mapping was not verified.')
     # Build only the disc conversion utility. No emulator binary enters the package.
     project='build/projects/sdl/mame/gmake-'+('osx-clang' if sys.platform=='darwin' else 'linux')
-    options=['TOOLS=1','EMULATOR=0','REGENIE=1','USE_QTDEBUG=0','NO_USE_PORTAUDIO=1',
+    options=['OSD=sdl','TOOLS=1','EMULATOR=0','REGENIE=1','USE_QTDEBUG=0','NO_USE_PORTAUDIO=1',
              'NO_USE_PULSEAUDIO=1','NO_OPENGL=1','USE_TAPTUN=0','USE_PCAP=0','IGNORE_GIT=1']
     # The top-level makefile generates projects; tool targets live in that project.
     run(['make','-C',sources['mame'],'-j'+jobs,*options,'generate',project+'/Makefile'])
@@ -180,7 +180,8 @@ def main():
     executable.write_text(script)
     executable.chmod(0o755)
     bootstrap_exe=executable if sys.platform=='darwin' else package/'SFIII Native'
-    run([payload/'compiler/bin/cc',ROOT/'native/launcher-bootstrap.c','-O2','-o',bootstrap_exe])
+    minimum_os=['-mmacosx-version-min=13.0'] if sys.platform=='darwin' else []
+    run([payload/'compiler/bin/cc',ROOT/'native/launcher-bootstrap.c',*minimum_os,'-O2','-o',bootstrap_exe])
     (resources/'START HERE.txt').write_text('Shining Force III Native '+lock['version']+'\n\nOpen the SFIII Native application/launcher. Choose your supported Scenario 1 USA or Scenario 2 translated-v24 CUE/CHD and an external data folder. Click Prepare game, then Play.\n\nThe compiler, Python, SDL, CMake, Ninja and CHD converter are bundled. No game data or BIOS is included. Preparation stays local.\n\nExperimental platform candidate: native unit/build checks are separate from gameplay validation. Real-disc gameplay and hardware GPU/controller/audio checks on this OS remain unvalidated unless specifically documented. Keep backups of saves; native states are build-specific.\n',encoding='utf-8')
     inventory={f.relative_to(resources).as_posix():sha(f) for f in resources.rglob('*') if f.is_file()}
     (resources/'PACKAGE-FILES.json').write_text(json.dumps(inventory,indent=2)+'\n')

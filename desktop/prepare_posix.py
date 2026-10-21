@@ -44,7 +44,7 @@ def environment(payload=PAYLOAD):
 
 def configure_args(generated, build, payload=PAYLOAD):
     rpath = '@executable_path/lib' if sys.platform == 'darwin' else '$ORIGIN/lib'
-    return [payload/'cmake/bin/cmake', '-S', generated, '-B', build, '-G', 'Ninja',
+    args = [payload/'cmake/bin/cmake', '-S', generated, '-B', build, '-G', 'Ninja',
             '-DCMAKE_BUILD_TYPE=Release', '-DSATURN_VDP1_GPL=OFF',
             '-DCMAKE_C_COMPILER='+str(payload/'compiler/bin/cc'),
             '-DCMAKE_CXX_COMPILER='+str(payload/'compiler/bin/c++'),
@@ -54,6 +54,8 @@ def configure_args(generated, build, payload=PAYLOAD):
             '-DCMAKE_PREFIX_PATH='+str(payload/'sdl'),
             '-DSF3_PRECOMPILED_SHADERS='+str(payload/'shaders'),
             '-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON', '-DCMAKE_INSTALL_RPATH='+rpath]
+    if sys.platform == 'darwin':args.append('-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0')
+    return args
 
 
 def prepare(source, work, scenario):

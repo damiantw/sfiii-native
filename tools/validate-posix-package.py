@@ -27,15 +27,35 @@ def main():
     env=worker.environment(payload)
     env['SDL_AUDIODRIVER']='dummy'
     results=[]
-    def check(name,args,extra=None,required=True):
+    def check(name,args,extra=None,required=True,expected=0):
         with (out/(name+'.log')).open('wb') as log:
             r=subprocess.run(list(map(str,args)),env={**env,**(extra or {})},stdout=log,stderr=subprocess.STDOUT,timeout=1200,cwd=out)
         text=(out/(name+'.log')).read_text(errors='replace')
-        result=dict(name=name,exit_code=r.returncode,passed=r.returncode==0)
+        result=dict(name=name,exit_code=r.returncode,expected_exit_code=expected,passed=r.returncode==expected)
         results.append(result)
-        if required and r.returncode:raise RuntimeError(name+' failed:\n'+text[-6000:])
+        if required and not result['passed']:raise RuntimeError(name+' failed:\n'+text[-6000:])
         return result,text
     check('python-tests',[python,'-X','utf8','-B','-m','unittest','discover','-s',payload/'app/tools/tests','-p','test_*.py'])
+    check('chd-converter',[payload/'chdman/chdman','help'])
+    # Native tools must not depend on maintainer-only Homebrew or checkout paths.
+    command=['otool','-L'] if sys.platform=='darwin' else ['ldd']
+    _,text=check('chd-library-dependencies',[*command,payload/'chdman/chdman'])
+    dependencies='\n'.join(text.splitlines()[1:]) if sys.platform=='darwin' else text
+    if 'not found' in dependencies or any(prefix in dependencies for prefix in ['/opt/homebrew/','/usr/local/','/Users/','/home/runner/']):
+        raise RuntimeError('The CHD converter has an unbundled build-machine dependency:\n'+text)
+    # Invented mixed data/audio sectors exercise the actual converter, never a game.
+    disc=out/'synthetic disc é'
+    disc.mkdir()
+    size=2352*600
+    invented=(bytes(range(256))*((size+255)//256))[:size]
+    (disc/'source.bin').write_bytes(invented)
+    (disc/'source.cue').write_text('FILE "source.bin" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    INDEX 01 00:04:00\n')
+    converter=payload/'chdman/chdman'
+    check('chd-create',[converter,'createcd','-i',disc/'source.cue','-o',disc/'synthetic.chd'])
+    check('chd-verify',[converter,'verify','-i',disc/'synthetic.chd'])
+    check('chd-extract',[converter,'extractcd','-i',disc/'synthetic.chd','-o',disc/'output.cue','-ob',disc/'output.bin'])
+    if (disc/'output.bin').read_bytes()!=invented:
+        raise RuntimeError('Synthetic CHD data/audio sectors changed during the round trip.')
     # Hide SDK discovery from the bundled compiler, proving this does not rely on Xcode setup.
     compiler_env={}
     if sys.platform=='darwin':
@@ -68,7 +88,9 @@ include("${SATURN_EXTRA}")
     check('configure-native-host',worker.configure_args(source,build,payload),compiler_env)
     check('build-native-host',[cmake,'--build',build,'--target','saturn','controller_setup','controller_selftest','replay_checkpoint','gpu_renderer_selftest','replay_ui_selftest','native_state_ui_selftest','--parallel','2'],compiler_env)
     shutil.copytree(payload/'sdl/lib',build/'lib',symlinks=True)
-    check('native-help',[build/'saturn','--help'])
+    # The current runtime prints its usage and exits 2 for --help.
+    _,usage=check('native-cli-usage',[build/'saturn','--help'],expected=2)
+    if 'usage: saturn --cue' not in usage:raise RuntimeError('Native host usage was not printed.')
     check('controller-input',[build/'controller_selftest'],{'SDL_VIDEODRIVER':'dummy'})
     ui=out/'ui'
     seed=ui/'seed'
@@ -95,6 +117,7 @@ include("${SATURN_EXTRA}")
         moved_payload=relocated/relative_resources/'payload'
         moved_entry=relocated/entry.relative_to(package)
         check('relocated-launcher-ui',[moved_entry,'--self-test',out/'relocated-launcher'])
+        check('relocated-chd-converter',[moved_payload/'chdman/chdman','help'])
         probe=out/'relocation-source'
         probe.mkdir()
         (probe/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.20)
