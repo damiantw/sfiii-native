@@ -18,6 +18,26 @@ An experimental native static recompilation project for **Shining Force III**, w
 - A portable Windows first-run application that prepares your own disc automatically, with controller setup and save import buttons.
 - Experimental Linux/macOS launchers with bundled offline preparation tools, controller setup and save imports.
 
+## Screenshots
+
+Native Windows captures with the original game artwork. Click an image to open its full resolution. These images illustrate development progress; they do not establish Linux/macOS gameplay compatibility.
+
+| Scenario 1 USA title | Scenario 2 translated v24 title |
+| --- | --- |
+| [![Scenario 1 USA title screen](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario1-title.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario1-title.png) | [![Scenario 2 Translation Project v24 title screen](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-v24-title.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-v24-title.png) |
+
+**Internal resolution comparison:** the same captured Scenario 2 video state rendered through the native GPU renderer at each enhanced scale. Supported geometry is rendered at higher resolution; the original textures and sprites retain their original detail. Open the originals to compare edges, since the previews below share the available page width.
+
+| 2× — 640 × 480 | 4× — 1280 × 960 | 5× — 1600 × 1200 |
+| --- | --- | --- |
+| [![Scenario 2 town at 2x internal resolution](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-2x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-2x.png) | [![The same Scenario 2 town frame at 4x internal resolution](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-4x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-4x.png) | [![The same Scenario 2 town frame at 5x internal resolution](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-5x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-5x.png) |
+
+**Experimental widescreen at 5× (2135 × 1200):** the same scene with an expanded viewport. Edge gaps and missing scenery remain visible where game-side culling needs more work.
+
+[![Scenario 2 town with experimental widescreen and 5x GPU rendering](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-widescreen-5x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-widescreen-5x.png)
+
+Selected PNG screenshots are hosted as release documentation, outside the source tree and application packages. Local disc data, video dumps, saves and diagnostic captures remain outside the repository.
+
 ## What you supply
 
 - **Windows:** Windows 10 (1903 or newer)/11 x64 with .NET Framework 4.8 (normally included), a Vulkan or Direct3D 12 capable GPU, and several GB of free disk space.
