@@ -1,4 +1,4 @@
-"""Audit local Scenario 1 modules before gameplay; emit an external candidate profile.
+"""Audit local SFIII modules before gameplay; emit an external candidate profile.
 
 Mappings from observed RAM and SF3Tools are kept distinct. Discovery is a static
 coverage audit, not a claim of correct gameplay or of every byte being executable.

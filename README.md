@@ -2,7 +2,7 @@
 
 An experimental native static recompilation project for **Shining Force III**, with profiles for **Scenario 1 USA MK-81383 V1.001** and **Scenario 2 Translation Project v24**. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; experimental Linux x64, Apple Silicon and Intel Mac candidates are built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services; static recompilation does not remove the need to model those systems.
 
-**Work in progress.** Recorded gameplay routes, real Saturn save imports and rendering checks work, but the complete game has not been validated. Scenario 2 translated-v24 support is experimental and has limited gameplay coverage. Scenario 3, the Premium Disc and other disc/translation revisions are not supported.
+**Work in progress.** Recorded gameplay routes, real Saturn save imports and rendering checks work, but the complete game has not been validated. Scenario 2 translated-v24 support is experimental and has limited gameplay coverage. Development source also includes an experimental **Scenario 3 Translation Project v25.1** profile and launcher entry; the published Windows v0.3.0 and Linux/macOS v0.4.0-preview1 downloads predate it. The Premium Disc and unregistered disc/translation revisions are not supported.
 
 **Windows v0.3.0-alpha:** adds CHD input, a Scenario 1/2 launcher selector, Scenario 2 BIN/YSBAK save imports, direct native save states and 5× GPU rendering. See [release changes and desktop setup](docs/DESKTOP.md).
 
@@ -17,6 +17,7 @@ An experimental native static recompilation project for **Shining Force III**, w
 - Direct native save states (F5/F9), with separate legacy replay checkpoints. Snapshot validation covers limited Scenario 2 translated-v24 routes; broader snapshot compatibility remains unvalidated.
 - A portable Windows first-run application that prepares your own disc automatically, with controller setup and save import buttons.
 - Experimental Linux/macOS launchers with bundled offline preparation tools, controller setup and save imports.
+- Development builds: separate 1×/2×/3× game-speed controls (F6 or menu), with accelerated audio. Rendering resolution stays fixed; available speed depends on scene and hardware. This is not in the published packages yet.
 
 ## Screenshots
 
@@ -81,17 +82,19 @@ The Scenario 2 audit compiles 219 configured/candidate modules, including 195 X1
 
 The v0.3.0 candidate passed the six required runtime regression targets, the four Scenario 2 routes and 64 GPU shader cases, including 5×, plus native-state and toolbar checks. Synthetic tests cover arithmetic/DSP, storage, DMA, background composition, controller input, checkpoint integrity and GPU rendering. Captured gameplay diagnostics and historical route fixtures stay local. See [development and publication rules](docs/DEVELOPMENT.md).
 
+Scenario 3 v25.1 development compiles 200 configured/candidate modules, including 169 X1 scene programs. Initial Windows routes reach the title, fresh-game setup, ship dialogue, a first-battle screen and a priest interior, exercising five X1 scenes. Six module mappings/entries, 17 discovery findings and 569 indirect sites remain review items. The runtime also reports unimplemented VDP2 scroll/extended-color paths in this route; rendering is not certified hardware-faithful. Downloaded completed saves are isolated test fixtures, never installed as player progress. Broader battles, ordinary in-game saving/loading, full campaign transfers and Linux/macOS Scenario 3 gameplay remain unvalidated.
+
 ## Upcoming features
 
 Planned directions, with no release dates or compatibility guarantees. Faithful gameplay, graphics, audio and reliable saves take priority over enhancements.
 
 - **Broader gameplay validation:** exercise more towns, battles, menus and transitions, fixing crashes and rendering/audio defects as coverage grows.
 - **More complete widescreen:** improve game-side object and terrain culling so additional scenery remains visible as the camera moves and rotates.
-- **More supported editions:** extend the launcher beyond the two registered profiles while keeping each installation’s progress separate.
-- **Scenario 2 coverage, Scenario 3, Premium Disc and more translations:** expand gameplay validation and add revision-specific compilation profiles, identifying supported patch versions explicitly.
+- **More supported editions:** register additional disc revisions while keeping each installation’s progress separate.
+- **Scenario 2/3 coverage, Premium Disc and more translations:** expand gameplay validation and add revision-specific compilation profiles, identifying supported patch versions explicitly.
 - **Save portability and campaign transfers:** expand verified emulator/Saroo import and export formats, and validate backed-up progress transfers between compatible scenarios and editions.
 - **Optional faithful high-resolution artwork:** revisit sharper replacement assets after gameplay and rendering correctness are further established, while retaining the original-art option.
-- **Broader native save-state validation:** extend snapshot tests across battles, transitions and additional scenarios, beyond the currently tested Scenario 2 routes.
+- **Broader native save-state validation:** extend snapshot tests across battles, transitions and additional scenarios, beyond the limited Scenario 2/3 routes tested so far.
 
 These are roadmap items; the supported profiles and tested coverage are listed above.
 

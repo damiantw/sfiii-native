@@ -1,5 +1,7 @@
 # Linux and macOS candidates
 
+Development source includes a Scenario 3 Translation Project v25.1 selector and profile. The v0.4.0-preview1 downloads below predate it. Scenario 3 gameplay has not been tested on Linux or macOS.
+
 Download [v0.4.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.4.0-preview1) for Linux x86-64 desktops, Apple Silicon Macs or Intel Macs. These are experimental platform previews, separate from the published Windows v0.3.0 package. Native build, synthetic runtime tests and shader tests do not establish real-disc gameplay compatibility. Check each package's validation report before treating a platform as supported.
 
 ## Player workflow

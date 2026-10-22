@@ -1,5 +1,17 @@
 # Automatic Windows preparation
 
+## Latest development additions
+
+Source after v0.4.0-preview1 adds Scenario 3 translated-v25.1 preparation, save import and a launcher entry, plus optional 1×/2×/3× game speed. Use 2× initially; normal speed remains the startup default, and rendering resolution stays fixed. A 600-field Scenario 3 battle-menu comparison at 5× resolution measured approximately 2× actual speed for the 2× request and 2.27× for the 3× request, with matching native/GPU frames, virtual PCM and backup contents. This does not certify complete battles or campaigns, and 3× remains experimental.
+
+The Windows controller-setup button now opens its persistent interactive console so detection messages remain visible. Maintainers can supply an external ICO to brand the launcher and native game; artwork stays outside the source repository. These changes are not included in the existing downloadable packages.
+
+## Scenario 3 development
+
+Development builds add a separate **Scenario 3 Translation v25.1** launcher entry, disc-content profile and data folder. Only the registered translated dump is accepted; an original Japanese filename does not establish its contents. Published Windows v0.3.0 and Linux/macOS v0.4.0-preview1 downloads do not contain this profile. Initial Windows routes reach the title, fresh-game setup, ship dialogue, a first-battle screen and a priest interior. Eight route checks passed without changes to reviewed native frames; five of 169 scene modules were exercised. Complete-game, broader battle, ordinary save/load, full campaign-transfer and Linux/macOS Scenario 3 compatibility remain unvalidated.
+
+The importer accepts Scenario 3 raw `SFORCE33_XX.BIN` payloads (24344 bytes) and matching version-1 JSON YSBAK exports. Internal storage fits one such save; cartridge storage is preferable for earlier-scenario carryover files. Source/generated coverage, observed loading addresses and executed routes remain separate claims.
+
 ## v0.3.0-alpha changes
 
 - Select Scenario 1 USA V1.001 or the registered Scenario 2 Translation Project v24 edition, each with its own disc path and game-data folder.
@@ -11,7 +23,7 @@
 
 Scenario 2 remains experimental. The recorded route suite reaches startup, the opening sequence, docks, and imported-save church/town transitions; it does not certify battles, later chapters, campaign transfers or complete-game compatibility. Static mapping/discovery findings remain separate from executed coverage. Widescreen can still expose missing terrain or objects at the edges because the game retains original view-culling assumptions.
 
-Each selector remembers its own disc and data folder. Keep separate folders for the two scenarios; setup rejects switching revisions inside an existing installation. Internal/cartridge progress, native states and replay checkpoints stay with that installation. Close the game before importing saves or updating.
+Each selector remembers its own disc and data folder. Keep separate folders for every scenario; setup rejects switching revisions inside an existing installation. Internal/cartridge progress, native states and replay checkpoints stay with that installation. Close the game before importing saves or updating.
 
 CHDs are verified and extracted locally with bundled `chdman` during preparation, then the native game reads the extracted CUE/BIN. This is a disc-container conversion, not an interpreter gameplay path. The original CHD remains unchanged. Allow additional space for the decompressed disc and keep `disc-cache` in the selected data folder. Its receipt records the source and extracted-file hashes; a changed cache is rejected. Parent/delta CHDs and ISO input are not supported. Disc identity checks include the IP area, every filesystem file and audio tracks, rather than trusting a filename or translation label.
 
@@ -26,7 +38,7 @@ Download the **Windows ZIP asset** from the v0.3.0-alpha prerelease, rather than
 3. Click **Prepare game**. Disc checks, extraction, native code generation and compilation happen locally and offline. Progress appears in the window; preparation can take several minutes.
 4. When ready, click **Play**. Controller setup and save import are available from the same window.
 
-Windows 10 (1903 or newer)/11 x64 with .NET Framework 4.8 and a suitable Vulkan/Direct3D 12 driver is the target. The application is unsigned, so Windows may identify it as an unknown publisher. No BIOS file is required. Only the registered Scenario 1 USA V1.001 and Scenario 2 translated-v24 revisions are accepted. Scenario 3, Premium Disc, other patches, parent/delta CHDs and ISO input are unsupported.
+Windows 10 (1903 or newer)/11 x64 with .NET Framework 4.8 and a suitable Vulkan/Direct3D 12 driver is the target. The application is unsigned, so Windows may identify it as an unknown publisher. No BIOS file is required. The published Windows v0.3.0 package accepts the registered Scenario 1 USA V1.001 and Scenario 2 translated-v24 revisions. Development source also accepts the Scenario 3 translated-v25.1 revision described above. The Premium Disc, other patches, parent/delta CHDs and ISO input are unsupported.
 
 Keep both the application and game-data folders. The original disc dump remains necessary while playing. Saves live in the separate game-data folder, not inside the downloadable package. Reopening the app remembers the selected paths. Changing a disc's location requires preparing its new path again. Updates retain the old build and saves. Native states and replay checkpoints are tied to their exact executable/disc identity: create a new quick state after an update. Older slots stay intact for their original build. Loading a native state restores its captured internal/cartridge memory; exact pre-load backups remain in that session folder.
 

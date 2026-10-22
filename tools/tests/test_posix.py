@@ -22,6 +22,24 @@ def snapshot(path,identity):
 
 
 class PortableTests(unittest.TestCase):
+    def test_scenario3_selector_requires_its_own_ready_profile(self):
+        import launcher_posix as launcher
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);data=root/'game';data.mkdir();payload=root/'payload';payload.mkdir()
+            (payload/'package.json').write_text(json.dumps({'build_id':'synthetic-package'}))
+            (data/'native-build.txt').write_text('build-synthetic')
+            build=data/'build-synthetic';build.mkdir();(build/'saturn').write_bytes(b'invented executable')
+            form=launcher.Launcher.__new__(launcher.Launcher)
+            form.work=SimpleNamespace(get=lambda:str(data))
+            for index,profile in enumerate(launcher.PROFILES):
+                ready={'build_id':'synthetic-package','profile_id':profile,'executable_sha256':worker.common.sha(build/'saturn')}
+                (data/'desktop-ready.json').write_text(json.dumps(ready))
+                for selected in range(3):
+                    form.active=selected
+                    with self.subTest(prepared=index,selected=selected),patch.object(launcher,'PAYLOAD',payload):
+                        self.assertEqual(form.ready(),selected==index)
+            self.assertEqual(len(set(launcher.DATA_FOLDERS)),3)
+
     def test_bundle_boundary_includes_entire_mac_application(self):
         path=Path('/Applications/SFIII Native.app/Contents/Resources/payload')
         self.assertEqual(worker.package_root(path),Path('/Applications/SFIII Native.app'))

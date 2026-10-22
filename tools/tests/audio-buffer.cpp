@@ -29,5 +29,12 @@ int main() {
         }
         check(q.drained(0) && !q.drained(0) && !q.ready(0));
     }
+    for(int before=1;before<=3;++before)for(int after=1;after<=3;++after) {
+        q.reset(before);check(q.ready(q.lead*before));
+        q.reset(after);check(!q.playing && q.speed==after);
+        check(!q.ready(q.lead*after-1));check(q.ready(q.lead*after));
+        check(q.fits(q.maximum*after-1,1) && !q.fits(q.maximum*after,1));
+        check(q.drained(0) && !q.ready(0));
+    }
     std::puts("PASS: startup priming, refill, stable playback, bounded queue");
 }

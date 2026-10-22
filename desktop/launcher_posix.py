@@ -14,6 +14,8 @@ sys.dont_write_bytecode = True
 from prepare_posix import APP, PAYLOAD, common, lock, package_root
 from run_posix import selected_build
 
+PROFILES = ('scenario1-usa-v1_001', 'scenario2-translation-v24', 'scenario3-translation-v25_1')
+DATA_FOLDERS = ('Scenario1-USA', 'Scenario2-v24', 'Scenario3-v25_1')
 
 def data_root():
     if sys.platform == 'darwin':
@@ -36,7 +38,7 @@ class Launcher:
         frame.pack(fill='both',expand=True)
         frame.columnconfigure(1,weight=1)
         ttk.Label(frame,text='Shining Force III Native',font=('',22,'bold')).grid(row=0,column=0,columnspan=3,sticky='w',pady=(0,18))
-        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 USA V1.001','Scenario 2 Translation Project v24 (experimental)'])
+        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 USA V1.001','Scenario 2 Translation Project v24 (experimental)','Scenario 3 Translation Project v25.1 (experimental)'])
         self.selection.grid(row=1,column=1,sticky='ew',pady=5)
         ttk.Label(frame,text='Game').grid(row=1,column=0,sticky='w',padx=(0,12))
         self.cue, self.work = tk.StringVar(), tk.StringVar()
@@ -62,7 +64,7 @@ class Launcher:
         self.progress=ttk.Progressbar(frame,mode='indeterminate')
         self.progress.grid(row=6,column=0,columnspan=3,sticky='ew',pady=10)
         ttk.Label(frame,text='Experimental Linux/macOS preview. Keep a backup of your game-data folder.\nNo game assets or BIOS included. Setup and compilation run locally with bundled tools.',wraplength=780).grid(row=7,column=0,columnspan=3,sticky='w')
-        self.active=int(self.preferences.get('selected',0))
+        self.active=max(0,min(len(PROFILES)-1,int(self.preferences.get('selected',0))))
         self.selection.current(self.active)
         self.restore()
         self.selection.bind('<<ComboboxSelected>>',self.change_game)
@@ -78,7 +80,7 @@ class Launcher:
     def restore(self):
         values=self.preferences['games'].get(str(self.active),{})
         self.cue.set(values.get('cue',''))
-        self.work.set(values.get('work',str(data_root()/('Scenario1-USA' if self.active==0 else 'Scenario2-v24'))))
+        self.work.set(values.get('work',str(data_root()/DATA_FOLDERS[self.active])))
         self.refresh()
 
     def change_game(self,event=None):
@@ -92,7 +94,7 @@ class Launcher:
             work=Path(self.work.get())
             ready=json.loads((work/'desktop-ready.json').read_text())
             package=json.loads((PAYLOAD/'package.json').read_text())
-            expected='scenario1-usa-v1_001' if self.active==0 else 'scenario2-translation-v24'
+            expected=PROFILES[self.active]
             return (ready['build_id']==package['build_id'] and ready['profile_id']==expected
                     and common.sha(selected_build(work)/'saturn')==ready['executable_sha256'])
         except (OSError,ValueError,KeyError):return False

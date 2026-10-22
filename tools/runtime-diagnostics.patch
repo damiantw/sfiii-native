@@ -181,15 +181,16 @@ index cb6af72..08eaa4b 100644
      if (SH2Func f = sh2_lookup(addr)) f(c);
      else sh2_call_unknown(c, addr);
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..eddd264 100644
+index feded39..9c5b376 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
-@@ -42,6 +42,14 @@
+@@ -42,6 +42,15 @@
  #include <chrono>
  #include <cstring>
  #include <map>
 +#ifdef SF3_CONTROLLER_SUPPORT
 +#include "controllers.h"
++#include "app-icon.h"
 +#include "audio-buffer.h"
 +#include "replay-checkpoint.h"
 +#include "gpu-renderer.h"
@@ -199,7 +200,7 @@ index feded39..eddd264 100644
  
  static SDL_Window* g_win;
  static PadSlots g_slots(kHostSlots);
-@@ -50,19 +58,38 @@ static SDL_Texture* g_tex;
+@@ -50,19 +59,40 @@ static SDL_Texture* g_tex;
  static int g_tex_w, g_tex_h;
  static uint16_t g_buttons[kHostSlots];
  static const Frame* g_last;
@@ -216,9 +217,12 @@ index feded39..eddd264 100644
  using Clock = PaceClock;
  static Clock::time_point g_base;                // host time of virtual time 0
  static bool g_paced;
++static int g_game_speed = 1; // Host pacing only; never change machine clocks.
++static void speed_set(int speed);
 +static bool gpu_offscreen() {return std::getenv("SF3_GPU_OFFSCREEN")!=nullptr;}
  
- bool host_wants_frame() { return g_win && (!sat_resuming() || sat_vblanks() % 30 == 0); }
+-bool host_wants_frame() { return g_win && (!sat_resuming() || sat_vblanks() % 30 == 0); }
++bool host_wants_frame() { return g_win && sat_vblanks() % (sat_resuming() ? 30 : g_game_speed) == 0; }
  uint16_t host_pad(int slot) { return g_buttons[slot]; }
 -bool host_pad_connected(int slot) { return g_win && (slot == 0 || g_slots.taken(slot)); }
 +bool host_pad_connected(int slot) {
@@ -239,7 +243,7 @@ index feded39..eddd264 100644
  static std::string g_settings_path, g_settings_text;     // the file and its text, which a save writes over
  static void bind_keyboard();
  
-@@ -91,6 +118,25 @@ static void load_settings(const std::string& named) {
+@@ -91,6 +121,25 @@ static void load_settings(const std::string& named) {
              for (auto& p : problems) sat_note("%s, so its default", p.c_str());
          }
      }
@@ -265,7 +269,7 @@ index feded39..eddd264 100644
      bind_keyboard();
  }
  
-@@ -112,7 +158,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
+@@ -112,7 +161,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
  
  bool host_window(const SaturnConfig& cfg) {
      if (g_win) return true;
@@ -279,7 +283,7 @@ index feded39..eddd264 100644
      load_settings(cfg.settings);
      int s = cfg.scale > 0 ? cfg.scale : g_settings.number("display", "scale");
      bool full = cfg.fullscreen || g_settings.flag("display", "fullscreen");
-@@ -121,12 +173,27 @@ bool host_window(const SaturnConfig& cfg) {
+@@ -121,12 +176,28 @@ bool host_window(const SaturnConfig& cfg) {
      SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
      full = true;
  #endif
@@ -297,6 +301,7 @@ index feded39..eddd264 100644
      }
      sat_note("SDL: drawing with %s", SDL_GetRendererName(g_ren));
 +#ifdef SF3_CONTROLLER_SUPPORT
++    sf3::set_app_icon(g_win);
 +    const char* shader_override=std::getenv("SF3_GPU_SHADER_DIR");
 +    std::string shader_dir=shader_override?shader_override:std::string(SDL_GetBasePath())+"shaders";
 +    g_gpu_active=g_gpu.initialize(g_ren,shader_dir);
@@ -307,7 +312,19 @@ index feded39..eddd264 100644
      ui_open(g_ren);
      // host_pace keeps real time; a present that waited for the display would stall the whole machine
      // whenever the compositor stops sending frames, as KWin does for a window that is out of sight
-@@ -163,6 +230,10 @@ struct HostCall {
+@@ -150,6 +221,11 @@ bool host_open() {
+     g_touchscreen = touch_devices > 0;
+     g_base = Clock::now();
+     g_paced = !g_cfg.realtime;
++    if (const char* speed = std::getenv("SF3_GAME_SPEED")) {
++        if (std::strcmp(speed,"1")==0 || std::strcmp(speed,"2")==0 || std::strcmp(speed,"3")==0)
++            speed_set(speed[0]-'0');
++        else sat_note("Game speed: invalid SF3_GAME_SPEED; using 1x");
++    }
+     return true;
+ }
+ 
+@@ -163,6 +239,10 @@ struct HostCall {
  static SDL_AudioStream* g_audio;
  static const int kLead = 2205, kMax = 11025;    // frames: 50 ms ahead, 250 ms at most
  static int g_underruns, g_dropped;
@@ -318,12 +335,17 @@ index feded39..eddd264 100644
  
  static void audio_silence(int frames) {
      std::vector<int16_t> z((size_t)frames * 2);
-@@ -174,23 +245,79 @@ bool host_audio_open() {
+@@ -174,23 +254,102 @@ bool host_audio_open() {
      SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, 44100};
      g_audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
      if (!g_audio) { sat_note("SDL audio: %s (no sound)", SDL_GetError()); return false; }
 +#ifdef SF3_CONTROLLER_SUPPORT
-+    g_audio_buffer = {};
++    g_audio_buffer.reset(g_game_speed);
++    if (!SDL_SetAudioStreamFrequencyRatio(g_audio, (float)g_game_speed)) {
++        sat_note("audio: speed unavailable (%s); reverting to 1x", SDL_GetError());
++        g_game_speed=1;g_audio_buffer.reset(1);
++        g_base=Clock::now()-std::chrono::nanoseconds(sat_now());
++    }
 +    g_underruns = g_dropped = g_audio_waits = 0;
 +    sat_note("audio: prebuffer %d frames (100 ms), no silence injection", sf3::AudioBuffer::lead);
 +#else
@@ -399,10 +421,28 @@ index feded39..eddd264 100644
 +        g_underruns-g_perf_empty_base,
 +        (unsigned long long)g_gpu.submissions(),(unsigned long long)g_gpu.cache_hits(),(unsigned long long)vdp2_cached_fields(),(unsigned long long)(g_perf_fields-1));
 +#endif
++}
++
++static void speed_set(int speed) {
++    if (speed < 1 || speed > 3 || speed == g_game_speed) return;
++    if (g_cfg.realtime) { sat_note("Game speed: unavailable with --realtime"); return; }
++    if (g_audio) {
++        if (!SDL_SetAudioStreamFrequencyRatio(g_audio,(float)speed)) {
++            sat_note("Game speed: audio rate change failed: %s",SDL_GetError());return;
++        }
++        SDL_PauseAudioStreamDevice(g_audio);
++        SDL_ClearAudioStream(g_audio); // Never play queued old-speed audio after a switch.
++#ifdef SF3_CONTROLLER_SUPPORT
++        g_audio_buffer.reset(speed);
++#endif
++    }
++    g_game_speed=speed;
++    g_base=Clock::now()-std::chrono::nanoseconds(sat_now()/g_game_speed);
++    sat_note("Game speed: %dx requested; audio speed and pitch follow; resolution unchanged",speed);
  }
  
  // ---- the pad ----------------------------------------------------------------------------------
-@@ -281,6 +408,9 @@ static void read_pads() {
+@@ -281,6 +440,9 @@ static void read_pads() {
          if (k[key] && !(alt && key == SDL_SCANCODE_RETURN)) b[0] |= bit;   // Alt+Enter is fullscreen
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -412,7 +452,7 @@ index feded39..eddd264 100644
          if (s >= 0) b[s] |= gamepad_buttons(p.pad, p.map);
      }
      for (int s = 0; s < kHostSlots; ++s) {
-@@ -292,6 +422,7 @@ static void read_pads() {
+@@ -292,6 +454,7 @@ static void read_pads() {
  }
  
  static void pad_added(SDL_JoystickID id) {
@@ -420,7 +460,7 @@ index feded39..eddd264 100644
      SDL_Gamepad* pad = SDL_OpenGamepad(id);
      if (!pad) return;
      char guid[33];
-@@ -303,7 +434,11 @@ static void pad_added(SDL_JoystickID id) {
+@@ -303,7 +466,11 @@ static void pad_added(SDL_JoystickID id) {
          return;
      }
      g_pads.push_back({pad, id, bind_gamepad(guid)});
@@ -433,7 +473,7 @@ index feded39..eddd264 100644
  }
  
  static void pad_removed(SDL_JoystickID id) {
-@@ -329,6 +464,7 @@ void host_rebind() {
+@@ -329,6 +496,7 @@ void host_rebind() {
  void host_pad_event(const SDL_Event& e) {
      if (e.type == SDL_EVENT_GAMEPAD_ADDED) pad_added(e.gdevice.which);
      if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pad_removed(e.gdevice.which);
@@ -441,7 +481,7 @@ index feded39..eddd264 100644
  }
  
  std::vector<HostController> host_controllers() {
-@@ -336,6 +472,9 @@ std::vector<HostController> host_controllers() {
+@@ -336,6 +504,9 @@ std::vector<HostController> host_controllers() {
      std::vector<HostController> out;
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -451,16 +491,16 @@ index feded39..eddd264 100644
          if (s >= 0) out.push_back({SDL_GetGamepadName(p.pad), s, gamepad_buttons(p.pad, p.map) != 0});
      }
      std::sort(out.begin(), out.end(), [](const HostController& a, const HostController& b) { return a.slot < b.slot; });
-@@ -438,7 +577,7 @@ static uint16_t touch_read() {
+@@ -438,7 +609,7 @@ static uint16_t touch_read() {
  // by as long as it was, so the run is the same run with or without it. A panel of two columns where
  // the screen is wide enough, the game's choices in one and the touch pad's in the other, each a row:
  // an action, a choice of a few, a slider, or a switch.
 -enum MenuId { M_RESUME, M_SAVES, M_QUIT, M_PAD, M_SIZE, M_STYLE, M_MENU_BUTTON };
-+enum MenuId { M_RESUME, M_SAVES, M_QUIT, M_PAD, M_SIZE, M_STYLE, M_MENU_BUTTON, M_REPLAY_SAVE, M_REPLAY_LOAD, M_CAPTURE, M_RESOLUTION, M_ASPECT, M_STATE_SAVE, M_STATE_LOAD };
++enum MenuId { M_RESUME, M_SAVES, M_QUIT, M_PAD, M_SIZE, M_STYLE, M_MENU_BUTTON, M_REPLAY_SAVE, M_REPLAY_LOAD, M_CAPTURE, M_RESOLUTION, M_ASPECT, M_STATE_SAVE, M_STATE_LOAD, M_SPEED };
  enum class Control { Action, Choice, Slider, Switch };
  struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
  struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
-@@ -456,10 +595,17 @@ static void setting_change(const char* key, const char* value) {
+@@ -456,10 +627,18 @@ static void setting_change(const char* key, const char* value) {
      host_settings_save();
  }
  
@@ -471,25 +511,27 @@ index feded39..eddd264 100644
 +static const int kRenderScales[]={1,2,4,5};
 +static constexpr int kRenderScaleCount=sizeof(kRenderScales)/sizeof(kRenderScales[0]);
 +static const char* kRenderNames[]={"1x","2x","4x","5x"};
-+static int choice_count(MenuId id) { return id==M_RESOLUTION ? kRenderScaleCount : id==M_PAD ? 3 : 2; }
-+static const char* choice_name(MenuId id, int i) { return id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
++static int choice_count(MenuId id) { return id==M_SPEED ? 3 : id==M_RESOLUTION ? kRenderScaleCount : id==M_PAD ? 3 : 2; }
++static const char* choice_name(MenuId id, int i) { return id==M_SPEED ? (i==0?"1x":i==1?"2x":"3x") : id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
  
  static int choice_at(MenuId id) {
++    if(id==M_SPEED)return g_game_speed-1;
 +    if(id==M_ASPECT)return vdp1_widescreen()?1:0;
 +    if(id==M_RESOLUTION) {for(int i=0;i<kRenderScaleCount;++i) if(vdp1_render_scale()==kRenderScales[i]) return i;return 0;}
      std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
      for (int i = 0; i < choice_count(id); ++i)
          if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
-@@ -468,6 +614,8 @@ static int choice_at(MenuId id) {
+@@ -468,6 +647,9 @@ static int choice_at(MenuId id) {
  
  static void choose(MenuId id, int i) {
      i = (i + choice_count(id)) % choice_count(id);
++    if(id==M_SPEED) {speed_set(i+1);return;}
 +    if(id==M_ASPECT) {aspect_set(i!=0);return;}
 +    if(id==M_RESOLUTION) {resolution_set(kRenderScales[i]);return;}
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -482,6 +630,13 @@ static const char* menu_label(MenuId id) {
+@@ -482,6 +664,14 @@ static const char* menu_label(MenuId id) {
      case M_RESUME: return "Resume";
      case M_SAVES: return "Save files";
      case M_QUIT: return "Quit";
@@ -500,10 +542,11 @@ index feded39..eddd264 100644
 +    case M_CAPTURE: return "Capture issue (F8)";
 +    case M_RESOLUTION: return "Internal resolution";
 +    case M_ASPECT: return "Aspect ratio (beta)";
++    case M_SPEED: return "Game speed (F6)";
      case M_PAD: return "Show pad";
      case M_SIZE: return "Size";
      case M_STYLE: return "Style";
-@@ -492,6 +647,14 @@ static const char* menu_label(MenuId id) {
+@@ -492,6 +682,15 @@ static const char* menu_label(MenuId id) {
  static MenuLayout menu_layout() {
      const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 340, between = 24;
      std::vector<std::pair<MenuId, Control>> game = {{M_RESUME, Control::Action}};
@@ -514,20 +557,21 @@ index feded39..eddd264 100644
 +    game.push_back({M_CAPTURE, Control::Action});
 +    game.push_back({M_RESOLUTION, Control::Choice});
 +    game.push_back({M_ASPECT, Control::Choice});
++    game.push_back({M_SPEED, Control::Choice});
 +#endif
      if (!g_cfg.after.empty()) game.push_back({M_SAVES, Control::Action});
      game.push_back({M_QUIT, Control::Action});
      const std::vector<std::pair<MenuId, Control>> touch = {
-@@ -527,7 +690,7 @@ static MenuLayout menu_layout() {
+@@ -527,7 +726,7 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
 -    float w = r.control == Control::Switch ? 52 * l.u : 0.58f * r.r.w;
-+    float w = r.control == Control::Switch ? 52 * l.u : ((r.id==M_RESOLUTION || r.id==M_ASPECT) ? 0.46f : 0.58f) * r.r.w;
++    float w = r.control == Control::Switch ? 52 * l.u : ((r.id==M_RESOLUTION || r.id==M_ASPECT || r.id==M_SPEED) ? 0.46f : 0.58f) * r.r.w;
      return {r.r.x + r.r.w - w - 10 * l.u, r.r.y + 9 * l.u, w, r.r.h - 18 * l.u};
  }
  
-@@ -563,12 +726,176 @@ static void menu_quit(bool to_saves) {
+@@ -563,12 +762,177 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -646,7 +690,7 @@ index feded39..eddd264 100644
 +#endif
 +}
 +
-+static float replay_bar_scale() { return std::min(display_scale(), g_out_w / (530.0f + 58.0f*kRenderScaleCount)); }
++static float replay_bar_scale() { return std::min(display_scale(), g_out_w / (630.0f + 58.0f*kRenderScaleCount)); }
 +static float replay_bar_height() {
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    return 36 * replay_bar_scale();
@@ -656,6 +700,7 @@ index feded39..eddd264 100644
 +}
 +static SDL_FRect replay_bar_button(int i) {
 +    float u = replay_bar_scale();
++    if(i==4+kRenderScaleCount)return {(512+kRenderScaleCount*58)*u,4*u,94*u,28*u};
 +    return i<4 ? SDL_FRect{(8+i*126)*u,4*u,120*u,28*u}:SDL_FRect{(512+(i-4)*58)*u,4*u,52*u,28*u};
 +}
 +
@@ -701,20 +746,20 @@ index feded39..eddd264 100644
 +    case M_REPLAY_SAVE: replay_action(false); break;
 +    case M_REPLAY_LOAD: replay_action(true); break;
 +    case M_CAPTURE: capture_issue(); break;
-+    case M_PAD: case M_STYLE: case M_RESOLUTION: case M_ASPECT: choose(id, choice_at(id) + 1); break;
++    case M_PAD: case M_STYLE: case M_RESOLUTION: case M_ASPECT: case M_SPEED: choose(id, choice_at(id) + 1); break;
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +907,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +944,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
 -    if (id == M_PAD || id == M_STYLE) choose(id, choice_at(id) + dir);
-+    if (id == M_PAD || id == M_STYLE || id==M_RESOLUTION || id==M_ASPECT) choose(id, choice_at(id) + dir);
++    if (id == M_PAD || id == M_STYLE || id==M_RESOLUTION || id==M_ASPECT || id==M_SPEED) choose(id, choice_at(id) + dir);
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -656,8 +983,18 @@ static void on_event(const SDL_Event& e) {
+@@ -656,8 +1020,19 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -725,6 +770,7 @@ index feded39..eddd264 100644
          SDL_Scancode k = e.key.scancode;
 +#ifdef SF3_CONTROLLER_SUPPORT
 +        if (k == SDL_SCANCODE_F8 && !e.key.repeat) { capture_issue(); break; }
++        if (k == SDL_SCANCODE_F6 && !e.key.repeat) { speed_set(g_game_speed%3+1); break; }
 +        if ((k == SDL_SCANCODE_F5 || k == SDL_SCANCODE_F9) && !e.key.repeat) {
 +            checkpoint_action(k == SDL_SCANCODE_F9);
 +            break;
@@ -733,7 +779,7 @@ index feded39..eddd264 100644
          if (k == SDL_SCANCODE_F12 && !e.key.repeat) save_shot();
          if ((k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.mod & SDL_KMOD_ALT))) && !e.key.repeat) {
              SDL_SetWindowFullscreen(g_win, !(SDL_GetWindowFlags(g_win) & SDL_WINDOW_FULLSCREEN));
-@@ -686,10 +1023,20 @@ static void on_event(const SDL_Event& e) {
+@@ -686,10 +1061,21 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -752,11 +798,12 @@ index feded39..eddd264 100644
 +            else if(inside(replay_bar_button(5),x,y))resolution_set(2);
 +            else if(inside(replay_bar_button(6),x,y))resolution_set(4);
 +            else if(inside(replay_bar_button(7),x,y))resolution_set(5);
++            else if(inside(replay_bar_button(8),x,y))speed_set(g_game_speed%3+1);
 +#endif
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -894,12 +1241,39 @@ static void draw_catching_up() {
+@@ -894,12 +1280,40 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -786,18 +833,19 @@ index feded39..eddd264 100644
 +#endif
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    ui_fill_rounded({0, 0, (float)g_out_w, replay_bar_height()}, 0, rgba(0.07f, 0.08f, 0.11f, 1));
-+    for (int i=0; i<4+kRenderScaleCount; ++i) {
++    for (int i=0; i<5+kRenderScaleCount; ++i) {
 +        auto r = replay_bar_button(i);
-+        ui_fill_rounded(r, 5*replay_bar_scale(), i>=4 && vdp1_render_scale()==kRenderScales[i-4] ? rgba(0.22f,0.43f,0.9f,1):rgba(0.18f, 0.22f, 0.3f, 1));
++        bool speed_button=i==4+kRenderScaleCount;
++        ui_fill_rounded(r, 5*replay_bar_scale(), (speed_button ? g_game_speed>1 : i>=4 && vdp1_render_scale()==kRenderScales[i-4]) ? rgba(0.22f,0.43f,0.9f,1):rgba(0.18f, 0.22f, 0.3f, 1));
 +        ui_text(r.x+r.w/2, r.y+r.h/2, 13*replay_bar_scale(),
-+                i == 0 ? (g_sh2_native_states?"Save state":"Save checkpoint") : i == 1 ? (g_sh2_native_states?"Load state":"Load checkpoint") : i == 2 ? "Capture issue" : i == 3 ? "Menu" : kRenderNames[i-4],
++                speed_button ? (g_game_speed==1?"Speed 1x":g_game_speed==2?"Speed 2x":"Speed 3x") : i == 0 ? (g_sh2_native_states?"Save state":"Save checkpoint") : i == 1 ? (g_sh2_native_states?"Load state":"Load checkpoint") : i == 2 ? "Capture issue" : i == 3 ? "Menu" : kRenderNames[i-4],
 +                rgba(0.95f, 0.96f, 0.98f, 1), true);
 +    }
 +#endif
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,8 +1286,10 @@ static void draw() {
+@@ -912,15 +1326,16 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -810,9 +858,19 @@ index feded39..eddd264 100644
  }
  
  // The menu, open until it is closed; the game waits.
-@@ -933,36 +1309,76 @@ static void menu_loop() {
+ static void menu_loop() {
+     if (g_audio) SDL_PauseAudioStreamDevice(g_audio);
+     ++g_host_paused;
+-    Clock::time_point t = Clock::now();
+     while (g_menu_open) {
+         SDL_Event e;
+         {
+@@ -931,38 +1346,86 @@ static void menu_loop() {
+         HostCall in("SDL_Delay");
+         SDL_Delay(16);
      }
-     g_base += Clock::now() - t;
+-    g_base += Clock::now() - t;
++    g_base = Clock::now() - std::chrono::nanoseconds(sat_now()/g_game_speed);
      --g_host_paused;
 -    if (g_audio) SDL_ResumeAudioStreamDevice(g_audio);
 +    if (g_audio
@@ -846,6 +904,14 @@ index feded39..eddd264 100644
  static void present(const Frame& f) {
      g_last = &f;
 -    if (SDL_GetWindowFlags(g_win) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED | SDL_WINDOW_HIDDEN)) {
++    // Execute every machine field, but keep host picture composition/GPU rendering
++    // near the normal presentation rate. Fast-forward must not require 180
++    // expensive 5x GPU frames per second. Input/menu polling still runs each field.
++    if (!sat_resuming() && !gpu_offscreen() && sat_vblanks()%g_game_speed) {
++        events();
++        if(g_menu_open)menu_loop();
++        return;
++    }
 +    if (!gpu_offscreen() && (SDL_GetWindowFlags(g_win) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED | SDL_WINDOW_HIDDEN))) {
          events();
          if (g_menu_open) menu_loop();
@@ -907,15 +973,42 @@ index feded39..eddd264 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,7 +1389,7 @@ void host_present(const Frame& f) {
+@@ -973,12 +1436,16 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {
 -    if (!g_win || !g_paced) return;
++    // Fields without a displayed picture still poll input and service the menu.
++    // Only host composition is skipped; VDP1 execution, interrupts and sound run.
++    if (g_win && !sat_resuming() && sat_vblanks()%g_game_speed)
++        tasks_on_thread_stack([](void*) {events();if(g_menu_open)menu_loop();},nullptr);
 +    if (!g_win || !g_paced || gpu_offscreen()) return;
      if (sat_resuming()) {
-         g_base = Clock::now() - std::chrono::nanoseconds(now);
+-        g_base = Clock::now() - std::chrono::nanoseconds(now);
++        g_base = Clock::now() - std::chrono::nanoseconds(now/g_game_speed);
          return;
+     }
+-    auto wait = pace_wait(g_base, now, Clock::now());
++    auto wait = pace_wait(g_base, now, Clock::now(), g_game_speed);
+     if (wait > Clock::duration{}) {
+         HostCall in("SDL_DelayPrecise");
+         SDL_DelayPrecise((Uint64)std::chrono::duration_cast<std::chrono::nanoseconds>(wait).count());
+diff --git a/runtime/src/host/pace.h b/runtime/src/host/pace.h
+index 80d7730..23f8231 100644
+--- a/runtime/src/host/pace.h
++++ b/runtime/src/host/pace.h
+@@ -7,9 +7,9 @@ using PaceClock = std::chrono::steady_clock;
+ 
+ // How long to wait at host time `t` for machine time `now`, given `base`, the host time of machine time 0.
+ // More than 100 ms out either way moves `base` so the machine goes on from `t`.
+-inline PaceClock::duration pace_wait(PaceClock::time_point& base, uint64_t now, PaceClock::time_point t) {
++inline PaceClock::duration pace_wait(PaceClock::time_point& base, uint64_t now, PaceClock::time_point t, int speed = 1) {
+     const auto slack = std::chrono::milliseconds(100);
+-    PaceClock::time_point due = base + std::chrono::nanoseconds(now);
++    PaceClock::time_point due = base + std::chrono::nanoseconds(now / speed);
+     if (t > due + slack || due > t + slack) {
+         base += t - due;
+         return {};
 diff --git a/runtime/src/host/settings.cpp b/runtime/src/host/settings.cpp
 index 15eaa96..520c1ba 100644
 --- a/runtime/src/host/settings.cpp

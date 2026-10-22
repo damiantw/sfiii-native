@@ -3,13 +3,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <cstring>
 
-static SH2Module modules[15];
-static SH2FuncEntry entries[15][2];
+static SH2Module modules[19];
+static SH2FuncEntry entries[19][2];
 extern const SH2Module* const g_sh2_modules[] = {
     &modules[0], &modules[1], &modules[2], &modules[3], &modules[4], &modules[5],
-    &modules[6], &modules[7], &modules[8], &modules[9], &modules[10], &modules[11], &modules[12], &modules[13], &modules[14]};
-extern const int g_sh2_nmodules = 15;
+    &modules[6], &modules[7], &modules[8], &modules[9], &modules[10], &modules[11], &modules[12], &modules[13], &modules[14],
+    &modules[15], &modules[16], &modules[17], &modules[18]};
+extern const int g_sh2_nmodules = 19;
 static int calls, starts;
 static void entry(SH2Context&) { ++calls; }
 static void replacement(SH2Context&) { calls += 100; }
@@ -53,6 +55,19 @@ int main() {
     uint8_t alternate[80]={42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57};
     entries[13][0]={modules[1].base+8,replacement};
     modules[13]={"same-base-alternate",modules[1].base,80,sh2_crc32(alternate,80),entries[13],1,nullptr,nullptr,true};
+    // A smaller overlay may replace only an interior region, leaving the old
+    // header intact. Register both bases before dispatch builds its base cache.
+    uint8_t parent_image[256], interior_image[16];
+    for(unsigned j=0;j<256;++j)parent_image[j]=uint8_t(j*7+3);
+    for(unsigned j=0;j<16;++j)interior_image[j]=uint8_t(j*11+91);
+    for(int bank=0;bank<2;++bank) {
+        int parent=15+bank*2,child=parent+1;
+        uint32_t base=bank ? 0x00290000u : 0x06090000u;
+        entries[parent][0]={base,entry};entries[parent][1]={base+128,entry};
+        modules[parent]={"partial-parent",base,256,sh2_crc32(parent_image,256),entries[parent],2,nullptr,nullptr,true};
+        entries[child][0]={base+128,replacement};entries[child][1]={base+136,replacement};
+        modules[child]={"partial-child",base+128,16,sh2_crc32(interior_image,16),entries[child],2,nullptr,nullptr,true};
+    }
     for (unsigned i = 0; i < 12; ++i) {
         auto& m = modules[i];
         check(sh2_identify(m.base) == &m, "exact image identification");
@@ -97,5 +112,18 @@ int main() {
     uint8_t actual[16]={2,4,6,8,10,12,14,16};sh2_mem_write(0x06044800,actual,16);
     bool exact=true;
     check(sh2_identify_containing(0x06044800,&exact)==nullptr && !exact,"unique entry in an unrecognized image must not activate unrelated compiled code");
-    std::puts("PASS: 12 residents, data mutation, overlapping replacement, interior overlay switch and stale-entry invalidation");
+    for(int bank=0;bank<2;++bank)for(uint32_t alias:{0u,0x20000000u}) {
+        int parent=15+bank*2,child=parent+1;
+        check(sh2_mem_write(modules[parent].base,parent_image,256),"load partial parent");
+        sh2_activate(&modules[parent]);
+        check(sh2_lookup(modules[child].base)==entry,"parent initially owns interior call");
+        check(sh2_mem_write(modules[child].base,interior_image,16),"load interior overlay past header");
+        uint8_t head[64];sh2_mem_read(modules[parent].base,head,64);
+        check(std::memcmp(head,parent_image,64)==0,"partial replacement must leave parent header unchanged");
+        int before=calls;sh2_call(cpu,modules[child].base+alias);
+        check(calls==before+100 && starts==0,"known interior overlay base must supersede unchanged parent header");
+        check(sh2_lookup(modules[parent].base)==nullptr,"partial overlap must retire parent entries");
+        check(sh2_lookup(modules[child].base+8+alias)==replacement,"interior replacement exports retain correct owner");
+    }
+    std::puts("PASS: 12 residents, data mutation, overlapping replacement, partial overlays past intact headers in both RAM banks, aliases and stale-entry invalidation");
 }

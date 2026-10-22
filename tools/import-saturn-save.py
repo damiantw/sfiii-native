@@ -49,9 +49,9 @@ def raw_record(path):
         name = path.stem.upper()
     else:
         raise ValueError('Choose a raw BIN or version-1 JSON YSBAK save export')
-    if not isinstance(name, str) or not re.fullmatch(r'SFORCE3[12]_[0-9]{2}', name):
-        raise ValueError('Supported save names are SFORCE31_XX and SFORCE32_XX')
-    expected = 12904 if name.startswith('SFORCE31_') else 16248
+    if not isinstance(name, str) or not re.fullmatch(r'SFORCE3[123]_[0-9]{2}', name):
+        raise ValueError('Supported save names are SFORCE31_XX, SFORCE32_XX and SFORCE33_XX')
+    expected = {'SFORCE31':12904, 'SFORCE32':16248, 'SFORCE33':24344}[name[:8]]
     if len(data) != expected or int.from_bytes(data[:4], 'big') != len(data)-8:
         raise ValueError(f'Unsupported save layout for {name}; expected {expected} bytes')
     if int.from_bytes(data[4:8], 'big') != sum(data[8:]):

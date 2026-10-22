@@ -13,6 +13,33 @@ spec.loader.exec_module(module)
 
 
 class ImportTests(unittest.TestCase):
+    def test_scenario3_raw_and_archive_preserve_payloads_with_cartridge_capacity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);data=(24336).to_bytes(4,'big')+(255).to_bytes(4,'big')+b'\xff'+bytes(24335)
+            raw=root/'SFORCE33_01.BIN';raw.write_bytes(data)
+            archive,obj,_=self.archive(root)
+            obj['metadata'].update(filename='SFORCE33_02',dataSize=len(data),comment='Julian')
+            obj['dataBase64']=base64.b64encode(data).decode();archive.write_text(json.dumps(obj))
+            backup=root/'backup.bin'
+            module.import_files(backup,'internal',[raw]);previous=backup.read_bytes()
+            with self.assertRaisesRegex(ValueError,'Not enough space'):module.import_files(backup,'internal',[archive])
+            self.assertEqual(backup.read_bytes(),previous)
+            module.import_files(backup,'cartridge',[raw,archive])
+            entries=module.records(Path(str(backup)+'.cartridge').read_bytes())
+            self.assertEqual(set(entries),{'SFORCE33_01','SFORCE33_02'})
+            for record in entries.values():self.assertEqual(record[32:],data)
+            self.assertEqual(raw.read_bytes(),data)
+            raw.write_bytes(data[:-1]+b'\x01')
+            with self.assertRaisesRegex(ValueError,'checksum mismatch'):module.raw_record(raw)
+
+    def test_scenario3_rejects_other_scenario_layouts_and_invalid_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            data=(16240).to_bytes(4,'big')+bytes(16244)
+            for name in ('SFORCE33_01','SFORCE34_01','SFORCE33_001'):
+                raw=root/(name+'.BIN');raw.write_bytes(data)
+                with self.subTest(name=name),self.assertRaises(ValueError):module.raw_record(raw)
+
     def archive(self, root):
         data = (16240).to_bytes(4,'big') + (7).to_bytes(4,'big') + b'\x07' + bytes(16239)
         obj = dict(version=1, metadata=dict(filename='SFORCE32_03', comment='Medion', language=0,

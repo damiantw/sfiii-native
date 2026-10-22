@@ -11,7 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'desktop'))
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import disc_input
-from disc_profile import content_id, verify_inventory
+from disc_profile import content_id, verify_inventory, identify
 
 class DiscInputTests(unittest.TestCase):
     def test_chd_extracts_once_and_revalidates_cache(self):
@@ -60,5 +60,22 @@ class DiscInputTests(unittest.TestCase):
             self.assertEqual(verify_inventory(root,profile),m)
             (root/'manifest.json').write_text('{}')
             with self.assertRaisesRegex(ValueError,'contents do not match'):verify_inventory(root,profile)
+
+    def test_same_translation_product_header_does_not_confuse_scenarios(self):
+        # Both translations can use SF3TRANS. Only full content identity selects
+        # the profile; a plausible header or a renamed dump is insufficient.
+        import types
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            manifests=[{'files':{'/1ST.BIN':{'sha1':name,'size':64}},'audio':{},'ip_sha1':name}
+                       for name in ('invented-scenario2','invented-scenario3')]
+            for scenario,manifest in zip((2,3),manifests):
+                (root/f'scenario{scenario}.json').write_text(json.dumps({'scenario':scenario,'content_sha256':content_id(manifest)}))
+            disc=types.SimpleNamespace(ip=types.SimpleNamespace(product='SF3TRANS',version='V25.1'))
+            for scenario,manifest in zip((2,3),manifests):
+                self.assertEqual(identify(disc,manifest,root)[1]['scenario'],scenario)
+            for key in ('files','audio','ip_sha1'):
+                changed={**manifests[1],key:'different contents'}
+                with self.assertRaisesRegex(ValueError,'Unsupported disc contents'):identify(disc,changed,root)
 
 if __name__=='__main__':unittest.main()

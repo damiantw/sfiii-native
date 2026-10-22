@@ -15,7 +15,7 @@ def identify(disc, manifest, profiles=ROOT/'profiles'):
         if profile.get('content_sha256') == identity:
             return path, profile
     raise ValueError('Unsupported disc contents: '+disc.ip.product+' '+disc.ip.version+
-                     '. This build supports Scenario 1 USA V1.001 and the registered Scenario 2 translation v24 dump.')
+                     '. This build supports Scenario 1 USA V1.001 and the registered Scenario 2 v24 / Scenario 3 v25.1 translation dumps.')
 
 def verify_inventory(work, profile):
     manifest = json.loads((Path(work)/'manifest.json').read_text())

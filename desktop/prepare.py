@@ -156,7 +156,8 @@ def prepare(cue, work, scenario=None):
                  '-DCMAKE_EXE_LINKER_FLAGS=-static','-DSATURN_VDP1_GPL=OFF',
                  '-DSATURN_RUNTIME='+(APP/'.local/saturn-recomp/runtime').as_posix(),'-DSATURN_EXTRA='+(APP/'tools/windows.cmake').as_posix(),
                  '-DCMAKE_PREFIX_PATH='+(PAYLOAD/'sdl/x86_64-w64-mingw32').as_posix(),
-                 '-DSF3_PRECOMPILED_SHADERS='+(PAYLOAD/'shaders').as_posix()],env,log,'configure')
+                 '-DSF3_PRECOMPILED_SHADERS='+(PAYLOAD/'shaders').as_posix(),
+                 '-DSF3_APP_ICON='+((PAYLOAD/'app-icon.ico').as_posix() if (PAYLOAD/'app-icon.ico').is_file() else '')],env,log,'configure')
             status('build','Preparing the game for this PC...')
             run([cmake,'--build',build,'--target','saturn','controller_setup','controller_selftest','replay_checkpoint','--parallel',str(min(4,max(1,os.cpu_count() or 1)))],env,log,'build',progress=True)
             shutil.copyfile(PAYLOAD/'sdl/x86_64-w64-mingw32/bin/SDL3.dll',build/'SDL3.dll')
@@ -186,7 +187,7 @@ def prepare(cue, work, scenario=None):
 def main():
     p = argparse.ArgumentParser(__doc__)
     p.add_argument('--cue',type=Path,required=True);p.add_argument('--work',type=Path,required=True)
-    p.add_argument('--scenario',type=int,choices=[1,2])
+    p.add_argument('--scenario',type=int,choices=[1,2,3])
     a = p.parse_args()
     try:prepare(a.cue,a.work,a.scenario);return 0
     except Exception as error:

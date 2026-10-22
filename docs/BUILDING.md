@@ -42,3 +42,7 @@ python tools/probe.py --cue 'D:\Games\SFIII\Shining Force III (USA).cue' --frame
 ```
 
 The manual build leaves launcher activation unchanged for testing. `prepare-game.ps1` supplies external configuration and selects the first build in a new work folder. Keep prior runnable builds and compatible checkpoint seeds when developing updates.
+
+## Optional Windows branding
+
+Keep artwork outside the source repository. `tools/package-desktop.py --icon 'D:\Artwork\sfiii.ico' --out ... --cache ...` embeds a locally supplied ICO in the Windows launcher and carries it in the package for subsequent native game preparation. The game applies its embedded icon to both native window icon sizes, including the title bar and taskbar. The icon participates in the package identity and file inventory. Source/manual builds can set `SF3_APP_ICON` to the external ICO path before building, or pass `-AppIcon` to `tools/build-headless.ps1`. Builds without a supplied icon retain the platform default. No artwork is fetched automatically or added to Git.

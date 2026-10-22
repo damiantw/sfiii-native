@@ -48,8 +48,11 @@ class DesktopTests(unittest.TestCase):
             root=Path(d);payload=root/'payload';payload.mkdir();work=root/'game';work.mkdir()
             (payload/'package.json').write_text(json.dumps({'build_id':'synthetic'}))
             (root/'fake.cue').touch();(work/'native-build.txt').write_text('build-preserved')
-            with patch.object(worker,'PAYLOAD',payload),patch.object(worker,'ensure_game_stopped'),patch.object(worker,'checked_disc'),patch.object(worker,'disc_revision',return_value={'scenario':2}),contextlib.redirect_stdout(io.StringIO()):
-                with self.assertRaisesRegex(ValueError,'Scenario 2'):worker.prepare(root/'fake.cue',work,1)
+            for selected in (1,2,3):
+                for actual in (1,2,3):
+                    if selected==actual:continue
+                    with self.subTest(selected=selected,actual=actual),patch.object(worker,'PAYLOAD',payload),patch.object(worker,'ensure_game_stopped'),patch.object(worker,'checked_disc'),patch.object(worker,'disc_revision',return_value={'scenario':actual}),contextlib.redirect_stdout(io.StringIO()):
+                        with self.assertRaisesRegex(ValueError,'Scenario '+str(actual)):worker.prepare(root/'fake.cue',work,selected)
             self.assertEqual((work/'native-build.txt').read_text(),'build-preserved')
 
     def test_another_revision_cannot_reuse_live_save_folder(self):

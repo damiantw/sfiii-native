@@ -27,6 +27,7 @@
 /profiles/*
 !/profiles/usa-v1.001.json
 !/profiles/scenario2-v24.json
+!/profiles/scenario3-v25_1.json
 !/tools/
 /tools/*
 !/tools/audit-modules.py
@@ -34,6 +35,7 @@
 !/tools/build-scenario1.ps1
 !/tools/check-module-build.py
 !/tools/validate-native-states.py
+!/tools/validate-game-speed.py
 !/tools/check-source-package.py
 !/tools/dev-env.ps1
 !/tools/generate.py

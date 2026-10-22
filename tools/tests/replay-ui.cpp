@@ -34,12 +34,45 @@ int main(int argc, char** argv) {
         on_event(mouse);
     };
     auto initial_pixels=picture.px;
+    if(g_game_speed!=1 || !host_audio_open())return 46;
+    for(int cycle=0;cycle<6;++cycle) {
+        click(8);int expected=cycle%3+2;if(expected==4)expected=1;
+        if(g_game_speed!=expected || SDL_GetAudioStreamFrequencyRatio(g_audio)!=expected ||
+           SDL_GetAudioStreamQueued(g_audio)!=0 || g_audio_buffer.playing ||
+           g_audio_buffer.speed!=expected || picture.px!=initial_pixels || vdp1_render_scale()!=1)return 47;
+        std::vector<int16_t> pcm(sf3::AudioBuffer::lead*2,123);
+        host_audio_push(pcm.data(),sf3::AudioBuffer::lead);
+        if(g_audio_buffer.playing!=(expected==1))return 48;
+    }
+    event.key.scancode=SDL_SCANCODE_F6;on_event(event);
+    if(g_game_speed!=2)return 49;
+    event.key.repeat=true;on_event(event);if(g_game_speed!=2)return 50;
+    event.key.repeat=false;menu_adjust(M_SPEED,1);if(g_game_speed!=3)return 51;
+    menu_adjust(M_SPEED,1);if(g_game_speed!=1)return 52;
+    speed_set(0);speed_set(4);if(g_game_speed!=1)return 53;
+    // A speed change inside a paused menu must not add the pause twice.
+    menu_open();SDL_Event resume{};resume.type=SDL_EVENT_KEY_DOWN;
+    resume.key.scancode=SDL_SCANCODE_F6;SDL_PushEvent(&resume);
+    resume.key.scancode=SDL_SCANCODE_ESCAPE;SDL_PushEvent(&resume);
+    menu_loop();
+    auto due=g_base+std::chrono::nanoseconds(sat_now()/g_game_speed);
+    if(g_game_speed!=2 || g_menu_open || std::chrono::abs(Clock::now()-due)>std::chrono::milliseconds(30))return 54;
+    speed_set(1);
+    // Even on a field with no host composition, controls must remain responsive.
+    State skipped;uint64_t skipped_line=0,skipped_frame=601;
+    skipped(skipped_line);skipped(skipped_frame);skipped.loading=true;video_state(skipped);
+    speed_set(2);if(host_wants_frame())return 55;
+    resume.key.scancode=SDL_SCANCODE_F6;SDL_PushEvent(&resume);host_pace(0);
+    if(g_game_speed!=3)return 56;
+    State shown;skipped_frame=600;shown(skipped_line);shown(skipped_frame);shown.loading=true;video_state(shown);
+    if(!host_wants_frame())return 57;
+    speed_set(1);
     click(5);
     if(vdp1_render_scale()!=2 || picture.px!=initial_pixels)return 20;
     click(6);if(vdp1_render_scale()!=4)return 21;
     click(7);if(vdp1_render_scale()!=5 || choice_at(M_RESOLUTION)!=3)return 41;
     load_settings(g_cfg.settings);if(vdp1_render_scale()!=5)return 42;
-    for(int i=0;i<4+kRenderScaleCount;++i) {
+    for(int i=0;i<5+kRenderScaleCount;++i) {
         auto a=replay_bar_button(i);
         if(a.x<0 || a.x+a.w>g_out_w)return 43;
         if(i && replay_bar_button(i-1).x+replay_bar_button(i-1).w>a.x)return 44;

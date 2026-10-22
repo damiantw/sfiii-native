@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Runtime,
     [switch]$WithWindow,
     [string]$Sdl,
+    [string]$AppIcon = $env:SF3_APP_ICON,
     [switch]$NoActivate
 )
 $ErrorActionPreference = 'Stop'
@@ -22,6 +23,7 @@ $runtimeCmake = [System.IO.Path]::GetFullPath($Runtime).Replace('\', '/')
 $extra = (Join-Path $PSScriptRoot 'windows.cmake').Replace('\', '/')
 $mode = if ($WithWindow) { 'OFF' } else { 'ON' }
 $options = @()
+if ($AppIcon) { $options += '-DSF3_APP_ICON=' + (Resolve-Path -LiteralPath $AppIcon).Path.Replace('\', '/') }
 if ($WithWindow) {
     if (-not $Sdl) { $Sdl = Join-Path $repo '.local\sdl3\SDL3-3.4.18' }
     if (-not (Test-Path -LiteralPath $Sdl)) { throw 'SDL3 development directory missing' }

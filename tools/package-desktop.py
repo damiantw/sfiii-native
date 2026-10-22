@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import tarfile
 import urllib.request
@@ -19,6 +20,18 @@ def external(path):
     path=Path(path).resolve()
     if path==ROOT or ROOT in path.parents:raise ValueError('Packages and dependency cache must stay outside the source repository')
     return path
+
+
+def read_icon(path):
+    data=Path(path).read_bytes()
+    if len(data)<6 or data[:4]!=b'\0\0\1\0':raise ValueError('Choose a Windows ICO file')
+    count=struct.unpack_from('<H',data,4)[0]
+    directory=6+16*count
+    if not count or directory>len(data):raise ValueError('Incomplete ICO directory')
+    for i in range(count):
+        size,offset=struct.unpack_from('<II',data,6+16*i+8)
+        if not size or offset<directory or offset+size>len(data):raise ValueError('Incomplete ICO image')
+    return data
 
 def extract(archive,destination,spec):
     destination.mkdir(parents=True,exist_ok=False)
@@ -55,10 +68,13 @@ def main():
     p=argparse.ArgumentParser(__doc__)
     p.add_argument('--out',type=Path,required=True);p.add_argument('--cache',type=Path,required=True)
     p.add_argument('--zip',action='store_true',help='Also create an external ZIP after building the application')
+    p.add_argument('--icon',type=Path,help='Optional local branding ICO outside the source repository')
     a=p.parse_args();out=external(a.out);cache=external(a.cache)
+    icon=read_icon(external(a.icon)) if a.icon else None
     if out.exists():raise ValueError('Choose a new package output folder to preserve earlier builds')
     cache.mkdir(parents=True,exist_ok=True);out.mkdir(parents=True)
     payload=out/'payload';app=payload/'app';app.mkdir(parents=True)
+    if icon is not None:(payload/'app-icon.ico').write_bytes(icon)
     lock=json.loads((ROOT/'desktop/dependencies.json').read_text())
     upstream=json.loads((ROOT/'dependencies.json').read_text())
     names=sorted(set(subprocess.check_output(['git','ls-files','-z','--cached','--others','--exclude-standard'],cwd=ROOT).decode().split('\0'))-{''})
@@ -99,13 +115,14 @@ def main():
             if fmt=='spv':command+=['-spirv','-fspv-target-env=vulkan1.0']
             subprocess.run(command+[str(ROOT/'native'/f'{name}.hlsl'),'-Fo',str(shaders/f'{name}.{fmt}')],check=True)
     csc=Path(os.environ.get('SystemRoot',r'C:\Windows'))/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-    subprocess.run([str(csc),'/nologo','/target:winexe','/platform:x64','/optimize+','/debug-',
+    icon_args=['/win32icon:'+str(payload/'app-icon.ico')] if icon is not None else []
+    subprocess.run([str(csc),'/nologo','/target:winexe','/platform:x64','/optimize+','/debug-',*icon_args,
                     '/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll','/reference:System.Web.Extensions.dll',
                     '/win32manifest:'+str(ROOT/'native/app.manifest'),'/out:'+str(out/'SFIII Native.exe'),str(ROOT/'desktop/Launcher.cs')],check=True)
     fingerprint=hashlib.sha256()
     for name in sorted(x.relative_to(payload).as_posix() for x in payload.rglob('*') if x.is_file() and x.suffix not in {'.pyc'}):
         # Large tool binaries are pinned by the dependency archive hashes; hash app/runtime/shaders here.
-        if name.split('/')[0] in {'app','shaders'}:
+        if name.split('/')[0] in {'app','shaders'} or name=='app-icon.ico':
             fingerprint.update(name.encode());fingerprint.update(bytes.fromhex(sha(payload/name)))
     fingerprint.update(json.dumps(dependency_hashes,sort_keys=True).encode())
     manifest=dict(version=lock['version'],build_id=fingerprint.hexdigest()[:16],dependencies=dependency_hashes,
