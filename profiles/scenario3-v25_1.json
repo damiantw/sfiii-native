@@ -126,7 +126,13 @@
         "06017104",
         "06020C6C"
       ],
-      "evidence": "IP first-read address. Additional seeds uniquely match 64 bytes of registered Scenario 2 boot callbacks; static candidates, not executed coverage. Observed entry 0601032C: 64 target bytes exactly match the mapped image. Observed entry 060146F4: 64 target bytes exactly match the mapped image. Observed entry 060170F0: 64 target bytes exactly match the mapped image. Observed entry 06017104: 64 target bytes exactly match the mapped image. Observed entry 0600D1C8: 64 target bytes exactly match the mapped image. Observed entry 0600D1E8: 64 target bytes exactly match the mapped image."
+      "evidence": "IP first-read address. Additional seeds uniquely match 64 bytes of registered Scenario 2 boot callbacks; static candidates, not executed coverage. Observed entry 0601032C: 64 target bytes exactly match the mapped image. Observed entry 060146F4: 64 target bytes exactly match the mapped image. Observed entry 060170F0: 64 target bytes exactly match the mapped image. Observed entry 06017104: 64 target bytes exactly match the mapped image. Observed entry 0600D1C8: 64 target bytes exactly match the mapped image. Observed entry 0600D1E8: 64 target bytes exactly match the mapped image.",
+      "stack_return_calls": [
+        "06005548",
+        "06005610",
+        "0600570C"
+      ],
+      "stack_return_evidence": "Three drawing-command wrappers save the caller PR immediately before calling the shared queue guard. Its full-queue branch deliberately pops that saved PR and returns past the wrapper; accept only the exact one-word stack pop to the saved caller address. Other unexpected returns remain checked. The three equivalent helper bodies and all direct callers were verified in each registered revision."
     },
     {
       "name": "X003",

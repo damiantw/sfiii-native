@@ -82,7 +82,13 @@
         "0600BD68",
         "0601F856"
       ],
-      "evidence": "IP first-read; 060108F8 observed as indirect callback target in native boot trace; 0600BE30 observed in sessions/20261017-200314-869-d3013b with 64 matching RAM bytes."
+      "evidence": "IP first-read; 060108F8 observed as indirect callback target in native boot trace; 0600BE30 observed in sessions/20261017-200314-869-d3013b with 64 matching RAM bytes.",
+      "stack_return_calls": [
+        "06004040",
+        "06004108",
+        "06004204"
+      ],
+      "stack_return_evidence": "Three drawing-command wrappers save the caller PR immediately before calling the shared queue guard. Its full-queue branch deliberately pops that saved PR and returns past the wrapper; accept only the exact one-word stack pop to the saved caller address. Other unexpected returns remain checked. The three equivalent helper bodies and all direct callers were verified in each registered revision."
     },
     {
       "name": "X002",

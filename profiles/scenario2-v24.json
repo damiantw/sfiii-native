@@ -110,7 +110,13 @@
         "06016C74",
         "06020BDC"
       ],
-      "evidence": "IP first-read address; 06010338 observed as native boot callback at VBlank 13; additional callback candidates uniquely match 64 bytes of previously traced Scenario 1 functions. Static candidates are not executed coverage.; 06016C74 observed on native boot, 64 target bytes exact in mapped image.; 0601037C observed on native boot, 64 target bytes exact in mapped image.; 06015F9C observed on native boot, 64 target bytes exact in mapped image."
+      "evidence": "IP first-read address; 06010338 observed as native boot callback at VBlank 13; additional callback candidates uniquely match 64 bytes of previously traced Scenario 1 functions. Static candidates are not executed coverage.; 06016C74 observed on native boot, 64 target bytes exact in mapped image.; 0601037C observed on native boot, 64 target bytes exact in mapped image.; 06015F9C observed on native boot, 64 target bytes exact in mapped image.",
+      "stack_return_calls": [
+        "06005548",
+        "06005610",
+        "0600570C"
+      ],
+      "stack_return_evidence": "Three drawing-command wrappers save the caller PR immediately before calling the shared queue guard. Its full-queue branch deliberately pops that saved PR and returns past the wrapper; accept only the exact one-word stack pop to the saved caller address. Other unexpected returns remain checked. The three equivalent helper bodies and all direct callers were verified in each registered revision."
     },
     {
       "name": "X003",

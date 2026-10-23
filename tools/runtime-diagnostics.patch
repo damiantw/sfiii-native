@@ -3170,20 +3170,21 @@ index 6943552..0c64057 100644
  
  TEST(a_damaged_file_keeps_the_saves_before_the_damage) {
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
-index de3d7ec..02390ca 100644
+index de3d7ec..a14fa32 100644
 --- a/src/saturnrecomp/recomp/__main__.py
 +++ b/src/saturnrecomp/recomp/__main__.py
-@@ -114,18 +114,38 @@ def volatile_literals(prog):
+@@ -114,18 +114,42 @@ def volatile_literals(prog):
  
  class Module:
      def __init__(self, name, path, base, seeds=(), hooks=(), runtime_literals=False, callable_entry=False,
 -                 unwind_returns=False):
-+                 unwind_returns=False, native_states=False):
++                 unwind_returns=False, native_states=False, stack_return_calls=()):
          self.name, self.path, self.base = name, path, base
          self.hooks = frozenset(hooks)
          self.runtime_literals = runtime_literals
          self.callable_entry = callable_entry
          self.unwind_returns = unwind_returns
++        self.stack_return_calls = frozenset(stack_return_calls)
          self.ns = "p_" + name.lower()
 -        self.data = open(path, "rb").read()
 +        with open(path, "rb") as source:
@@ -3192,6 +3193,9 @@ index de3d7ec..02390ca 100644
          self.img = sh2.Image(self.data, base)
          self.prog = discover.Program(self.img, [base] + list(seeds))
 -        self.entries = sorted(self.prog.funcs)
++        code = {pc for fn in self.prog.funcs.values() for pc in fn.code}
++        if any(pc not in code or self.img.insn(pc).op not in ('jsr','bsrf') for pc in self.stack_return_calls):
++            raise ValueError('Configured stack-return call is not a discovered indirect call')
 +        self.primary = sorted(self.prog.funcs)
 +        self.resume = {}
 +        if native_states:
@@ -3215,7 +3219,7 @@ index de3d7ec..02390ca 100644
          self.files, self.sites, self.unknown, self.rows = [], {}, [], []
          self.n_ins = self.n_calls = 0
  
-@@ -154,9 +174,10 @@ class Module:
+@@ -154,9 +178,10 @@ class Module:
              self.files.append(name)
              buf, places, count, idx = [], [], 0, idx + 1
  
@@ -3224,11 +3228,11 @@ index de3d7ec..02390ca 100644
 +            i = self.entries.index(e)
              fn = prog.funcs[e]
 -            body = E.Body(prog, fn, entries, volatile, comments, self.hooks & set(fn.code), self.unwind_returns)
-+            body = E.Body(prog, fn, entries, volatile, comments, self.hooks & set(fn.code), self.unwind_returns, self.resume.get(e, ()))
++            body = E.Body(prog, fn, entries, volatile, comments, self.hooks & set(fn.code), self.unwind_returns, self.resume.get(e, ()), self.stack_return_calls)
              lines = body.emit()
              lines.insert(1, "    ran[%d] = 1;" % i)              # for --coverage: this function has run
              buf.append("\n".join(lines))
-@@ -190,7 +211,7 @@ class Module:
+@@ -190,7 +215,7 @@ class Module:
              f.write("};\n\n")
              f.write("uint8_t ran[%d];\n" % len(self.entries))
              f.write("static const uint16_t sizes[] = {%s};\n\n"
@@ -3237,25 +3241,32 @@ index de3d7ec..02390ca 100644
              f.write('extern const SH2Module module = {"%s", 0x%08Xu, %du, 0x%08Xu, funcs, %d, ran, sizes, %s};\n'
                      % (self.name, self.base, len(self.data), self.crc, len(self.entries),
                         "true" if self.callable_entry else "false"))
-@@ -256,7 +277,7 @@ endif()
+@@ -256,13 +281,14 @@ endif()
  
  
  def generate(specs, out, per_file=8000, comments=True, optest=False, log=print, hooks=None, tasks=None,
 -             runtime_literals=None, callable_entries=None, unwind_returns=None, task_switches=()):
-+             runtime_literals=None, callable_entries=None, unwind_returns=None, task_switches=(), native_states=False):
++             runtime_literals=None, callable_entries=None, unwind_returns=None, task_switches=(), native_states=False, stack_return_calls=None):
      """hooks: {program name: [address, ...]}, see --hook. tasks: (setjmp, longjmp), see --tasks.
      task_switches: [(save, save_key, resume_sp, switch, switch_key)], config.TaskSwitch's fields."""
      hooks = hooks or {}
-@@ -273,7 +294,7 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
+     runtime_literals = runtime_literals or set()
+     callable_entries = callable_entries or set()
+     unwind_returns = unwind_returns or set()
++    stack_return_calls = stack_return_calls or {}
+     t0 = time.time()
+     os.makedirs(out, exist_ok=True)
+     if optest:
+@@ -273,7 +299,7 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
      for name, path, base, seeds in specs:
          t = time.time()
          m = Module(name, path, base, seeds, hooks.get(name, ()), name in runtime_literals,
 -                   name in callable_entries, name in unwind_returns)
-+                   name in callable_entries, name in unwind_returns, native_states)
++                   name in callable_entries, name in unwind_returns, native_states, stack_return_calls.get(name, ()))
          m.generate(out, per_file, comments, log)
          missing = m.hooks - {a for f in m.prog.funcs.values() for a in f.code}
          if missing:
-@@ -288,6 +309,7 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
+@@ -288,6 +314,7 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
          for m in modules:
              f.write("    &%s::module,\n" % m.ns)
          f.write("};\nextern const int g_sh2_nmodules = %d;\n" % len(modules))
@@ -3288,19 +3299,20 @@ index 3396388..70e2000 100644
                      else:
                          if slot not in f.code:
 diff --git a/src/saturnrecomp/recomp/emit.py b/src/saturnrecomp/recomp/emit.py
-index 4cf69d5..cb74d5a 100644
+index 4cf69d5..78f3e88 100644
 --- a/src/saturnrecomp/recomp/emit.py
 +++ b/src/saturnrecomp/recomp/emit.py
-@@ -268,17 +268,31 @@ class Body:
+@@ -268,17 +268,32 @@ class Body:
      its own ("insn") as well when something jumps to it.
      """
  
 -    def __init__(self, prog, f, entries, volatile=frozenset(), comments=True, hooks=frozenset(), unwind_returns=False):
-+    def __init__(self, prog, f, entries, volatile=frozenset(), comments=True, hooks=frozenset(), unwind_returns=False, resume_points=()):
++    def __init__(self, prog, f, entries, volatile=frozenset(), comments=True, hooks=frozenset(), unwind_returns=False, resume_points=(), stack_return_calls=()):
          self.p, self.f, self.img = prog, f, prog.img
          self.entries, self.volatile, self.comments = entries, volatile, comments
          self.hooks = hooks
          self.unwind_returns = unwind_returns
++        self.stack_return_calls = set(stack_return_calls)
 +        self.resume_points = set(resume_points) if f.entry in f.code else set()
          self.ops = {a: prog.img.insn(a) for a in f.code}
          self.slots = {a + 2 for a, i in self.ops.items() if i.delay and a + 2 in f.code}
@@ -3324,7 +3336,7 @@ index 4cf69d5..cb74d5a 100644
  
      # -- analysis
      def _resolve(self):
-@@ -334,9 +348,14 @@ class Body:
+@@ -334,9 +349,14 @@ class Body:
      def _tail(self, t):
          """Leave for `t`, a static target outside this function's code."""
          if t in self.entries:
@@ -3341,7 +3353,7 @@ index 4cf69d5..cb74d5a 100644
  
      def _call(self, t):
          if t in self.entries:
-@@ -371,16 +390,16 @@ class Body:
+@@ -371,16 +391,16 @@ class Body:
                  cases.append("case %s: goto L_%08X;" % (_h(v), v))
                  back |= v <= a
              elif v in self.entries:
@@ -3362,7 +3374,20 @@ index 4cf69d5..cb74d5a 100644
          code = self.f.code
          self._fallback = sorted(a for a in code if a not in self.slots)
          for a, ins in self.ops.items():
-@@ -424,7 +443,10 @@ class Body:
+@@ -418,13 +438,23 @@ class Body:
+             return "c.pr = %s; %sSH2_POLL(c); %s %s" % (ret, s, self._call(ins.target), check), a + 4
+         if op in ("jsr", "bsrf"):
+             x = _r(ins.n) if op == "jsr" else "%s + %s" % (ret, _r(ins.n))
++            if a in self.stack_return_calls:
++                # A verified wrapper saved its caller's PR immediately before
++                # this call. Accept only an exact one-word stack pop returning
++                # to that saved address; all other mismatches stay fatal.
++                check = ("if (c.pc != %s && c.r[15] == saved_sp + 4u && c.pc == saved_return) return; SH2_RET(c, %s);" % (ret, ret))
++                return ("{ const uint32_t x = %s; const uint32_t saved_sp = c.r[15], saved_return = ld32(saved_sp); c.pr = %s; %sSH2_POLL(c); %s %s }"
++                        % (x, ret, s, self._dcall(a), check), a + 4)
+             return ("{ const uint32_t x = %s; c.pr = %s; %sSH2_POLL(c); %s %s }"
+                     % (x, ret, s, self._dcall(a), check), a + 4)
+         if op in ("jmp", "braf"):
              x = _r(ins.n) if op == "jmp" else "%s + %s" % (ret, _r(ins.n))
              return "{ const uint32_t x = %s; %s%s }" % (x, s, self._djump(a)), None
          if op == "rts":
@@ -3374,7 +3399,7 @@ index 4cf69d5..cb74d5a 100644
          if op == "rte":
              return ("{ const uint32_t x = ld32(c.r[15]); c.r[15] += 4; sh2_set_sr(c, ld32(c.r[15]) & 0x3F3u); "
                      "c.r[15] += 4; %sc.pc = x; return; }" % s), None
-@@ -436,6 +458,11 @@ class Body:
+@@ -436,6 +466,11 @@ class Body:
          code = self.f.code
          order = sorted(a for a in code if a not in self.slots or a in labels or a == self.f.entry)
          lines = ["void %s(SH2Context& c) {" % fname(self.f.entry)]
@@ -3386,7 +3411,7 @@ index 4cf69d5..cb74d5a 100644
          if order and order[0] != self.f.entry:            # code shared from below the entry
              labels.add(self.f.entry)
              lines.append("    goto L_%08X;" % self.f.entry)
-@@ -453,6 +480,8 @@ class Body:
+@@ -453,6 +488,8 @@ class Body:
              self.locations.append((a, len(lines), "insn"))
              if ins.delay and a + 2 in code:
                  self.locations.append((a + 2, len(lines), "slot"))
@@ -3395,7 +3420,7 @@ index 4cf69d5..cb74d5a 100644
              lines.append("    " + text)
              nxt = order[i + 1] if i + 1 < len(order) else None
              if succ is not None and succ != nxt:
-@@ -462,4 +491,7 @@ class Body:
+@@ -462,4 +499,7 @@ class Body:
                  else:
                      lines.append("    " + self._tail(succ))
          lines.append("}")

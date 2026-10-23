@@ -65,6 +65,10 @@ def image_bytes(module, original):
         entry = int(seed,16)
         if entry & 1 or not base <= entry <= base+count-2:
             raise ValueError('Module entry is outside its image or unaligned: '+module['file'])
+    for pc in module.get('stack_return_calls', []):
+        at = int(pc,16)-base
+        if at & 1 or at < 2 or at+6 > len(data) or data[at-2:at+2] != bytes.fromhex('4f22400b') or data[at+4:at+6] != bytes.fromhex('4f26'):
+            raise ValueError('Stack-return call must have its verified PR-save/call/restore wrapper: '+module['file'])
     for at in module.get('required_veneer_offsets', []):
         if at < 0 or at+12>len(data) or data[at:at+8] != bytes.fromhex('d001402b00090009'):
             raise ValueError('Container export header is invalid: '+module['file'])

@@ -14,6 +14,18 @@ from module_images import expand_modules, image_bytes, verified_source
 
 
 class ModuleImages(unittest.TestCase):
+    def test_stack_return_configuration_requires_a_complete_saved_pr_wrapper(self):
+        module=dict(file='UNIT.BIN',base='06010000',stack_return_calls=['06010002'])
+        raw=bytes.fromhex('4f22400b00094f26')
+        self.assertEqual(image_bytes(module,raw),raw)
+        for pc in ('06010000','06010001','06010004','06010008'):
+            with self.subTest(pc=pc),self.assertRaisesRegex(ValueError,'verified PR-save'):
+                image_bytes({**module,'stack_return_calls':[pc]},raw)
+        for at in (0,2,6):
+            corrupt=bytearray(raw);corrupt[at]^=1
+            with self.subTest(at=at),self.assertRaisesRegex(ValueError,'verified PR-save'):
+                image_bytes(module,corrupt)
+
     def test_entry_boundaries_and_wrapping_load_addresses(self):
         # A complete SH-2 instruction must fit; an odd trailing byte is not code.
         module=dict(file='UNIT.BIN',base='06010000',seeds=['06010000','06010002'])
