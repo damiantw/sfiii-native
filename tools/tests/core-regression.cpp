@@ -5,6 +5,10 @@
 #include <initializer_list>
 #include <cstring>
 
+// Snapshot module-table interface, implemented in core.cpp.
+int sh2_active_slots();
+void sh2_set_active_slot(int, const SH2Module*);
+
 static SH2Module modules[19];
 static SH2FuncEntry entries[19][2];
 extern const SH2Module* const g_sh2_modules[] = {
@@ -53,8 +57,9 @@ int main() {
     entries[12][0] = {modules[0].base + 8, replacement};
     modules[12] = {"replacement", modules[0].base + 8, 8, sh2_crc32(newer, 8), entries[12], 1, nullptr, nullptr, true};
     uint8_t alternate[80]={42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57};
-    entries[13][0]={modules[1].base+8,replacement};
-    modules[13]={"same-base-alternate",modules[1].base,80,sh2_crc32(alternate,80),entries[13],1,nullptr,nullptr,true};
+    entries[13][0]={modules[1].base,replacement};
+    entries[13][1]={modules[1].base+8,replacement};
+    modules[13]={"same-base-alternate",modules[1].base,80,sh2_crc32(alternate,80),entries[13],2,nullptr,nullptr,true};
     // A smaller overlay may replace only an interior region, leaving the old
     // header intact. Register both bases before dispatch builds its base cache.
     uint8_t parent_image[256], interior_image[16];
@@ -87,7 +92,7 @@ int main() {
     check(sh2_mem_write(modules[13].base,alternate,sizeof alternate),"replace overlay at same base");
     sh2_call(cpu,modules[13].base+8);
     check(calls==201 && starts==0,"interior call must identify replacement even when old overlay has that entry");
-    check(sh2_lookup(modules[1].base)==nullptr,"same-base stale entry must deactivate");
+    check(sh2_lookup(modules[1].base)==replacement,"same-base stale entry must be replaced by the new image's entry");
     check(sh2_lookup(modules[13].base+8+0x20000000)==replacement,"native lookup through cache-through alias");
     for(int i=0;i<64;++i) {
         uint8_t original[80];for(unsigned j=0;j<80;++j) original[j]=uint8_t(1+j);
@@ -98,8 +103,32 @@ int main() {
         sh2_call(cpu,modules[13].base+8+0x20000000);
         check(sh2_lookup(modules[13].base+8)==replacement,"repeated alternate overlay activation");
     }
+    // A restored snapshot names the currently active overlay. The next disc
+    // load can replace it at the same entry address (e.g. battle/menu code).
+    // Test both directions, including an identical first 64 bytes: a cached
+    // header alone cannot identify which complete image was loaded.
+    for(bool shared_header : {false,true}) for(uint32_t alias : {0u,0x20000000u}) {
+        uint8_t original[80],next[80];
+        for(unsigned j=0;j<80;++j) original[j]=uint8_t(1+j);
+        std::memcpy(next,alternate,80);
+        if(shared_header) std::memcpy(next,original,64);
+        modules[13].crc=sh2_crc32(next,80);
+        for(bool reverse : {false,true}) {
+            const auto* old=reverse ? &modules[13] : &modules[1];
+            const auto* fresh=reverse ? &modules[1] : &modules[13];
+            sh2_mem_write(old->base,reverse ? next : original,80);
+            for(int slot=0;slot<sh2_active_slots();++slot) sh2_set_active_slot(slot,nullptr);
+            sh2_set_active_slot(0,old);
+            sh2_mem_write(fresh->base,reverse ? original : next,80);
+            int before=calls;
+            sh2_call(cpu,fresh->base+alias);
+            check(calls==before+(reverse ? 1 : 100) && starts==0,"restored overlay must dispatch newly loaded same-base image by full identity");
+            check(sh2_lookup(fresh->base+8+alias)==(reverse ? entry : replacement),"both exports must follow replacement after snapshot restore");
+        }
+    }
     uint8_t unrecognized=0xF0;sh2_mem_write(modules[13].base,&unrecognized,1);
     check(sh2_lookup(modules[13].base+8)==nullptr,"an unrecognized changed overlay header must invalidate stale entries");
+    sh2_activate(&modules[2]);
     modules[2].callable_entry=false;
     sh2_mem_write(modules[2].base,&unrecognized,1);
     check(sh2_lookup(modules[2].base+8)==entry,"a resident boot image may retain writable startup data in its header");

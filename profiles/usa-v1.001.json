@@ -4,6 +4,26 @@
   "track1_sha256": "089c77470dec14f1dbffaad1ab50d584f06df5e28b475fc712b8e67e5890f951",
   "modules": [
     {
+      "name": "X049",
+      "file": "X049.BIN",
+      "base": "060A0000",
+      "seeds": [
+        "060A0000"
+      ],
+      "overlay": true,
+      "evidence": "Scenario 1 X1ENDING at 0606027A passes destination 060A0000 in r5 and file ID 0x166 in r4 to BOOT 06012A14; the loaded entry is called at 060602CE. Static loader/call evidence; ending gameplay unexecuted."
+    },
+    {
+      "name": "X046",
+      "file": "X046.BIN",
+      "base": "06046000",
+      "seeds": [
+        "06046000"
+      ],
+      "overlay": true,
+      "evidence": "Verified USA V1.001 X001 at 060FD324 loads file ID 0x165 (disc directory X046.BIN) into r5=06046000 using the same loader as adjacent known modules and waits for completion. Header veneers and internal targets fit this image. Static loader evidence; this route has not been executed."
+    },
+    {
       "name": "BOOT",
       "file": "1ST.BIN",
       "base": "06004000",

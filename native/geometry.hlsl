@@ -1,6 +1,9 @@
 // Native texture sampling, geometry coverage and VDP2 composition on the GPU.
 ByteAddressBuffer scene:register(t1,space2);
 ByteAddressBuffer textures:register(t2,space2);
+Texture2D<float4> picture:register(t0,space2);
+SamplerState picture_sampler:register(s0,space2);
+cbuffer Pass:register(b0,space3){uint aa_pass;uint3 pass_padding;};
 uint S(uint at){return scene.Load(at*4);}
 uint T(uint at){return textures.Load(at*4);}
 struct Input {float4 color:TEXCOORD0;float2 uv:TEXCOORD1;float4 position:SV_Position;};
@@ -50,7 +53,37 @@ bool sample_quad(uint q,float2 p,int2 cell,out uint color) {
     color=bytes.r<<16|bytes.g<<8|bytes.b;return true;
 }
 float4 output_color(uint rgb){return float4(float3((rgb>>16)&255,(rgb>>8)&255,rgb&255)/255,1);}
+// Original, conservative spatial edge filter. No history, depth or vendor SDK.
+// Mask by native ownership: ordinary sprite/text and unsupported VDP2 paths
+// retain their exact samples. This intentionally leaves unclassified edges alone.
+float4 edge_aa(Input input) {
+    float4 center=picture.Load(int3(uint2(input.position.xy),0));
+    uint2 cell=min(uint2(input.position.xy)/S(2),uint2(S(0)-1,S(1)-1));
+    uint p=S(4)+(cell.y*S(0)+cell.x)*10,owner=S(p+8);
+    if(S(p+3)==0 || (S(p+3)&0x100) || owner==0 || owner>S(3))return float4(center.rgb,1);
+    uint q=S(5)+(owner-1)*40;
+    if(S(q+25)==0xFFFFFFFF || ((S(q+25)>>16)&15)!=2)return float4(center.rgb,1);
+    float2 texel=1.0/float2(S(0)*S(2),S(1)*S(2));
+    float3 n=picture.SampleLevel(picture_sampler,input.uv-float2(0,texel.y),0).rgb;
+    float3 s=picture.SampleLevel(picture_sampler,input.uv+float2(0,texel.y),0).rgb;
+    float3 e=picture.SampleLevel(picture_sampler,input.uv+float2(texel.x,0),0).rgb;
+    float3 w=picture.SampleLevel(picture_sampler,input.uv-float2(texel.x,0),0).rgb;
+    const float3 luminance=float3(.299,.587,.114);
+    float c=dot(center.rgb,luminance),ln=dot(n,luminance),ls=dot(s,luminance),le=dot(e,luminance),lw=dot(w,luminance);
+    float lo=min(c,min(min(ln,ls),min(le,lw))),hi=max(c,max(max(ln,ls),max(le,lw)));
+    float contrast=hi-lo,threshold=max(.04,hi*.125);
+    float2 gradient=float2(le-lw,ls-ln),magnitude=abs(gradient);
+    // Avoid softening axis-aligned pixel-art edges and isolated texels.
+    if(contrast<threshold || min(magnitude.x,magnitude.y)<max(magnitude.x,magnitude.y)*.1 || dot(gradient,gradient)<.0001)
+        return float4(center.rgb,1);
+    float2 offset=normalize(gradient)*texel*.5;
+    float3 smooth=.5*(picture.SampleLevel(picture_sampler,input.uv-offset,0).rgb+
+                         picture.SampleLevel(picture_sampler,input.uv+offset,0).rgb);
+    float strength=.65*saturate((contrast-threshold)/max(contrast,.0001));
+    return float4(lerp(center.rgb,smooth,strength),1);
+}
 float4 main(Input input):SV_Target {
+    if(aa_pass!=0)return edge_aa(input);
     uint w=S(0),h=S(1),scale=S(2);uint2 pixel=uint2(input.position.xy),cell=min(pixel/scale,uint2(w-1,h-1));
     uint p=S(4)+(cell.y*w+cell.x)*10,mode=S(p+3);
     if(mode&0x100)return output_color(S(p));

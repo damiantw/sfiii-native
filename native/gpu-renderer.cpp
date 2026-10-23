@@ -54,7 +54,7 @@ bool GpuRenderer::initialize(SDL_Renderer* renderer,const std::string& dir) {
     if(!device_ || SDL_GetGPURendererDevice(renderer)!=device_)return SDL_SetError("GPU shader renderer unavailable");
     FragmentShader code;if(!code.read(device_,dir,"geometry"))return false;
     SDL_GPUShaderCreateInfo si{};si.code=code.bytes.data();si.code_size=code.bytes.size();si.entrypoint=code.entry;si.format=code.format;
-    si.stage=SDL_GPU_SHADERSTAGE_FRAGMENT;si.num_samplers=1;si.num_storage_buffers=2;
+    si.stage=SDL_GPU_SHADERSTAGE_FRAGMENT;si.num_samplers=1;si.num_storage_buffers=2;si.num_uniform_buffers=1;
     shader_=SDL_CreateGPUShader(device_,&si);if(!shader_)return false;
     SDL_GPUBufferCreateInfo bi{};bi.usage=SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;bi.size=capacity;
     scene_=SDL_CreateGPUBuffer(device_,&bi);textures_=SDL_CreateGPUBuffer(device_,&bi);
@@ -73,6 +73,7 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
     if(width!=width_ || height!=height_) {
         last_scene_.clear();last_textures_.clear();
         if(output_)SDL_DestroyTexture(output_);
+        if(filtered_)SDL_DestroyTexture(filtered_);filtered_=nullptr;filtered_valid_=false;
         output_=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,width,height);
         if(!output_)return nullptr;
         width_=width;height_=height;SDL_SetTextureBlendMode(output_,SDL_BLENDMODE_NONE);SDL_SetTextureScaleMode(output_,SDL_SCALEMODE_LINEAR);
@@ -140,19 +141,37 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
     if(data.size()*4>capacity || tex.size()*4>capacity){SDL_SetError("GPU geometry scene exceeds buffer capacity");return nullptr;}
     // Exact packed inputs include pixels, clipping, effects, geometry, source
     // texels and dimensions. Repeated fields can reuse the completed picture.
-    if(data==last_scene_ && tex==last_textures_) {++cache_hits_;return output_;}
+    if(data==last_scene_ && tex==last_textures_) {++cache_hits_;return filtered_valid_?filtered_:output_;}
     if(!SDL_FlushRenderer(renderer_) || !upload(scene_,data) || !upload(textures_,tex))return nullptr;
     auto* previous=SDL_GetRenderTarget(renderer_);
     if(!SDL_SetRenderTarget(renderer_,output_))return nullptr;
+    const uint32_t normal_pass[4]={0,0,0,0},aa_pass[4]={1,0,0,0};
+    if(!SDL_SetGPURenderStateFragmentUniforms(state_,0,normal_pass,sizeof normal_pass)) {
+        SDL_SetRenderTarget(renderer_,previous);return nullptr;
+    }
     SDL_SetGPURenderState(renderer_,state_);
-    const bool ok=SDL_RenderTexture(renderer_,white_,nullptr,nullptr);
+    bool ok=SDL_RenderTexture(renderer_,white_,nullptr,nullptr);
     SDL_SetGPURenderState(renderer_,nullptr);SDL_SetRenderTarget(renderer_,previous);
+    filtered_valid_=false;
+    if(ok && aa_) {
+        if(!filtered_) {
+            filtered_=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,width,height);
+            if(filtered_){SDL_SetTextureBlendMode(filtered_,SDL_BLENDMODE_NONE);SDL_SetTextureScaleMode(filtered_,SDL_SCALEMODE_LINEAR);}
+        }
+        if(filtered_ && SDL_SetRenderTarget(renderer_,filtered_) &&
+           SDL_SetGPURenderStateFragmentUniforms(state_,0,aa_pass,sizeof aa_pass)) {
+            SDL_SetGPURenderState(renderer_,state_);
+            filtered_valid_=SDL_RenderTexture(renderer_,output_,nullptr,nullptr);
+        }
+        SDL_SetGPURenderState(renderer_,nullptr);SDL_SetRenderTarget(renderer_,previous);
+        if(!filtered_valid_){SDL_Log("Light AA unavailable: %s; original picture retained",SDL_GetError());aa_=false;}
+    }
     if(ok) {last_scene_=std::move(data);last_textures_=std::move(tex);++submissions_;}
-    return ok?output_:nullptr;
+    return ok?(filtered_valid_?filtered_:output_):nullptr;
 }
 bool GpuRenderer::capture(Frame& f) {
     if(!output_ || !SDL_FlushRenderer(renderer_))return false;
-    auto* previous=SDL_GetRenderTarget(renderer_);if(!SDL_SetRenderTarget(renderer_,output_))return false;
+    auto* previous=SDL_GetRenderTarget(renderer_);if(!SDL_SetRenderTarget(renderer_,filtered_valid_?filtered_:output_))return false;
     auto* surface=SDL_RenderReadPixels(renderer_,nullptr);SDL_SetRenderTarget(renderer_,previous);if(!surface)return false;
     auto* rgb=SDL_ConvertSurface(surface,SDL_PIXELFORMAT_XRGB8888);SDL_DestroySurface(surface);if(!rgb)return false;
     f.w=rgb->w;f.h=rgb->h;f.hd.reset();f.px.resize(size_t(f.w)*f.h);
@@ -160,6 +179,6 @@ bool GpuRenderer::capture(Frame& f) {
     for(auto& p:f.px)p&=0xFFFFFF;SDL_DestroySurface(rgb);return true;
 }
 bool GpuRenderer::wait(){return device_ && SDL_WaitForGPUIdle(device_);}
-void GpuRenderer::release(){if(renderer_)SDL_FlushRenderer(renderer_);if(state_)SDL_DestroyGPURenderState(state_);if(white_)SDL_DestroyTexture(white_);if(output_)SDL_DestroyTexture(output_);if(device_){if(scene_)SDL_ReleaseGPUBuffer(device_,scene_);if(textures_)SDL_ReleaseGPUBuffer(device_,textures_);if(shader_)SDL_ReleaseGPUShader(device_,shader_);}state_=nullptr;white_=output_=nullptr;scene_=textures_=nullptr;shader_=nullptr;width_=height_=0;last_scene_.clear();last_textures_.clear();submissions_=cache_hits_=0;}
+void GpuRenderer::release(){if(renderer_)SDL_FlushRenderer(renderer_);if(state_)SDL_DestroyGPURenderState(state_);if(white_)SDL_DestroyTexture(white_);if(output_)SDL_DestroyTexture(output_);if(filtered_)SDL_DestroyTexture(filtered_);if(device_){if(scene_)SDL_ReleaseGPUBuffer(device_,scene_);if(textures_)SDL_ReleaseGPUBuffer(device_,textures_);if(shader_)SDL_ReleaseGPUShader(device_,shader_);}state_=nullptr;white_=output_=filtered_=nullptr;filtered_valid_=false;scene_=textures_=nullptr;shader_=nullptr;width_=height_=0;last_scene_.clear();last_textures_.clear();submissions_=cache_hits_=0;}
 void GpuRenderer::destroy_device(){if(device_)SDL_DestroyGPUDevice(device_);device_=nullptr;}
 }

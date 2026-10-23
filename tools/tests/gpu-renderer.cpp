@@ -138,7 +138,28 @@ int main(int argc,char** argv) {
             check(gpu.submissions()==draws+3 && changed.px[0]==0xABCDEF,"Native fallback changes must invalidate cache");
             ++cases;
         }
-        std::printf("PASS: %u shader cases: geometry, original textures, flips, native immutability, end codes, SPD, composition, fallback\n",cases);
+        // Spatial AA is presentation only. Exact normal-sprite/text paths and
+        // flat/axis-aligned samples must survive the extra GPU pass unchanged.
+        for(int scale:{2,4,5})for(int width:{16,17,35}) {
+            auto f=fixture(width,17);auto q=quad({0xFFFF},1,1,2,2,13,13);
+            q.xy[0]=7;q.xy[1]=1;q.xy[2]=14;q.xy[3]=7;q.xy[4]=8;q.xy[5]=14;q.xy[6]=1;q.xy[7]=8;
+            f.hd->quads.push_back(q);for(auto& p:f.hd->composition)p.owner=1;
+            gpu.antialiasing(false);auto off=rendered(gpu,f,scale);
+            gpu.antialiasing(true);check(rendered(gpu,f,scale).px==off.px,"AA altered protected sprite/text samples");
+            f.hd->quads[0].gpu_flags|=2u<<16;
+            gpu.antialiasing(false);off=rendered(gpu,f,scale);
+            const auto original=f.px;gpu.antialiasing(true);auto on=rendered(gpu,f,scale);
+            check(on.px!=off.px,"AA did not smooth diagonal geometry");
+            check(f.px==original,"AA changed native frame");
+            auto draws=gpu.submissions();check(rendered(gpu,f,scale).px==on.px && gpu.submissions()==draws,"AA repeated-field cache");
+            gpu.antialiasing(false);check(rendered(gpu,f,scale).px==off.px,"Disabling AA did not restore exact pixels");
+            for(auto& p:f.hd->composition)p.mode=0x100;
+            for(size_t i=0;i<f.px.size();++i)f.px[i]=i%2?0xAA0011:0x0011AA;
+            off=rendered(gpu,f,scale);gpu.antialiasing(true);
+            check(rendered(gpu,f,scale).px==off.px,"AA changed unsupported/occluding native text layer");
+            gpu.antialiasing(false);++cases;
+        }
+        std::printf("PASS: %u shader cases: geometry, original textures, flips, native immutability, end codes, SPD, composition, fallback, masked AA and exact Off restore\n",cases);
         if(argc==4) {
             std::ifstream input(argv[3],std::ios::binary);std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)),{});
             constexpr size_t v2=0xC0020;check(bytes.size()==0x141220,"Local video dump size");
@@ -207,6 +228,20 @@ int main(int argc,char** argv) {
             }
             for(int scale:{2,4,5}) {
                 auto result=rendered(gpu,source,scale);write_png((fs::path(argv[1])/("scene-"+std::to_string(scale)+"x.png")).string(),result);
+                gpu.antialiasing(true);auto filtered=rendered(gpu,source,scale);
+                write_png((fs::path(argv[1])/("scene-"+std::to_string(scale)+"x-aa.png")).string(),filtered);
+                unsigned changed=0,protected_count=0;
+                for(int y=0;y<filtered.h;++y)for(int x=0;x<filtered.w;++x) {
+                    auto at=size_t(y)*filtered.w+x;const auto& p=source.hd->composition[size_t(y/scale)*source.w+x/scale];
+                    bool eligible=p.mode && !(p.mode&0x100) && p.owner && p.owner<=source.hd->quads.size() &&
+                        source.hd->quads[p.owner-1].gpu_eligible && ((source.hd->quads[p.owner-1].gpu_flags>>16)&15)==2;
+                    if(!eligible){check(filtered.px[at]==result.px[at],"AA changed protected local sprite/text/background sample");++protected_count;}
+                    changed+=filtered.px[at]!=result.px[at];
+                }
+                std::printf("AA %dx: %u changed geometry pixels, %u protected samples unchanged\n",scale,changed,protected_count);
+                std::string aa_label="Light AA "+std::to_string(scale)+"x including upload/submission/readback";
+                measured(aa_label.c_str(),[&]{source.px[0]^=1;rendered(gpu,source,scale);});
+                gpu.antialiasing(false);check(rendered(gpu,source,scale).px==result.px,"Local AA Off restoration");
                 auto start=std::chrono::steady_clock::now();
                 for(int i=0;i<10;++i){source.px[0]^=1;rendered(gpu,source,scale);}
                 std::printf("GPU %dx: %.3f ms/frame including upload, submission and readback (%dx%d)\n",scale,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()/10,result.w,result.h);

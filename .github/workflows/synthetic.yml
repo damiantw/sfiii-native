@@ -1,0 +1,49 @@
+name: Source and synthetic regressions
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  synthetic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch pinned runtime and apply project changes
+        shell: bash
+        run: |
+          python -B - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          spec = json.loads(Path('dependencies.json').read_text())['runtime']
+          target = Path('.local') / spec['directory']
+          target.mkdir(parents=True)
+          def git(*args):
+              subprocess.run(['git', '-C', str(target), *args], check=True)
+          git('init')
+          git('remote', 'add', 'origin', spec['url'])
+          git('fetch', '--depth', '1', 'origin', spec['commit'])
+          git('checkout', '--detach', 'FETCH_HEAD')
+          git('apply', str(Path('tools/runtime-diagnostics.patch').resolve()))
+          PY
+      - name: Audit source and run invented-data Python tests
+        shell: bash
+        run: |
+          python -B tools/check-source-package.py --tracked --out "$RUNNER_TEMP/source-check.json"
+          python -X utf8 -B -m unittest discover -s tools/tests -p 'test_*.py'
+      - name: Build required runtime regressions
+        shell: bash
+        run: |
+          cmake -S tools/tests -B "$RUNNER_TEMP/sfiii-checks" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ "-DSATURN_RUNTIME=$GITHUB_WORKSPACE/.local/saturn-recomp/runtime"
+          cmake --build "$RUNNER_TEMP/sfiii-checks" --parallel 2 --target dsp_regression core_regression bup_regression machine_regression background_regression audio_buffer game_speed
+      - name: Run required runtime regressions
+        shell: bash
+        run: |
+          for target in dsp_regression core_regression bup_regression machine_regression background_regression audio_buffer game_speed; do
+            "$RUNNER_TEMP/sfiii-checks/$target"
+          done
+      # Real disc inventories, generated game code and gameplay fixtures stay local.

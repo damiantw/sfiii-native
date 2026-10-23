@@ -1,11 +1,11 @@
 """Generate local game code from an evidence-based module profile."""
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import sys
 from module_entries import unrolled_copy_entries, arithmetic_shift_entries, registered_store_callback_entries
 from disc_profile import verify_inventory
+from module_images import expand_modules, verified_source, image_bytes
 
 p = argparse.ArgumentParser(__doc__)
 p.add_argument('--framework', choices=['saturnkit', 'saturn-recomp'], required=True)
@@ -22,16 +22,14 @@ if work == repo or repo in work.parents or out == repo or repo in out.parents:
 profile = json.loads(a.profile.read_text())
 manifest = verify_inventory(work, profile)
 specs = []
-for m in profile['modules']:
-    source = work / 'extract' / m['file']
-    original = source.read_bytes()
-    expected = manifest['files']['/' + m['file']]
-    if len(original) != expected['size'] or hashlib.sha1(original).hexdigest() != expected['sha1']:
-        raise SystemExit(f'Extracted module changed: {m["file"]}')
-    if 'bytes' in m:
+modules = expand_modules(profile, manifest)
+for m in modules:
+    source, original = verified_source(work, m, manifest)
+    image = image_bytes(m, original)
+    if 'bytes' in m or 'offset' in m:
         prepared = work / 'modules' / m['file']
         prepared.parent.mkdir(exist_ok=True)
-        prepared.write_bytes(source.read_bytes()[:int(m['bytes'], 16)])
+        prepared.write_bytes(image)
         source = prepared
     base = int(m['base'], 16)
     seeds = {int(s, 16) for s in m['seeds']}
@@ -47,7 +45,7 @@ for m in profile['modules']:
             if base <= target < base + len(data) and target % 2 == 0:
                 seeds.add(base + at)
     specs.append((m['name'], str(source), base, sorted(seeds)))
-overlays = {m['name'] for m in profile['modules'] if m.get('overlay')}
+overlays = {m['name'] for m in modules if m.get('overlay')}
 if a.framework == 'saturnkit':
     sys.path.insert(0, str(repo / '.local'))
     from saturnkit.recomp.__main__ import generate
@@ -56,4 +54,4 @@ else:
     sys.path.insert(0, str(repo / '.local' / 'saturn-recomp' / 'src'))
     from saturnrecomp.recomp.__main__ import generate
     generate(specs, str(out), callable_entries=overlays,
-             runtime_literals={m['name'] for m in profile['modules']}, optest=a.optest, native_states=True)
+             runtime_literals={m['name'] for m in modules}, optest=a.optest, native_states=True)

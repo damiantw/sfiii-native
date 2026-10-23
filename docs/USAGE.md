@@ -22,6 +22,12 @@ Fast-forward runs the original game ticks sooner in real time. Battle calculatio
 
 This feature is not included in the published v0.3.0/v0.4.0-preview1 packages. Developers can run `tools/validate-game-speed.py --help` for a windowed, real-audio comparison of an external route at all three speeds; it checks final native pixels, video memory, virtual PCM and backup contents independently from measured speed.
 
+## Light anti-aliasing (development builds)
+
+Choose **Menu > Edge AA (beta) > Light** to soften selected diagonal geometry edges on the GPU. **Off** restores the unfiltered picture; new processes start with AA off. Use 2×, 4× or 5× GPU rendering to try it. This is a small spatial filter with no previous-frame history or ray-tracing requirement, and it does not add texture detail.
+
+The filter uses known geometry ownership to preserve ordinary sprite/text paths and unsupported background paths. The native toolbar and menu are drawn afterward. Unclassified geometry edges are deliberately left alone, and unusual game UI paths still need broader validation. Available with the GPU renderer; there is no CPU filtering fallback. Resolution, game speed, native video memory, game logic and save formats are unchanged. This feature is not in existing downloadable packages. Developer route comparisons can enable it with `validate-game-speed.py --aa`.
+
 ## Game saves
 
 Use the game's save command for ordinary persistent progress. The external files are `experimental-backup.bin` (32 KiB internal capacity) and `experimental-backup.bin.cartridge` (512 KiB cartridge capacity). They contain native backup records, **not raw emulator memory images**. Back them up before changing versions or importing saves. The full game's save behavior has not been validated.

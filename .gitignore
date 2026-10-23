@@ -12,6 +12,7 @@
 !/.github/FUNDING.yml
 !/.github/workflows/
 !/.github/workflows/portable.yml
+!/.github/workflows/synthetic.yml
 !/LICENSES/
 /LICENSES/*
 !/LICENSES/saturn-recomp.txt
@@ -35,11 +36,13 @@
 !/tools/build-scenario1.ps1
 !/tools/check-module-build.py
 !/tools/validate-native-states.py
+!/tools/validate-modules.py
 !/tools/validate-game-speed.py
 !/tools/check-source-package.py
 !/tools/dev-env.ps1
 !/tools/generate.py
 !/tools/module_entries.py
+!/tools/module_images.py
 !/tools/probe.py
 !/tools/disc_profile.py
 !/tools/setup-dependencies.ps1

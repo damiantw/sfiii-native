@@ -1,27 +1,69 @@
 {
-  "version": "0.4.0-preview1",
+  "version": "0.5.0-alpha",
   "git": {
-    "sdl": {"url": "https://github.com/libsdl-org/SDL.git", "commit": "829a65d769d935c4852f8159e964312c0957260a"},
-    "ninja": {"url": "https://github.com/ninja-build/ninja.git", "commit": "3441b633c2fe2c494e958780ba0f4227b1327634"},
-    "spirv-cross": {"url": "https://github.com/KhronosGroup/SPIRV-Cross.git", "commit": "300681bbcb8365a8d1eacdacdbdd0249bbf1d6b1"},
-    "mame": {"url": "https://github.com/mamedev/mame.git", "commit": "f34f02505e32c1993c6a782b6814232cbfc74e36"}
+    "sdl": {
+      "url": "https://github.com/libsdl-org/SDL.git",
+      "commit": "829a65d769d935c4852f8159e964312c0957260a"
+    },
+    "ninja": {
+      "url": "https://github.com/ninja-build/ninja.git",
+      "commit": "3441b633c2fe2c494e958780ba0f4227b1327634"
+    },
+    "spirv-cross": {
+      "url": "https://github.com/KhronosGroup/SPIRV-Cross.git",
+      "commit": "300681bbcb8365a8d1eacdacdbdd0249bbf1d6b1"
+    },
+    "mame": {
+      "url": "https://github.com/mamedev/mame.git",
+      "commit": "f34f02505e32c1993c6a782b6814232cbfc74e36"
+    }
   },
-  "dxc": {"url": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz", "sha256": "96faadc7f5c282d2ffda49804beb4c3ee38127bc252b723234e3c5cdf7aa39a1"},
+  "dxc": {
+    "url": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz",
+    "sha256": "96faadc7f5c282d2ffda49804beb4c3ee38127bc252b723234e3c5cdf7aa39a1"
+  },
   "platforms": {
     "linux-x86_64": {
-      "python": {"url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/cpython-3.12.15%2B20261020-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz", "sha256": "7d6ef1164fb94c4b60d913340610fc7e0ef8e3d1b705aa5628b299b08cbdd4b5"},
-      "zig": {"url": "https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz", "sha256": "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239"},
-      "cmake": {"url": "https://github.com/Kitware/CMake/releases/download/v3.31.10/cmake-3.31.10-linux-x86_64.tar.gz", "sha256": "3cb3dd247b6a1de2d0f4b20c6fd4326c9024e894cebc9dc8699758887e566ca7"}
+      "python": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/cpython-3.12.15%2B20261020-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        "sha256": "7d6ef1164fb94c4b60d913340610fc7e0ef8e3d1b705aa5628b299b08cbdd4b5"
+      },
+      "zig": {
+        "url": "https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz",
+        "sha256": "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239"
+      },
+      "cmake": {
+        "url": "https://github.com/Kitware/CMake/releases/download/v3.31.10/cmake-3.31.10-linux-x86_64.tar.gz",
+        "sha256": "3cb3dd247b6a1de2d0f4b20c6fd4326c9024e894cebc9dc8699758887e566ca7"
+      }
     },
     "darwin-aarch64": {
-      "python": {"url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/cpython-3.12.15%2B20261020-aarch64-apple-darwin-install_only_stripped.tar.gz", "sha256": "e54a19fd9af218ddd4ed66bbec65f4e9062724ea848a0ddbd269e37765d9959e"},
-      "zig": {"url": "https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz", "sha256": "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b"},
-      "cmake": {"url": "https://github.com/Kitware/CMake/releases/download/v3.31.10/cmake-3.31.10-macos-universal.tar.gz", "sha256": "be9f3faeeaf7921cc2d77cea711dd5e6f72c63af2810cacd9205b3ce8d1593c9"}
+      "python": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/cpython-3.12.15%2B20261020-aarch64-apple-darwin-install_only_stripped.tar.gz",
+        "sha256": "e54a19fd9af218ddd4ed66bbec65f4e9062724ea848a0ddbd269e37765d9959e"
+      },
+      "zig": {
+        "url": "https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz",
+        "sha256": "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b"
+      },
+      "cmake": {
+        "url": "https://github.com/Kitware/CMake/releases/download/v3.31.10/cmake-3.31.10-macos-universal.tar.gz",
+        "sha256": "be9f3faeeaf7921cc2d77cea711dd5e6f72c63af2810cacd9205b3ce8d1593c9"
+      }
     },
     "darwin-x86_64": {
-      "python": {"url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/cpython-3.12.15%2B20261020-x86_64-apple-darwin-install_only_stripped.tar.gz", "sha256": "dfe418e59942d3a73789846a161ba973ea4a1b6e2fa8636bc16ad49c398ff6e9"},
-      "zig": {"url": "https://ziglang.org/download/0.15.2/zig-x86_64-macos-0.15.2.tar.xz", "sha256": "375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f"},
-      "cmake": {"url": "https://github.com/Kitware/CMake/releases/download/v3.31.10/cmake-3.31.10-macos-universal.tar.gz", "sha256": "be9f3faeeaf7921cc2d77cea711dd5e6f72c63af2810cacd9205b3ce8d1593c9"}
+      "python": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/cpython-3.12.15%2B20261020-x86_64-apple-darwin-install_only_stripped.tar.gz",
+        "sha256": "dfe418e59942d3a73789846a161ba973ea4a1b6e2fa8636bc16ad49c398ff6e9"
+      },
+      "zig": {
+        "url": "https://ziglang.org/download/0.15.2/zig-x86_64-macos-0.15.2.tar.xz",
+        "sha256": "375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f"
+      },
+      "cmake": {
+        "url": "https://github.com/Kitware/CMake/releases/download/v3.31.10/cmake-3.31.10-macos-universal.tar.gz",
+        "sha256": "be9f3faeeaf7921cc2d77cea711dd5e6f72c63af2810cacd9205b3ce8d1593c9"
+      }
     }
   }
 }

@@ -52,8 +52,15 @@ def validate(a):
     env={**os.environ,'SF3_STATE_ID':identity,'SDL_AUDIODRIVER':'dummy'}
     recording=external(work/case['input']).read_text(encoding='utf-8-sig').strip()
     seed_hashes={key:sha(external(work/case[key])) for key in ('internal','cartridge') if case[key]}
+    initial=external(work/case['state_in']) if case.get('state_in') else None
+    initial_hash=sha(initial) if initial else None
+    initial_parts=parts(initial) if initial else None
+    first_frame=struct.unpack_from('<Q',initial_parts['video'],8)[0] if initial else 0
+    first_sample=struct.unpack_from('<Q',initial_parts['sound'],1)[0] if initial else 0
+    if not first_frame<at<end-4:raise ValueError('Snapshot point must follow the initial state and precede the final frame')
 
     def run(name,state=None,save_at=None,bad_id=False,source_parts=None):
+        state=state or initial
         folder=out/name;folder.mkdir()
         for key,filename in [('internal','backup.bin'),('cartridge','backup.bin.cartridge')]:
             target=folder/filename
@@ -89,7 +96,7 @@ def validate(a):
         results.append(dict(name=name,exit_code=status,
             frame_matches=sha(folder/f'shot-{end}.png')==sha(baseline/f'shot-{end}.png'),
             video_matches=sha(folder/f'dump-{end}.bin')==sha(baseline/f'dump-{end}.bin'),
-            audio_matches=pcm(folder/'audio.wav')==pcm(baseline/'audio.wav')[samples*4:],
+            audio_matches=pcm(folder/'audio.wav')==pcm(baseline/'audio.wav')[(samples-first_sample)*4:],
             backup_matches=all((folder/n).read_bytes()==(baseline/n).read_bytes() for n in ['backup.bin','backup.bin.cartridge']),
             resumed_at=struct.unpack_from('<Q',data['video'],8)[0]))
     # Repeated snapshots must themselves be loadable, after native host stacks changed.
@@ -100,7 +107,7 @@ def validate(a):
     results.append(dict(name='restored-again',exit_code=status,
         frame_matches=sha(again/f'shot-{end}.png')==sha(baseline/f'shot-{end}.png'),
         video_matches=sha(again/f'dump-{end}.bin')==sha(baseline/f'dump-{end}.bin'),
-        audio_matches=pcm(again/'audio.wav')==pcm(baseline/'audio.wav')[samples*4:],
+        audio_matches=pcm(again/'audio.wav')==pcm(baseline/'audio.wav')[(samples-first_sample)*4:],
         backup_matches=all((again/n).read_bytes()==(baseline/n).read_bytes() for n in ['backup.bin','backup.bin.cartridge']),
         resumed_at=struct.unpack_from('<Q',data['video'],8)[0]))
     rejected,status,before=run('wrong-identity',baseline/'quick.satstate',bad_id=True)
@@ -117,9 +124,11 @@ def validate(a):
         video_matches=sha(reference/f'dump-{end}.bin')==sha(baseline/f'dump-{end}.bin'),
         audio_matches=pcm(reference/'audio.wav')==pcm(baseline/'audio.wav')))
     source_unchanged=all(sha(external(work/case[k]))==h for k,h in seed_hashes.items())
+    if initial:source_unchanged &= sha(initial)==initial_hash
     passed=source_unchanged and all(all(v for k,v in r.items() if k.endswith(('_matches','_unchanged')) or k=='rejected') and r.get('exit_code',0)==0 for r in results)
     report=dict(passed=passed,case=a.case,executable_sha256=sha(exe),snapshot_vblank=frame,
                 slave_on=bool(snapshots['machine'][-6]),source_saves_unchanged=source_unchanged,results=results,
+                initial_state_sha256=initial_hash,initial_vblank=first_frame,
                 caveat='Exact fixture comparison; does not certify unvisited gameplay or all snapshot times.')
     (out/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2));return 0 if passed else 1

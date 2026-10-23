@@ -1,23 +1,24 @@
 # Shining Force III Native
 
-An experimental native static recompilation project for **Shining Force III**, with profiles for **Scenario 1 USA MK-81383 V1.001** and **Scenario 2 Translation Project v24**. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; experimental Linux x64, Apple Silicon and Intel Mac candidates are built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services; static recompilation does not remove the need to model those systems.
+An experimental native static recompilation project for **Shining Force III**, with profiles for **Scenario 1 USA MK-81383 V1.001** **Scenario 2 Translation Project v24** and **Scenario 3 Translation Project v25.1**. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; experimental Linux x64, Apple Silicon and Intel Mac candidates are built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services; static recompilation does not remove the need to model those systems.
 
-**Work in progress.** Recorded gameplay routes, real Saturn save imports and rendering checks work, but the complete game has not been validated. Scenario 2 translated-v24 support is experimental and has limited gameplay coverage. Development source also includes an experimental **Scenario 3 Translation Project v25.1** profile and launcher entry; the published Windows v0.3.0 and Linux/macOS v0.4.0-preview1 downloads predate it. The Premium Disc and unregistered disc/translation revisions are not supported.
+**Work in progress.** Scenario 1 USA, Scenario 2 Translation Project v24 and Scenario 3 Translation Project v25.1 are supported experimental profiles. Recorded Windows gameplay routes pass; the complete games, Premium Disc and unregistered revisions remain unvalidated or unsupported.
 
-**Windows v0.3.0-alpha:** adds CHD input, a Scenario 1/2 launcher selector, Scenario 2 BIN/YSBAK save imports, direct native save states and 5× GPU rendering. See [release changes and desktop setup](docs/DESKTOP.md).
+**v0.5.0-alpha:** [download the latest Windows, Linux and macOS packages](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.5.0-alpha). This update adds Scenario 3, optional 2×/3× game speed and Light AA, expands native effect/scene compilation, and strengthens save-state and regression checks. Windows gameplay validation covers 28 recorded routes across the three scenarios. Linux/macOS packages have synthetic validation; real-disc gameplay on those platforms remains unvalidated. See [desktop setup](docs/DESKTOP.md) and [portable setup](docs/POSIX.md).
 
-**Linux/macOS v0.4.0-preview1:** [download the experimental native packages](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.4.0-preview1) for Linux x86-64, Apple Silicon or Intel Macs. Build and synthetic checks passed; real-disc gameplay on these platforms remains unvalidated. See [portable setup and validation limits](docs/POSIX.md).
+When updating, extract into a new application folder and choose your existing scenario data folder, then run **Prepare game** again. The bundled tools handle preparation automatically. Existing in-game saves remain in the separate data folder. Native quick states are build-specific: keep your previous application and prepared build if you need its old states; use an ordinary in-game save to transfer progress to the new build.
 
 ## Features
 
 - Keyboard and SDL controllers, including PlayStation, Xbox, generic USB and configurable Saturn USB controllers.
 - Original textures with 1×, 2×, 4× and 5× rendering of supported geometry through Vulkan, Direct3D 12 or Metal (macOS preview).
 - Experimental 16:9 rendering with centered original framing and additional scenery. Game-side object culling is still incomplete, so edge gaps and pop-in can remain.
-- Persistent internal and cartridge backup storage, with import of supported Scenario 1/2 raw BIN and version-1 JSON YSBAK saves.
+- Persistent internal and cartridge backup storage, with import of supported Scenario 1/2/3 raw BIN and version-1 JSON YSBAK saves.
 - Direct native save states (F5/F9), with separate legacy replay checkpoints. Snapshot validation covers limited Scenario 2 translated-v24 routes; broader snapshot compatibility remains unvalidated.
 - A portable Windows first-run application that prepares your own disc automatically, with controller setup and save import buttons.
 - Experimental Linux/macOS launchers with bundled offline preparation tools, controller setup and save imports.
-- Development builds: separate 1×/2×/3× game-speed controls (F6 or menu), with accelerated audio. Rendering resolution stays fixed; available speed depends on scene and hardware. This is not in the published packages yet.
+- Separate 1×/2×/3× game-speed controls (F6 or menu), with accelerated audio. Rendering resolution stays fixed; available speed depends on scene and hardware.
+- Optional Light edge anti-aliasing for identified GPU geometry, with ordinary sprite/text paths protected and an exact unfiltered Off mode. Broader scene coverage remains unvalidated.
 
 ## Screenshots
 
@@ -51,9 +52,9 @@ The current runtime provides BIOS services at a high level and **does not load o
 
 ## Get started
 
-**Windows players:** download **SFIII-Native-0.3.0-alpha-win64.zip** from this repository's **Releases** page, extract the **whole ZIP**, and open **SFIII Native.exe**. Choose the scenario, your CUE or CHD image and a separate game-data folder, click **Prepare game**, then **Play**. Preparation runs offline using bundled tools; there is no compiler installation, manual compilation, Python installation or terminal command to perform. Keep the application folder after preparation. See [desktop setup](docs/DESKTOP.md).
+**Windows players:** download **SFIII-Native-0.5.0-alpha-win64.zip** from this repository's **Releases** page, extract the **whole ZIP**, and open **SFIII Native.exe**. Choose the scenario, your CUE or CHD image and a separate game-data folder, click **Prepare game**, then **Play**. Preparation runs offline using bundled tools; there is no compiler installation, manual compilation, Python installation or terminal command to perform. Keep the application folder after preparation. See [desktop setup](docs/DESKTOP.md).
 
-**Linux/macOS:** download your platform archive from [v0.4.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.4.0-preview1), extract the complete archive, and open **SFIII Native** (**SFIII Native.app** on Mac). See [portable platform setup](docs/POSIX.md) for preparation and validation limits. Hosted native builds do not certify real-disc gameplay.
+**Linux/macOS:** download your platform archive from [v0.5.0-alpha](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.5.0-alpha), extract the complete archive, and open **SFIII Native** (**SFIII Native.app** on Mac). See [portable platform setup](docs/POSIX.md) for preparation and validation limits. Hosted native builds do not certify real-disc gameplay.
 
 The application compiles game code locally during preparation. No generated game executable is distributed. The complete game is still unvalidated; this is an experimental alpha.
 
@@ -66,7 +67,7 @@ The application compiles game code locally during preparation. No generated game
 
 The work folder must be outside the source repository. Preparation inventories your disc, generates and compiles code locally, and writes a launcher into that work folder. It does not upload your disc or saves. Compilation can take substantial time and disk space.
 
-Source builds write **Launch Native SFIII.cmd** into the work folder. See [building](docs/BUILDING.md) for manual steps and [controls, saves and display settings](docs/USAGE.md) for use. Earlier v0.1.0-alpha downloads are source-only; use the v0.3.0-alpha Windows ZIP for automatic preparation.
+Source builds write **Launch Native SFIII.cmd** into the work folder. See [building](docs/BUILDING.md) for manual steps and [controls, saves and display settings](docs/USAGE.md) for use. Earlier v0.1.0-alpha downloads are source-only; use the current Windows ZIP for automatic preparation.
 
 ## Bring your own saves
 
@@ -76,13 +77,15 @@ Close the game, click **Import saves** in the desktop application (or open **Imp
 
 ## Status and validation
 
-The Scenario 1 v0.2.0 baseline audit compiles 250 configured/candidate modules, including 169 X1 scene modules. Its nine-route regression suite exercises 12 X1 scenes; it does not validate all 169 scenes. Five mapping/entry reviews, nine discovery findings and 918 unresolved indirect sites remain review items. Compilation, emitted entry coverage, executed gameplay and hardware fidelity are separate claims.
+The Scenario 1 development audit compiles 252 configured/candidate modules, including 169 X1 scene modules. Its nine-route regression suite exercises 12 X1 scenes; it does not validate all 169 scenes. Three mapping/entry reviews, nine discovery findings and 935 unresolved indirect sites remain review items. X046 now has revision-specific loader evidence for compilation; its gameplay path remains untested. Compilation, emitted entry coverage, executed gameplay and hardware fidelity are separate claims.
 
-The Scenario 2 audit compiles 219 configured/candidate modules, including 195 X1 scene programs. Four recorded routes exercise six X1 scenes, including an imported-save church-to-town transition. There are 69 mapping/entry reviews, 25 discovery findings and 541 unresolved indirect sites. Native snapshot round trips matched video, audio and backup contents on the tested route; unvisited gameplay and other snapshot times remain unvalidated.
+The Scenario 2 development audit compiles 285 configured/candidate modules, including 195 X1 scene programs and 59 X3 effects. Eleven local routes exercise 14 X1 scenes, including imported-save church/town and battle transitions, Healing Drop use through X3ITEM, the magic menu's no-target path, and an Egress return to the church. There are three mapping/entry reviews, 25 discovery findings and 1159 unresolved indirect sites; the larger indirect-site count includes newly compiled effect code. Repeated native snapshots before and during the item animation matched video, audio and backup contents. Repeated native snapshots during the Egress transition also matched video, audio and backup contents. Other effects, unvisited gameplay and other snapshot times remain unvalidated.
+
+The spell/special dispatch tables have also been reviewed: all 81 Scenario 1, 93 Scenario 2 and 111 Scenario 3 entries resolve to mapped modules or container sections. This is static dispatch coverage, not validation of every spell animation. Additional direct loader/call evidence maps X049 in all three scenarios and X025/X048 in Scenarios 2/3. Seven mapping/entry reviews remain across the revisions: X004 in each scenario, and X019/X3ELEM5 in Scenarios 1/2. X019 in Scenarios 1/2 is modeled as monster-table data; its executable classification remains under review. X3ELEM5 does not appear in the reviewed effect dispatch tables and is not assigned a speculative load address.
 
 The v0.3.0 candidate passed the six required runtime regression targets, the four Scenario 2 routes and 64 GPU shader cases, including 5×, plus native-state and toolbar checks. Synthetic tests cover arithmetic/DSP, storage, DMA, background composition, controller input, checkpoint integrity and GPU rendering. Captured gameplay diagnostics and historical route fixtures stay local. See [development and publication rules](docs/DEVELOPMENT.md).
 
-Scenario 3 v25.1 development compiles 200 configured/candidate modules, including 169 X1 scene programs. Initial Windows routes reach the title, fresh-game setup, ship dialogue, a first-battle screen and a priest interior, exercising five X1 scenes. Six module mappings/entries, 17 discovery findings and 569 indirect sites remain review items. The runtime also reports unimplemented VDP2 scroll/extended-color paths in this route; rendering is not certified hardware-faithful. Downloaded completed saves are isolated test fixtures, never installed as player progress. Broader battles, ordinary in-game saving/loading, full campaign transfers and Linux/macOS Scenario 3 gameplay remain unvalidated.
+Scenario 3 v25.1 development compiles 273 configured/candidate modules, including 169 X1 scene programs and 69 separately loaded sections of EFFECT.BIN. Eight Windows routes reach the title, fresh-game setup, ship dialogue, a first-battle screen and a priest interior, exercising five X1 scenes. One module mapping/entry, 17 discovery findings and 1299 indirect sites remain review items; individual container effects have not received gameplay validation. The runtime also reports unimplemented VDP2 scroll/extended-color paths in this route; rendering is not certified hardware-faithful. Downloaded completed saves are isolated test fixtures, never installed as player progress. Broader battles, ordinary in-game saving/loading, full campaign transfers and Linux/macOS Scenario 3 gameplay remain unvalidated.
 
 ## Upcoming features
 

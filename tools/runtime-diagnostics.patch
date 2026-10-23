@@ -181,7 +181,7 @@ index cb6af72..08eaa4b 100644
      if (SH2Func f = sh2_lookup(addr)) f(c);
      else sh2_call_unknown(c, addr);
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..9c5b376 100644
+index feded39..6942ad7 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
 @@ -42,6 +42,15 @@
@@ -283,7 +283,7 @@ index feded39..9c5b376 100644
      load_settings(cfg.settings);
      int s = cfg.scale > 0 ? cfg.scale : g_settings.number("display", "scale");
      bool full = cfg.fullscreen || g_settings.flag("display", "fullscreen");
-@@ -121,12 +176,28 @@ bool host_window(const SaturnConfig& cfg) {
+@@ -121,12 +176,29 @@ bool host_window(const SaturnConfig& cfg) {
      SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
      full = true;
  #endif
@@ -305,6 +305,7 @@ index feded39..9c5b376 100644
 +    const char* shader_override=std::getenv("SF3_GPU_SHADER_DIR");
 +    std::string shader_dir=shader_override?shader_override:std::string(SDL_GetBasePath())+"shaders";
 +    g_gpu_active=g_gpu.initialize(g_ren,shader_dir);
++    if(const char* aa=std::getenv("SF3_AA"))g_gpu.antialiasing(std::strcmp(aa,"1")==0);
 +    vdp1_gpu_available(g_gpu_active);vdp1_hd_collect(vdp1_gpu_active());
 +    if(g_gpu_active)sat_note("Geometry GPU: backend=%s, adapter=%s; original textures, no replacement artwork",g_gpu.backend(),g_gpu.adapter());
 +    else sat_note("Geometry GPU unavailable: %s; CPU reference fallback",SDL_GetError());
@@ -312,7 +313,7 @@ index feded39..9c5b376 100644
      ui_open(g_ren);
      // host_pace keeps real time; a present that waited for the display would stall the whole machine
      // whenever the compositor stops sending frames, as KWin does for a window that is out of sight
-@@ -150,6 +221,11 @@ bool host_open() {
+@@ -150,6 +222,11 @@ bool host_open() {
      g_touchscreen = touch_devices > 0;
      g_base = Clock::now();
      g_paced = !g_cfg.realtime;
@@ -324,7 +325,7 @@ index feded39..9c5b376 100644
      return true;
  }
  
-@@ -163,6 +239,10 @@ struct HostCall {
+@@ -163,6 +240,10 @@ struct HostCall {
  static SDL_AudioStream* g_audio;
  static const int kLead = 2205, kMax = 11025;    // frames: 50 ms ahead, 250 ms at most
  static int g_underruns, g_dropped;
@@ -335,7 +336,7 @@ index feded39..9c5b376 100644
  
  static void audio_silence(int frames) {
      std::vector<int16_t> z((size_t)frames * 2);
-@@ -174,23 +254,102 @@ bool host_audio_open() {
+@@ -174,23 +255,102 @@ bool host_audio_open() {
      SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, 44100};
      g_audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
      if (!g_audio) { sat_note("SDL audio: %s (no sound)", SDL_GetError()); return false; }
@@ -442,7 +443,7 @@ index feded39..9c5b376 100644
  }
  
  // ---- the pad ----------------------------------------------------------------------------------
-@@ -281,6 +440,9 @@ static void read_pads() {
+@@ -281,6 +441,9 @@ static void read_pads() {
          if (k[key] && !(alt && key == SDL_SCANCODE_RETURN)) b[0] |= bit;   // Alt+Enter is fullscreen
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -452,7 +453,7 @@ index feded39..9c5b376 100644
          if (s >= 0) b[s] |= gamepad_buttons(p.pad, p.map);
      }
      for (int s = 0; s < kHostSlots; ++s) {
-@@ -292,6 +454,7 @@ static void read_pads() {
+@@ -292,6 +455,7 @@ static void read_pads() {
  }
  
  static void pad_added(SDL_JoystickID id) {
@@ -460,7 +461,7 @@ index feded39..9c5b376 100644
      SDL_Gamepad* pad = SDL_OpenGamepad(id);
      if (!pad) return;
      char guid[33];
-@@ -303,7 +466,11 @@ static void pad_added(SDL_JoystickID id) {
+@@ -303,7 +467,11 @@ static void pad_added(SDL_JoystickID id) {
          return;
      }
      g_pads.push_back({pad, id, bind_gamepad(guid)});
@@ -473,7 +474,7 @@ index feded39..9c5b376 100644
  }
  
  static void pad_removed(SDL_JoystickID id) {
-@@ -329,6 +496,7 @@ void host_rebind() {
+@@ -329,6 +497,7 @@ void host_rebind() {
  void host_pad_event(const SDL_Event& e) {
      if (e.type == SDL_EVENT_GAMEPAD_ADDED) pad_added(e.gdevice.which);
      if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pad_removed(e.gdevice.which);
@@ -481,7 +482,7 @@ index feded39..9c5b376 100644
  }
  
  std::vector<HostController> host_controllers() {
-@@ -336,6 +504,9 @@ std::vector<HostController> host_controllers() {
+@@ -336,6 +505,9 @@ std::vector<HostController> host_controllers() {
      std::vector<HostController> out;
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -491,16 +492,16 @@ index feded39..9c5b376 100644
          if (s >= 0) out.push_back({SDL_GetGamepadName(p.pad), s, gamepad_buttons(p.pad, p.map) != 0});
      }
      std::sort(out.begin(), out.end(), [](const HostController& a, const HostController& b) { return a.slot < b.slot; });
-@@ -438,7 +609,7 @@ static uint16_t touch_read() {
+@@ -438,7 +610,7 @@ static uint16_t touch_read() {
  // by as long as it was, so the run is the same run with or without it. A panel of two columns where
  // the screen is wide enough, the game's choices in one and the touch pad's in the other, each a row:
  // an action, a choice of a few, a slider, or a switch.
 -enum MenuId { M_RESUME, M_SAVES, M_QUIT, M_PAD, M_SIZE, M_STYLE, M_MENU_BUTTON };
-+enum MenuId { M_RESUME, M_SAVES, M_QUIT, M_PAD, M_SIZE, M_STYLE, M_MENU_BUTTON, M_REPLAY_SAVE, M_REPLAY_LOAD, M_CAPTURE, M_RESOLUTION, M_ASPECT, M_STATE_SAVE, M_STATE_LOAD, M_SPEED };
++enum MenuId { M_RESUME, M_SAVES, M_QUIT, M_PAD, M_SIZE, M_STYLE, M_MENU_BUTTON, M_REPLAY_SAVE, M_REPLAY_LOAD, M_CAPTURE, M_RESOLUTION, M_ASPECT, M_STATE_SAVE, M_STATE_LOAD, M_SPEED, M_AA };
  enum class Control { Action, Choice, Slider, Switch };
  struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
  struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
-@@ -456,10 +627,18 @@ static void setting_change(const char* key, const char* value) {
+@@ -456,10 +628,22 @@ static void setting_change(const char* key, const char* value) {
      host_settings_save();
  }
  
@@ -508,30 +509,35 @@ index feded39..9c5b376 100644
 -static const char* choice_name(MenuId id, int i) { return id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
 +static void resolution_set(int scale);
 +static void aspect_set(bool wide);
++static void aa_set(bool enabled);
 +static const int kRenderScales[]={1,2,4,5};
 +static constexpr int kRenderScaleCount=sizeof(kRenderScales)/sizeof(kRenderScales[0]);
 +static const char* kRenderNames[]={"1x","2x","4x","5x"};
 +static int choice_count(MenuId id) { return id==M_SPEED ? 3 : id==M_RESOLUTION ? kRenderScaleCount : id==M_PAD ? 3 : 2; }
-+static const char* choice_name(MenuId id, int i) { return id==M_SPEED ? (i==0?"1x":i==1?"2x":"3x") : id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
++static const char* choice_name(MenuId id, int i) { return id==M_AA ? (i?"Light":"Off") : id==M_SPEED ? (i==0?"1x":i==1?"2x":"3x") : id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
  
  static int choice_at(MenuId id) {
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(id==M_AA)return g_gpu.antialiasing()?1:0;
++#endif
 +    if(id==M_SPEED)return g_game_speed-1;
 +    if(id==M_ASPECT)return vdp1_widescreen()?1:0;
 +    if(id==M_RESOLUTION) {for(int i=0;i<kRenderScaleCount;++i) if(vdp1_render_scale()==kRenderScales[i]) return i;return 0;}
      std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
      for (int i = 0; i < choice_count(id); ++i)
          if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
-@@ -468,6 +647,9 @@ static int choice_at(MenuId id) {
+@@ -468,6 +652,10 @@ static int choice_at(MenuId id) {
  
  static void choose(MenuId id, int i) {
      i = (i + choice_count(id)) % choice_count(id);
++    if(id==M_AA) {aa_set(i!=0);return;}
 +    if(id==M_SPEED) {speed_set(i+1);return;}
 +    if(id==M_ASPECT) {aspect_set(i!=0);return;}
 +    if(id==M_RESOLUTION) {resolution_set(kRenderScales[i]);return;}
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -482,6 +664,14 @@ static const char* menu_label(MenuId id) {
+@@ -482,6 +670,15 @@ static const char* menu_label(MenuId id) {
      case M_RESUME: return "Resume";
      case M_SAVES: return "Save files";
      case M_QUIT: return "Quit";
@@ -543,10 +549,11 @@ index feded39..9c5b376 100644
 +    case M_RESOLUTION: return "Internal resolution";
 +    case M_ASPECT: return "Aspect ratio (beta)";
 +    case M_SPEED: return "Game speed (F6)";
++    case M_AA: return "Edge AA (beta)";
      case M_PAD: return "Show pad";
      case M_SIZE: return "Size";
      case M_STYLE: return "Style";
-@@ -492,6 +682,15 @@ static const char* menu_label(MenuId id) {
+@@ -492,6 +689,16 @@ static const char* menu_label(MenuId id) {
  static MenuLayout menu_layout() {
      const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 340, between = 24;
      std::vector<std::pair<MenuId, Control>> game = {{M_RESUME, Control::Action}};
@@ -558,20 +565,21 @@ index feded39..9c5b376 100644
 +    game.push_back({M_RESOLUTION, Control::Choice});
 +    game.push_back({M_ASPECT, Control::Choice});
 +    game.push_back({M_SPEED, Control::Choice});
++    game.push_back({M_AA, Control::Choice});
 +#endif
      if (!g_cfg.after.empty()) game.push_back({M_SAVES, Control::Action});
      game.push_back({M_QUIT, Control::Action});
      const std::vector<std::pair<MenuId, Control>> touch = {
-@@ -527,7 +726,7 @@ static MenuLayout menu_layout() {
+@@ -527,7 +734,7 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
 -    float w = r.control == Control::Switch ? 52 * l.u : 0.58f * r.r.w;
-+    float w = r.control == Control::Switch ? 52 * l.u : ((r.id==M_RESOLUTION || r.id==M_ASPECT || r.id==M_SPEED) ? 0.46f : 0.58f) * r.r.w;
++    float w = r.control == Control::Switch ? 52 * l.u : ((r.id==M_RESOLUTION || r.id==M_ASPECT || r.id==M_SPEED || r.id==M_AA) ? 0.46f : 0.58f) * r.r.w;
      return {r.r.x + r.r.w - w - 10 * l.u, r.r.y + 9 * l.u, w, r.r.h - 18 * l.u};
  }
  
-@@ -563,12 +762,177 @@ static void menu_quit(bool to_saves) {
+@@ -563,12 +770,186 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -735,6 +743,15 @@ index feded39..9c5b376 100644
 +#endif
 +}
 +
++static void aa_set(bool enabled) {
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(!g_gpu_active){sat_note("Edge AA: GPU renderer unavailable; original picture retained");return;}
++    g_gpu.antialiasing(enabled);
++    if(g_last)upload_frame(*g_last);
++    sat_note("Edge AA: %s; applies to identified 3D geometry at enhanced GPU resolutions; sprites/text retain native samples",g_gpu.antialiasing()?"Light":"Off");
++#endif
++}
++
  static void menu_activate(MenuId id) {
      switch (id) {
      case M_RESUME: menu_close(); break;
@@ -746,20 +763,20 @@ index feded39..9c5b376 100644
 +    case M_REPLAY_SAVE: replay_action(false); break;
 +    case M_REPLAY_LOAD: replay_action(true); break;
 +    case M_CAPTURE: capture_issue(); break;
-+    case M_PAD: case M_STYLE: case M_RESOLUTION: case M_ASPECT: case M_SPEED: choose(id, choice_at(id) + 1); break;
++    case M_PAD: case M_STYLE: case M_RESOLUTION: case M_ASPECT: case M_SPEED: case M_AA: choose(id, choice_at(id) + 1); break;
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +944,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +961,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
 -    if (id == M_PAD || id == M_STYLE) choose(id, choice_at(id) + dir);
-+    if (id == M_PAD || id == M_STYLE || id==M_RESOLUTION || id==M_ASPECT || id==M_SPEED) choose(id, choice_at(id) + dir);
++    if (id == M_PAD || id == M_STYLE || id==M_RESOLUTION || id==M_ASPECT || id==M_SPEED || id==M_AA) choose(id, choice_at(id) + dir);
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -656,8 +1020,19 @@ static void on_event(const SDL_Event& e) {
+@@ -656,8 +1037,19 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -779,7 +796,7 @@ index feded39..9c5b376 100644
          if (k == SDL_SCANCODE_F12 && !e.key.repeat) save_shot();
          if ((k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.mod & SDL_KMOD_ALT))) && !e.key.repeat) {
              SDL_SetWindowFullscreen(g_win, !(SDL_GetWindowFlags(g_win) & SDL_WINDOW_FULLSCREEN));
-@@ -686,10 +1061,21 @@ static void on_event(const SDL_Event& e) {
+@@ -686,10 +1078,21 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -803,7 +820,7 @@ index feded39..9c5b376 100644
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -894,12 +1280,40 @@ static void draw_catching_up() {
+@@ -894,12 +1297,40 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -845,7 +862,7 @@ index feded39..9c5b376 100644
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,15 +1326,16 @@ static void draw() {
+@@ -912,15 +1343,16 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -865,7 +882,7 @@ index feded39..9c5b376 100644
      while (g_menu_open) {
          SDL_Event e;
          {
-@@ -931,38 +1346,86 @@ static void menu_loop() {
+@@ -931,38 +1363,86 @@ static void menu_loop() {
          HostCall in("SDL_Delay");
          SDL_Delay(16);
      }
@@ -973,7 +990,7 @@ index feded39..9c5b376 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,12 +1436,16 @@ void host_present(const Frame& f) {
+@@ -973,12 +1453,16 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {

@@ -1,16 +1,18 @@
 # Automatic Windows preparation
 
-## Latest development additions
+## v0.5.0-alpha additions
 
-Source after v0.4.0-preview1 adds Scenario 3 translated-v25.1 preparation, save import and a launcher entry, plus optional 1×/2×/3× game speed. Use 2× initially; normal speed remains the startup default, and rendering resolution stays fixed. A 600-field Scenario 3 battle-menu comparison at 5× resolution measured approximately 2× actual speed for the 2× request and 2.27× for the 3× request, with matching native/GPU frames, virtual PCM and backup contents. This does not certify complete battles or campaigns, and 3× remains experimental.
+v0.5.0-alpha adds Scenario 3 translated-v25.1 preparation, save import and a launcher entry, plus optional 1×/2×/3× game speed. Use 2× initially; normal speed remains the startup default, and rendering resolution stays fixed. A 600-field Scenario 3 battle-menu comparison at 5× resolution measured approximately 2× actual speed for the 2× request and 2.27× for the 3× request, with matching native/GPU frames, virtual PCM and backup contents. This does not certify complete battles or campaigns, and 3× remains experimental.
 
-The Windows controller-setup button now opens its persistent interactive console so detection messages remain visible. Maintainers can supply an external ICO to brand the launcher and native game; artwork stays outside the source repository. These changes are not included in the existing downloadable packages.
+The Windows controller-setup button now opens its persistent interactive console so detection messages remain visible. Maintainers can supply an external ICO to brand the launcher and native game; artwork stays outside the source repository. These changes are included in v0.5.0-alpha.
 
-## Scenario 3 development
+## Scenario 3
 
-Development builds add a separate **Scenario 3 Translation v25.1** launcher entry, disc-content profile and data folder. Only the registered translated dump is accepted; an original Japanese filename does not establish its contents. Published Windows v0.3.0 and Linux/macOS v0.4.0-preview1 downloads do not contain this profile. Initial Windows routes reach the title, fresh-game setup, ship dialogue, a first-battle screen and a priest interior. Eight route checks passed without changes to reviewed native frames; five of 169 scene modules were exercised. Complete-game, broader battle, ordinary save/load, full campaign-transfer and Linux/macOS Scenario 3 compatibility remain unvalidated.
+v0.5.0-alpha adds a separate **Scenario 3 Translation v25.1** launcher entry, disc-content profile and data folder. Only the registered translated dump is accepted; an original Japanese filename does not establish its contents. Earlier Windows v0.3.0 and Linux/macOS v0.4.0-preview1 downloads do not contain this profile. Initial Windows routes reach the title, fresh-game setup, ship dialogue, a first-battle screen and a priest interior. Eight route checks passed without changes to reviewed native frames; five of 169 scene modules were exercised. Complete-game, broader battle, ordinary save/load, full campaign-transfer and Linux/macOS Scenario 3 compatibility remain unvalidated.
 
 The importer accepts Scenario 3 raw `SFORCE33_XX.BIN` payloads (24344 bytes) and matching version-1 JSON YSBAK exports. Internal storage fits one such save; cartridge storage is preferable for earlier-scenario carryover files. Source/generated coverage, observed loading addresses and executed routes remain separate claims.
+
+The release also includes optional Light AA, expanded effect and scene-module compilation, and native-state/loader regression checks. Existing users should extract the new application to a separate folder and run **Prepare game** with their existing scenario data folder. In-game saves remain there. Native quick states require the matching executable/disc: retain the previous application and build for old states and use ordinary in-game saves to move progress.
 
 ## v0.3.0-alpha changes
 

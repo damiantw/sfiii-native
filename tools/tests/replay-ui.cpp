@@ -115,6 +115,15 @@ int main(int argc, char** argv) {
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=1)return 31;
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=2)return 32;
     upload_frame(picture);
+    auto aa_row=std::find_if(layout.rows.begin(),layout.rows.end(),[](const MenuRow& r){return r.id==M_AA;});
+    if(aa_row==layout.rows.end() || choice_at(M_AA)!=0)return 58;
+    menu_adjust(M_AA,1);
+    if(choice_at(M_AA)!=(g_gpu_active?1:0) || picture.px!=initial_pixels)return 59;
+    if(g_gpu_active) {
+        Frame aa; if(!g_gpu.capture(aa))return 60;
+        for(auto p:aa.px)if(p!=0x102030)return 61;
+    }
+    aa_set(false);if(choice_at(M_AA)!=0)return 62;
     if(vdp1_gpu_active()) {
         float w=0,h=0;if(!g_gpu_tex || !SDL_GetTextureSize(g_gpu_tex,&w,&h) || w!=640 || h!=480)return 33;
         Frame readback;if(!g_gpu.capture(readback) || readback.w!=640 || readback.h!=480)return 34;

@@ -13,6 +13,7 @@ import sys
 
 from module_entries import arithmetic_shift_entries, unrolled_copy_entries, registered_store_callback_entries
 from disc_profile import verify_inventory
+from module_images import expand_modules, verified_source, image_bytes
 
 REPO = Path(__file__).resolve().parents[1]
 VENEER = bytes.fromhex('d001402b00090009')
@@ -62,6 +63,7 @@ def main():
     work, out = external(a.work), external(a.out)
     profile = json.loads(a.profile.read_text(encoding='utf-8-sig'))
     manifest = verify_inventory(work, profile)
+    profile['modules'] = expand_modules(profile, manifest)
     model_bases = {k:int(v,16) for k,v in profile.get('model_bases',{}).items()} if profile.get('scenario',1) != 1 else MODEL_BASES
     known = {m['file']: m for m in profile['modules']}
     ram = (a.session/'crash-wram-high.bin').read_bytes() if a.session else None
@@ -70,16 +72,30 @@ def main():
     from saturnrecomp import sh2
     from saturnrecomp.recomp.discover import Program
     rows, additions, programs, images, entry_seeds = [], [], {}, {}, {}
-    for file in sorted((work/'extract').glob('*.BIN')):
-        if '/' + file.name not in manifest['files']:
-            continue  # IP.BIN is boot metadata, not a filesystem module.
-        data = verified(file, manifest)
+    containers = {c['file'] for c in profile.get('module_containers', [])}
+    inputs = [(file, None) for file in sorted((work/'extract').glob('*.BIN')) if file.name not in containers]
+    inputs.extend((Path(m['file']), m) for m in profile['modules'] if 'source_file' in m)
+    for file, sliced in inputs:
+        if sliced:
+            _, original = verified_source(work, sliced, manifest)
+            data = image_bytes(sliced, original)
+        else:
+            if '/' + file.name not in manifest['files']:
+                continue  # IP.BIN is boot metadata, not a filesystem module.
+            data = verified(file, manifest)
+            if file.name in known:
+                # Fail on invalid configured entries instead of silently dropping
+                # a loader entry while still reporting this module as compiled.
+                image_bytes(known[file.name], data)
         raw_veneers = [at for at in range(0, len(data)-11, 4) if data[at:at+8] == VENEER]
         if not raw_veneers and file.name not in known and file.stem not in model_bases:
             continue
         m = known.get(file.name)
         row = dict(file=file.name, size=len(data), sha256=hashlib.sha256(data).hexdigest(),
                    configured=m is not None, veneer_signatures=len(raw_veneers))
+        if sliced:
+            row.update(source_file=sliced['source_file'], source_offset=sliced['offset'],
+                       source_sha256=hashlib.sha256(original).hexdigest())
         base = int(m['base'], 16) if m else None
         source = 'existing-profile' if m else None
         if base is None and re.fullmatch(r'X1[A-Z0-9_]+', file.stem):
@@ -206,6 +222,7 @@ def main():
                                        'ambiguous-overlay' if len(owners)>1 else 'rejected-entry'))
     candidate['audit_note'] = 'Experimental bulk profile. Static discovery and documented bases are not gameplay validation.'
     report = dict(profile=str(a.profile), modules=rows, configured=len(known),
+                  containers=profile.get('module_containers', []),
                   sf3tools_mapping_revision=MODEL_REVISION,
                   candidate_additions=len(additions), bulk_modules=len(candidate['modules']),
                   cross_module_promoted_entries=promoted, cross_module_gaps=cross_gaps,

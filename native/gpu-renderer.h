@@ -11,7 +11,8 @@ class GpuRenderer {
     SDL_GPUBuffer *scene_=nullptr,*textures_=nullptr;
     SDL_GPUShader* shader_=nullptr;
     SDL_GPURenderState* state_=nullptr;
-    SDL_Texture *white_=nullptr,*output_=nullptr;
+    SDL_Texture *white_=nullptr,*output_=nullptr,*filtered_=nullptr;
+    bool aa_=false,filtered_valid_=false;
     int width_=0,height_=0;
     std::vector<uint32_t> last_scene_,last_textures_;
     uint64_t submissions_=0,cache_hits_=0;
@@ -20,6 +21,8 @@ public:
     SDL_Renderer* create_renderer(SDL_Window*);
     bool initialize(SDL_Renderer*,const std::string& shader_dir);
     SDL_Texture* render(const Frame&,int scale);
+    void antialiasing(bool enabled) {if(aa_!=enabled){aa_=enabled;filtered_valid_=false;last_scene_.clear();}}
+    bool antialiasing()const{return aa_;}
     bool capture(Frame&);
     bool wait();
     uint64_t submissions()const{return submissions_;}

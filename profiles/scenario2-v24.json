@@ -6,7 +6,8 @@
   "version": "V24",
   "content_sha256": "fdbc68b0828ee55fbd55f66681211db98b6c053fde6b622d25d297d1b3f73891",
   "scene_base": "0605E000",
-  "effect_base": null,
+  "effect_base": "06049000",
+  "effect_mapping_evidence": "Verified v24 X014 load wrapper 0608972C resolves a spell/special file ID through 06098244, then calls BOOT 060124B8 with that ID in r4 and destination 06049000 in r5. The effect update calls 06049000 at 0608B040. A recorded Healing Drop route loads X3ITEM at this address: the entire image matches crash RAM in the previous build; the candidate executes the animation and reaches the next turn. Only X3 images whose complete export veneers point inside their verified image qualify; X3ELEM5 remains under review. Other family members have static loader evidence, not executed spell coverage.",
   "model_bases": {
     "X011": "06068000",
     "X012": "06070000",
@@ -30,6 +31,46 @@
     "X024": "0028C000"
   },
   "modules": [
+    {
+      "name": "X025",
+      "file": "X025.BIN",
+      "base": "06078000",
+      "seeds": [
+        "06078000"
+      ],
+      "overlay": true,
+      "evidence": "v24 X12BALJI at 0605E0CA passes destination 06078000 in r5 and file ID 0x176 in r4 to BOOT 060124B8, waits via 060120D4, then calls 06078000 at 0605E0DA. Multiple church scene programs repeat this pattern. Static loader/call evidence; gameplay unexecuted."
+    },
+    {
+      "name": "X048",
+      "file": "X048.BIN",
+      "base": "06049000",
+      "seeds": [
+        "06049000"
+      ],
+      "overlay": true,
+      "evidence": "v24 X013 at 06080BEE passes destination 06049000 in r5 and file ID 0x17E in r4 to BOOT 060124B8, waits via 060120D4, then calls 06049000 at 06080C02. Static loader/call evidence; gameplay unexecuted."
+    },
+    {
+      "name": "X049",
+      "file": "X049.BIN",
+      "base": "060A0000",
+      "seeds": [
+        "060A0000"
+      ],
+      "overlay": true,
+      "evidence": "v24 X1ENDING at 0605F39A passes destination 060A0000 in r5 and file ID 0x17F in r4 to BOOT 060124F0; the loaded entry is called at 0605F3F2. Static loader/call evidence; ending gameplay unexecuted."
+    },
+    {
+      "name": "X046",
+      "file": "X046.BIN",
+      "base": "06060000",
+      "seeds": [
+        "06060000"
+      ],
+      "overlay": true,
+      "evidence": "Verified v24 X001 at 060FD338 loads file ID 0x17D (disc directory X046.BIN) into r5=06060000 via the same loader as adjacent known modules, waits for completion, then calls 06060000 at 060FD34E. Static loader/call evidence; this route has not been executed."
+    },
     {
       "name": "BOOT",
       "file": "1ST.BIN",
@@ -113,6 +154,16 @@
       "evidence": "Native boot: unique initial 4096 bytes and 64 target bytes exact in captured RAM; execution coverage limited to tested route.; 06054800 observed on native boot, unique initial 4096 bytes and 64 target bytes exact in captured RAM."
     },
     {
+      "name": "X007",
+      "file": "X007.BIN",
+      "base": "06054800",
+      "seeds": [
+        "06054800"
+      ],
+      "overlay": true,
+      "evidence": "Scenario 2 v24 native transition at VBlank 27867 calls 06054800 from 0602C662 (PR 0602C66A). All 36604 bytes of the loaded image match the verified disc X007.BIN exactly. Shares its load address with X008; dispatch must identify the image, not the address alone. Observed after restoring a battle snapshot; broader gameplay remains unvalidated."
+    },
+    {
       "name": "X006",
       "file": "X006.BIN",
       "base": "06044800",
@@ -141,6 +192,26 @@
       ],
       "overlay": true,
       "evidence": "Complete image exactly matches WRAM-H at 06070000 on native startup/menu route; observed call 0607000C. Gameplay coverage limited to recorded route."
+    },
+    {
+      "name": "X015",
+      "file": "X015.BIN",
+      "base": "0609D800",
+      "seeds": [
+        "0609D800"
+      ],
+      "overlay": true,
+      "evidence": "Scenario 2 v24 battle crash RAM at VBlank 27867 matches the entire verified disc image at 0609D800. Entries are in-image export veneers; RAM presence is mapping evidence, not executed gameplay coverage."
+    },
+    {
+      "name": "X039",
+      "file": "X039.BIN",
+      "base": "060C0100",
+      "seeds": [
+        "060C0100"
+      ],
+      "overlay": true,
+      "evidence": "Scenario 2 v24 battle crash RAM at VBlank 27867 matches the entire verified disc image at 060C0100. Entries are in-image export veneers; RAM presence is mapping evidence, not executed gameplay coverage."
     }
   ],
   "support": "experimental; native boot and gameplay validation required",

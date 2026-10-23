@@ -40,7 +40,7 @@ def main():
         print(('PASS ' if result['passed'] else 'FAIL ')+name,flush=True)
         if required and not result['passed']:raise RuntimeError(name+' failed:\n'+text[-6000:])
         return result,text
-    check('python-tests',[python,'-X','utf8','-B','-m','unittest','discover','-s',payload/'app/tools/tests','-p','test_*.py'],required=False)
+    check('python-tests',[python,'-X','utf8','-B','-m','unittest','discover','-s',payload/'app/tools/tests','-p','test_*.py'])
     # Native tools must not depend on maintainer-only Homebrew or checkout paths.
     command=['otool','-L'] if sys.platform=='darwin' else ['ldd']
     _,text=check('chd-library-dependencies',[*command,payload/'chdman/chdman'])

@@ -2,7 +2,7 @@ name: Linux and macOS candidates
 on:
   workflow_dispatch:
   push:
-    branches: [codex/linux-macos]
+    branches: [main, codex/linux-macos]
 permissions:
   contents: read
 concurrency:
@@ -75,6 +75,7 @@ jobs:
           key: portable-v2-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}-${{ hashFiles('tools/package-posix.py') }}
           restore-keys: |
             portable-v2-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}-
+            portable-v2-${{ matrix.target }}-
             portable-v1-${{ matrix.target }}-${{ hashFiles('desktop/posix-dependencies.json') }}
       - name: Audit source selection
         run: python -B tools/check-source-package.py --tracked --out "$RUNNER_TEMP/source-check.json"
@@ -107,7 +108,9 @@ jobs:
               subprocess.run(['codesign','--force','--sign','-',str(package)],check=True)
               subprocess.run(['codesign','--verify','--deep','--strict',str(package)],check=True)
           out=root/'sfiii-artifacts';out.mkdir()
-          name='SFIII-Native-0.4.0-preview1-'+os.environ['TARGET']+'.tar.gz'
+          version=json.loads(Path('desktop/posix-dependencies.json').read_text())['version']
+          with open(os.environ['GITHUB_ENV'],'a') as env:env.write('RELEASE_VERSION='+version+'\n')
+          name='SFIII-Native-'+version+'-'+os.environ['TARGET']+'.tar.gz'
           archive=out/name
           with tarfile.open(archive,'w:gz') as t:t.add(package,arcname=package.name)
           with archive.open('rb') as f:digest=hashlib.file_digest(f,'sha256').hexdigest()
@@ -116,7 +119,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: SFIII-Native-0.4.0-preview1-${{ matrix.target }}
+          name: SFIII-Native-${{ env.RELEASE_VERSION }}-${{ matrix.target }}
           path: ${{ runner.temp }}/sfiii-artifacts
           retention-days: 1
       - name: Cache verified downloads and native build intermediates
@@ -134,3 +137,4 @@ jobs:
             ${{ runner.temp }}/sfiii-validation/*.log
             ${{ runner.temp }}/sfiii-validation/report.json
           retention-days: 1
+

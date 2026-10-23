@@ -58,8 +58,13 @@ if(SDL3_FOUND AND TARGET saturn_host)
         list(APPEND _outputs "${CMAKE_BINARY_DIR}/shaders/${_shader}.${_format}")
       endforeach()
       if(APPLE)
+        set(_msl_binding_flags)
+        if(_shader STREQUAL "geometry")
+          # SDL Metal: uniform buffer 0, then storage buffers 1/2.
+          set(_msl_binding_flags --msl-decoration-binding)
+        endif()
         add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/shaders/${_shader}.msl"
-          COMMAND "${SF3_SPIRV_CROSS}" "${CMAKE_BINARY_DIR}/shaders/${_shader}.spv" --msl --msl-version 20100 --rename-entry-point main fragmentMain frag --output "${CMAKE_BINARY_DIR}/shaders/${_shader}.msl"
+          COMMAND "${SF3_SPIRV_CROSS}" "${CMAKE_BINARY_DIR}/shaders/${_shader}.spv" --msl --msl-version 20100 ${_msl_binding_flags} --rename-entry-point main fragmentMain frag --output "${CMAKE_BINARY_DIR}/shaders/${_shader}.msl"
           DEPENDS "${CMAKE_BINARY_DIR}/shaders/${_shader}.spv" VERBATIM)
         list(APPEND _outputs "${CMAKE_BINARY_DIR}/shaders/${_shader}.msl")
       endif()

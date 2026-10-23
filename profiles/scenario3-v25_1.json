@@ -7,6 +7,21 @@
   "content_sha256": "5a50848fa5fe94bbde5a9132a04655dd81cdbcd3af6eb23a0666c3e9e6973252",
   "scene_base": "0605E000",
   "effect_base": null,
+  "module_containers": [
+    {
+      "file": "EFFECT.BIN",
+      "prefix": "EFFECT_",
+      "base": "06048D00",
+      "chunk_bytes": "8000",
+      "count": 69,
+      "entry_offsets": [
+        0,
+        12,
+        24
+      ],
+      "evidence": "Verified v25.1 X014 loader 060896BC gets an effect index from 06098F28, multiplies it by 0x8000, and calls BOOT 060124DC with file ID 0xBF (EFFECT.BIN), destination 06048D00, source byte offset index*0x8000 and length 0x8000. The update path calls 06048D00 at 0608B114. Disc container is exactly 69 chunks; all three header veneers in each chunk point inside the loaded chunk. Static loader mapping; individual effects still require gameplay validation."
+    }
+  ],
   "model_bases": {
     "X011": "06068000",
     "X012": "06070000",
@@ -29,6 +44,46 @@
     "X021": "06068000"
   },
   "modules": [
+    {
+      "name": "X025",
+      "file": "X025.BIN",
+      "base": "06078000",
+      "seeds": [
+        "06078000"
+      ],
+      "overlay": true,
+      "evidence": "v25.1 X1ASPI_H at 0605E0DC passes destination 06078000 in r5 and file ID 0x1DA in r4 to BOOT 060124BC, waits via 060120D8, then calls 06078000 at 0605E0EC. Multiple church scene programs repeat this pattern. Static loader/call evidence; gameplay unexecuted."
+    },
+    {
+      "name": "X048",
+      "file": "X048.BIN",
+      "base": "06048D00",
+      "seeds": [
+        "06048D00"
+      ],
+      "overlay": true,
+      "evidence": "v25.1 X013 at 06080B9E passes destination 06048D00 in r5 and file ID 0x1E5 in r4 to BOOT 060124BC, waits via 060120D8, then calls 06048D00 at 06080BB2. Static loader/call evidence; gameplay unexecuted."
+    },
+    {
+      "name": "X049",
+      "file": "X049.BIN",
+      "base": "06048D00",
+      "seeds": [
+        "06048D00"
+      ],
+      "overlay": true,
+      "evidence": "v25.1 X1ENDING at 0605F366 passes destination 06048D00 in r5 and file ID 0x1E6 in r4 to BOOT 060124F4; the loaded entry is called at 0605F3A6. References to ID 0x1E6 in X1BTL306 use a different resource API and are not this loader. Static loader/call evidence; ending gameplay unexecuted."
+    },
+    {
+      "name": "X046",
+      "file": "X046.BIN",
+      "base": "06040000",
+      "seeds": [
+        "06040000"
+      ],
+      "overlay": true,
+      "evidence": "Verified v25.1 X001 at 060F640A loads file ID 0x1E4 (disc directory X046.BIN) into r5=06040000, waits for completion, then calls 06040000 at 060F6420. Static loader/call evidence; this route has not been executed."
+    },
     {
       "name": "BOOT",
       "file": "1ST.BIN",

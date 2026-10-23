@@ -1,14 +1,14 @@
 # Linux and macOS candidates
 
-Development source includes a Scenario 3 Translation Project v25.1 selector and profile. The v0.4.0-preview1 downloads below predate it. Scenario 3 gameplay has not been tested on Linux or macOS.
+v0.5.0-alpha includes a Scenario 3 Translation Project v25.1 selector and profile. Scenario 3 gameplay has not been tested on Linux or macOS.
 
-Download [v0.4.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.4.0-preview1) for Linux x86-64 desktops, Apple Silicon Macs or Intel Macs. These are experimental platform previews, separate from the published Windows v0.3.0 package. Native build, synthetic runtime tests and shader tests do not establish real-disc gameplay compatibility. Check each package's validation report before treating a platform as supported.
+Download [v0.5.0-alpha](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.5.0-alpha) for Linux x86-64 desktops, Apple Silicon Macs or Intel Macs. These are experimental platform packages. Native build, synthetic runtime tests and shader tests do not establish real-disc gameplay compatibility. Check each package's validation report before treating a platform as supported.
 
 ## Player workflow
 
 Extract the entire platform archive. On Linux, open the `SFIII Native` executable from the extracted folder; the `.sh` wrapper is also available. On macOS, move `SFIII Native.app` to a local application location and open it. Preview apps are ad-hoc signed, not Apple-notarized; macOS may require explicit approval in Privacy & Security. Do not disable system security globally.
 
-Choose Scenario 1 USA V1.001 or the registered Scenario 2 Translation Project v24 disc, select your CUE or standalone CHD, and keep each scenario's game data in a separate writable folder outside the application. Click **Prepare game**, wait, then **Play**. No terminal compilation, Python installation, Homebrew, Xcode or compiler setup is needed for players; Python, Zig's C/C++ toolchain and archive tools, SDL, CMake, Ninja and chdman travel in the package. The hosted Mac toolchain checks passed with Xcode discovery hidden.
+Choose Scenario 1 USA V1.001, Scenario 2 Translation Project v24 or Scenario 3 Translation Project v25.1, select your CUE or standalone CHD, and keep each scenario's game data in a separate writable folder outside the application. Click **Prepare game**, wait, then **Play**. No terminal compilation, Python installation, Homebrew, Xcode or compiler setup is needed for players; Python, Zig's C/C++ toolchain and archive tools, SDL, CMake, Ninja and chdman travel in the package. The hosted Mac toolchain checks passed with Xcode discovery hidden.
 
 Linux initially targets Ubuntu 22.04 or newer desktop environments with their normal X11/Wayland libraries and Vulkan drivers; this is not a promise of every Linux distribution or Steam Deck verification. Mac candidates target macOS 13 or newer, with separate Apple Silicon and Intel downloads. Vulkan is used on Linux; Metal shaders are generated from the same project-owned shader source for macOS. Hardware and graphics-driver compatibility require testing on actual machines.
 

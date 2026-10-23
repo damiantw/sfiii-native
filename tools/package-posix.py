@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,22 @@ import tarfile
 import urllib.request
 
 ROOT=Path(__file__).resolve().parents[1]
+
+
+def metal_binding_flags(name):
+    # Match SDL's uniform-first buffer table, rather than automatic assignment.
+    return ['--msl-decoration-binding'] if name=='geometry' else []
+
+
+def validate_metal_bindings(code,name):
+    if 'fragmentMain' not in code or '[[buffer(0)]]' not in code or '[[buffer(1)]]' not in code:
+        raise ValueError('Metal shader resource mapping was not verified.')
+    if name=='geometry':
+        for variable,kind,slot in [('Pass','buffer',0),('scene','buffer',1),('textures','buffer',2),
+                                   ('picture','texture',0),('picture_sampler','sampler',0)]:
+            pattern=r'\b'+variable+r'\s*\[\['+kind+r'\('+str(slot)+r'\)\]\]'
+            if not re.search(pattern,code):
+                raise ValueError('Metal geometry shader binding does not match SDL: '+variable)
 
 
 def sha(path):
@@ -141,10 +158,9 @@ def main():
         run([cmake,'-S',sources['spirv-cross'],'-B',cross,'-DCMAKE_BUILD_TYPE=Release','-DSPIRV_CROSS_ENABLE_TESTS=OFF'])
         run([cmake,'--build',cross,'--parallel',jobs])
         for name in ['geometry','hd-assets']:
-            run([cross/'spirv-cross',shaders/(name+'.spv'),'--msl','--msl-version','20100','--rename-entry-point','main','fragmentMain','frag','--output',shaders/(name+'.msl')])
+            run([cross/'spirv-cross',shaders/(name+'.spv'),'--msl','--msl-version','20100',*metal_binding_flags(name),'--rename-entry-point','main','fragmentMain','frag','--output',shaders/(name+'.msl')])
             code=(shaders/(name+'.msl')).read_text()
-            if 'fragmentMain' not in code or '[[buffer(0)]]' not in code or '[[buffer(1)]]' not in code:
-                raise ValueError('Metal shader resource mapping was not verified.')
+            validate_metal_bindings(code,name)
     # Build only the disc conversion utility. No emulator binary enters the package.
     osd='mac' if sys.platform=='darwin' else 'sdl3'
     project='build/projects/'+osd+'/mame/gmake-'+('osx-clang' if sys.platform=='darwin' else 'linux')
