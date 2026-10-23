@@ -12,7 +12,7 @@ At normal speed, gameplay and audio keep the original roughly 59.8 Hz NTSC clock
 
 **Menu > Aspect ratio (beta) > 16:9** adds horizontal scenery; choose **4:3** for original framing. HUD/dialogue remain centered. The rotation-floor viewport window expands horizontally, retaining its vertical limits. Game-side object culling still uses original assumptions, so missing objects or pop-in at new edges can remain. Higher resolution and widescreen are experimental presentation features, not a claim of exact hardware output.
 
-## Game speed (development builds)
+## Game speed
 
 Choose **Menu > Game speed (F6) > 1× / 2× / 3×**, click the **Speed** toolbar button, or press **F6** to cycle speeds. Each new process starts at 1×. Game speed is separate from rendering resolution: 5× resolution can stay selected while playing at 2× speed.
 
@@ -20,13 +20,13 @@ Start with 2× for long animations and return to 1× for normal play. The option
 
 Fast-forward runs the original game ticks sooner in real time. Battle calculations and virtual hardware clocks retain their original relationships. It applies to the whole game, including dialogue and menus; switch back to 1× for precise input. Audio plays faster and at a higher pitch. Each speed change clears queued playback and primes fresh audio, avoiding a backlog when returning to 1×. Requested 2×/3× speed requires CPU/GPU headroom and is not guaranteed in every scene. No automatic resolution reduction occurs. The experimental `--realtime` mode does not support the speed selector.
 
-This feature is not included in the published v0.3.0/v0.4.0-preview1 packages. Developers can run `tools/validate-game-speed.py --help` for a windowed, real-audio comparison of an external route at all three speeds; it checks final native pixels, video memory, virtual PCM and backup contents independently from measured speed.
+Game speed is included in v0.5.0-alpha; earlier v0.3.0/v0.4.0-preview1 downloads predate it. Developers can run `tools/validate-game-speed.py --help` for a windowed, real-audio comparison of an external route at all three speeds; it checks final native pixels, video memory, virtual PCM and backup contents independently from measured speed.
 
 ## Light anti-aliasing (development builds)
 
 Choose **Menu > Edge AA (beta) > Light** to soften selected diagonal geometry edges on the GPU. **Off** restores the unfiltered picture; new processes start with AA off. Use 2×, 4× or 5× GPU rendering to try it. This is a small spatial filter with no previous-frame history or ray-tracing requirement, and it does not add texture detail.
 
-The filter uses known geometry ownership to preserve ordinary sprite/text paths and unsupported background paths. The native toolbar and menu are drawn afterward. Unclassified geometry edges are deliberately left alone, and unusual game UI paths still need broader validation. Available with the GPU renderer; there is no CPU filtering fallback. Resolution, game speed, native video memory, game logic and save formats are unchanged. This feature is not in existing downloadable packages. Developer route comparisons can enable it with `validate-game-speed.py --aa`.
+The filter uses known geometry ownership to preserve ordinary sprite/text paths and unsupported background paths. The native toolbar and menu are drawn afterward. Unclassified geometry edges are deliberately left alone, and unusual game UI paths still need broader validation. Available with the GPU renderer; there is no CPU filtering fallback. Resolution, game speed, native video memory, game logic and save formats are unchanged. Light AA is included in v0.5.0-alpha. Developer route comparisons can enable it with `validate-game-speed.py --aa`.
 
 ## Game saves
 
