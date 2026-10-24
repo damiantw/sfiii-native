@@ -124,6 +124,15 @@ class Diff(unittest.TestCase):
         s = diff.summarize([p, q], loaded_from=100)
         self.assertEqual((s['points'], s['state_matches'], s['same_map'], s['first_divergence']), (2, 1, 2, 100))
 
+    def test_dots_over(self):
+        class F:
+            def __init__(self, w, h, rgb):
+                self.width, self.height, self.rgb = w, h, rgb
+        ours = F(2, 1, bytes([10, 10, 10, 200, 0, 0]))
+        theirs = F(4, 1, bytes([0] * 3 + [14, 10, 10, 100, 0, 0] + [0] * 3))
+        self.assertEqual(diff.dots_over(ours, theirs, 8), 1)
+        self.assertEqual(diff.dots_over(ours, theirs, 100), 0)
+
 
 if __name__ == '__main__':
     unittest.main()

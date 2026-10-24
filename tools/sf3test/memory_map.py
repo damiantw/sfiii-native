@@ -16,9 +16,9 @@ PAYLOAD_SIZE = {1: 12904, 2: 16248, 3: 24344}
 PROFILES = {
     # profile id: (scenario, state_base, tick)  tick: u32 the game adds one to each frame it runs
     'scenario1-usa-v25_1': (1, 0x06090FE0, 0x0601FC68),
-    'scenario2-v25_1-v2_000': (2, 0x06090578, None),
-    'scenario2-v25_1-v1_003': (2, 0x0609056C, None),
-    'scenario3-v25_1-redump': (3, 0x0609075C, None),
+    'scenario2-v25_1-v2_000': (2, 0x06090578, 0x0602143C),
+    'scenario2-v25_1-v1_003': (2, 0x0609056C, 0x06021484),
+    'scenario3-v25_1-redump': (3, 0x0609075C, 0x060214CC),
 }
 
 

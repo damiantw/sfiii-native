@@ -43,6 +43,23 @@ def compare_point(v, ours, theirs, skip=()):
     return rec
 
 
+def dots_over(ours, theirs, tol):
+    """Dots whose largest channel error exceeds `tol`, ours centred in theirs (agent.Frame-like:
+    width, height, rgb). A tolerance absorbs the reference's 16-bit colour output."""
+    dx, dy = (theirs.width - ours.width) // 2, (theirs.height - ours.height) // 2
+    n = 0
+    for y in range(ours.height):
+        a = ours.rgb[y * ours.width * 3:(y + 1) * ours.width * 3]
+        o = ((y + dy) * theirs.width + dx) * 3
+        b = theirs.rgb[o:o + ours.width * 3]
+        if a == b:
+            continue
+        for x in range(0, ours.width * 3, 3):
+            if max(abs(a[x] - b[x]), abs(a[x + 1] - b[x + 1]), abs(a[x + 2] - b[x + 2])) > tol:
+                n += 1
+    return n
+
+
 def summarize(points, loaded_from=None):
     """Totals over sync points at or after `loaded_from` (the first VBlank the save is live)."""
     live = [p for p in points if loaded_from is None or p['vblank'] >= loaded_from]
@@ -52,7 +69,7 @@ def summarize(points, loaded_from=None):
                 first_divergence=first['vblank'] if first else None)
 
 
-def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, tick=None):
+def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, tick=None, tol=24):
     """Play one save on both and compare; writes work/diff.json and side-by-side pictures."""
     from saturnrecomp import agent, reference as R
 
@@ -97,6 +114,9 @@ def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, t
 
     core_presses = {v: [(p, set(b)) for p, b in what] for v, what in presses.items()}
     done = R.play_synced(core, tick, ticks, core_presses, checks, vblanks * 3, on_shot)
+    if done is None and core.frame is not None:     # the reference never reached our later points
+        core.frame.save_png(str(work / 'core-last.png'))
+    core_tick_end = core.read32(tick)
 
     points = []
     for v in checks:
@@ -107,13 +127,15 @@ def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, t
         p = compare_point(v, ours[v], theirs[v])
         if ours[v]['frame'] is not None and theirs[v]['frame'] is not None:
             n, worst, pic = R.difference(ours[v]['frame'], theirs[v]['frame'])
-            p.update(dots_differing=n, worst=worst)
+            p.update(dots_differing=n, worst=worst,
+                     dots_over_tol=dots_over(ours[v]['frame'], theirs[v]['frame'], tol))
             pic.save_png(str(work / f'side-{v}.png'))
         points.append(p)
     expect = (record['data'][memory_map.MAP_ID], record['data'][memory_map.BATTLE_ID])
     loaded = next((p['vblank'] for p in points if not p.get('unreached') and tuple(p['map']) == (expect[0], expect[0])
                    ), None)
-    out = dict(profile=profile, vblanks=vblanks, seed=seed, tick=f'{tick:08X}', core_frames=done,
+    out = dict(profile=profile, vblanks=vblanks, seed=seed, tick=f'{tick:08X}', core_frames=done or core.frames,
+               core_finished=done is not None, our_tick_end=ticks[vblanks], core_tick_end=core_tick_end,
                expected_map=expect[0], loaded_at=loaded, summary=summarize(
                    [p for p in points if not p.get('unreached')], loaded), points=points)
     (work / 'diff.json').write_text(json.dumps(out, indent=1) + '\n')
