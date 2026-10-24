@@ -90,6 +90,9 @@ class OurSide:
     def read(self, addr, n):
         return self.r.read(addr, n)
 
+    def write(self, addr, data):
+        self.r.write(addr, data)
+
     def frame(self):
         return self.r.frame()
 

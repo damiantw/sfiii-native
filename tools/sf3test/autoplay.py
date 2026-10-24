@@ -125,11 +125,13 @@ class Policy:
         return self.battle(state.get('turn', 0)) if state.get('battle') else self.town()
 
 
-def play(side, profile, frames, seed, log=None, reload=None, prelude=None):
+def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
-    over), `reload(side)` is called to load the save again, if given; each such reset is logged."""
+    over), `reload(side)` is called to load the save again, if given; each such reset is logged.
+    `assist` (test-only, off unless given): 'party' pokes the force's stats up each battle turn
+    (memory_map.assist_writes), 'party+enemy1' also sets every enemy's HP to 1."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     presses, events = [], []
@@ -138,6 +140,8 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None):
     held = None
     resets = []
     outcomes, last_outcome = [], None
+    seen_outcome, seen_at = None, 0
+    pokes = 0
     last_tick = None
 
     def state():
@@ -195,8 +199,18 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None):
             if prev and b and prev[1] != b:
                 turn = 0
             prev = (m, b)
+        if b and mm.get('units') and assist:
+            for addr, data in memory_map.assist_writes(side.read, mm['units'],
+                                                       enemy_hp=1 if assist == 'party+enemy1' else None):
+                side.write(addr, data)
+                pokes += 1
         if b and mm.get('units'):
-            oc = battle_outcome(side.read, mm['units'])
+            # debounced: the on-field flag clears for a while in attack scenes (round 11), so an
+            # outcome counts once it has read the same for OUTCOME_HOLD frames
+            raw_oc = battle_outcome(side.read, mm['units'])
+            if raw_oc != seen_outcome:
+                seen_outcome, seen_at = raw_oc, done
+            oc = seen_outcome if done - seen_at >= OUTCOME_HOLD or seen_outcome is None else last_outcome
             if oc != last_outcome:
                 outcomes.append((done, oc))
                 if log:
@@ -215,7 +229,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None):
             if done >= frames:
                 break
     script = script_text(presses)
-    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
+    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, pokes=pokes, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
                 script=script)
 
 
@@ -244,6 +258,7 @@ STEP = {'RIGHT': (1, 0), 'LEFT': (-1, 0), 'UP': (0, 1), 'DOWN': (0, -1)}
 # without one (round 11: a boxed-in unit's C opened it and Attack hit); cursor starts on Hold;
 # UP = Attack, LEFT = Magic, RIGHT = Item, DOWN = Hold. Attack with no one in reach says
 # 'There is no target...'; with a target, the next C picks the highlighted enemy and the next C confirms.
+OUTCOME_HOLD = 600
 RING = {'attack': 'UP', 'magic': 'LEFT', 'item': 'RIGHT', 'hold': 'DOWN'}
 
 
