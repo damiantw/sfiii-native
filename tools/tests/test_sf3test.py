@@ -166,3 +166,10 @@ class BeetleReference(unittest.TestCase):
             self.assertEqual(len(bkr), 0x8000)
             self.assertTrue(bkr.startswith(saves.MAGIC))   # not byte-interleaved
             self.assertEqual(saves.parse_bram(bkr)[0]['data'], r['data'])
+
+
+class FatalLines(unittest.TestCase):
+    def test_both_fatal_forms(self):
+        log = 'FATAL: unresolved jump\n[  55.780 FATAL] returned to 06000010, expected 06000020\n'
+        self.assertEqual([m.group(1).strip() for m in sweep.FATAL.finditer(log)],
+                         ['unresolved jump', 'returned to 06000010, expected 06000020'])

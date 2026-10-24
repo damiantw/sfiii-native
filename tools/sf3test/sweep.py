@@ -11,7 +11,7 @@ import time
 
 from . import frames, memory_map, saves
 
-FATAL = re.compile(r'FATAL[: ]+(.*)')
+FATAL = re.compile(r'FATAL\]?[: ]+(.*)')     # 'FATAL: why' and the log's '[ 55.780 FATAL] why'
 CALL = re.compile(r'call to ([0-9A-F]{8}), not an entry of an active module \(from pr ([0-9A-F]{8})\)')
 NOT_DONE = re.compile(r'\] (.*is not done.*)$')
 STALL = re.compile(r'STALL: no VBlank for 5 s after VBlank (\d+)')
