@@ -201,6 +201,21 @@ class BattleUnits(unittest.TestCase):
         self.assertEqual(mm.lookup('scenario1-usa-v25_1')['units']['force'], 0x06032030)
 
 
+class BattleTurns(unittest.TestCase):
+    def test_prelude_and_outcome(self):
+        ph = autoplay.prelude_phrase('w5,DOWN*7,A+C')
+        self.assertEqual(ph, [((), 5), (('DOWN',), 7), ((), 10), (('A', 'C'), 6), ((), 10)])
+        mm = memory_map
+        raw = bytearray(mm.UNIT_STRIDE * mm.UNIT_COUNT)        # invented: one force unit, no enemies
+        raw[mm.UNIT_FLAGS] = 0xC0
+        raw[mm.UNIT_HP + 1] = 5
+        units = dict(force=0, enemies=1)
+        rd = lambda a, n: bytes(raw[:n]) if a == 0 else bytes(n)
+        self.assertEqual(autoplay.battle_outcome(rd, units), 'won')
+        raw[mm.UNIT_HP + 1] = 0
+        self.assertEqual(autoplay.battle_outcome(rd, units), 'won')
+
+
 class FakeSide:
     """An invented game: the battle id at the state block switches on after `battle_at` frames,
     the picture changes only while a button is held."""
