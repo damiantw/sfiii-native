@@ -96,8 +96,14 @@ def matching_profiles(content_id):
 def _print_content_id(c):
     print("content_sha256 %s" % c)
     hits = matching_profiles(c)
-    print("matches sfiii-native profile %s" % ", ".join(hits) if hits
-          else "no sfiii-native profile has this content_sha256 yet (see docs/translation-patcher.md)")
+    orig = identify.original_for_content(c)
+    if hits:
+        print("matches sfiii-native profile %s" % ", ".join(hits))
+    elif orig:
+        print("this is the unpatched original (%s); sfiii-native needs the translated image "
+              "(run `sf3patch patch`)" % orig.title)
+    else:
+        print("no sfiii-native profile has this content_sha256 yet (see docs/translation-patcher.md)")
 
 
 # ---------------------------------------------------------------- packages
@@ -155,8 +161,10 @@ def cmd_identify(args):
         print("volume   %s" % d.volume_id.rstrip())
         if r.track1:
             print("track 1  %s (%d bytes)" % r.track1)
+            print("         sha256 %s" % r.track1_sha256)
         if r.track2:
             print("track 2  %s (%d bytes)" % r.track2)
+            print("         sha256 %s" % r.track2_sha256)
         if r.known:
             print("redump   %s, http://redump.org/disc/%d/" % (r.known.key, r.known.redump))
         for w in r.warnings:
