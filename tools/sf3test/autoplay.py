@@ -280,8 +280,8 @@ def panel_share(frame):
 
 def battle_outcome(rd, units):
     """'won' when no enemy on the field has HP left, 'lost' when no force unit has, else None."""
-    enemies = memory_map.read_units(rd, units['enemies'])
-    force = memory_map.read_units(rd, units['force'])
+    enemies = memory_map.read_units(rd, units['enemies'], units.get('live'))
+    force = memory_map.read_units(rd, units['force'], units.get('live'))
     if not any(e[4] > 0 for e in enemies):      # a defeated enemy leaves the field (flag 0x40 clears)
         return 'won'
     if not any(f[4] > 0 for f in force):
@@ -303,9 +303,9 @@ def aimed_turn(side, units, pol, press):
     rd = side.read
 
     def pos():
-        return {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rd, units['force'])}
+        return {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rd, units['force'], units.get('live'))}
 
-    enemies = memory_map.read_units(rd, units['enemies'])
+    enemies = memory_map.read_units(rd, units['enemies'], units.get('live'))
     live = [(x, y) for k, x, y, f, hp in enemies if hp > 0]
     if not live:
         return tap(('C',), gap=30) * 4
