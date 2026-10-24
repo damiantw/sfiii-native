@@ -47,7 +47,10 @@ def main():
     if a.maps:
         path, _, nn = a.map_base.rpartition(':')
         base = [r for r in saves.load_any(Path(path).read_bytes()) if r['name'].endswith('_' + nn)][0]
-        targets += sweep.targets_from_maps(base, ranges(a.maps))
+        bad = memory_map.INVALID_MAPS.get(sc, {})
+        for m in sorted(set(ranges(a.maps)) & set(bad)):
+            print(f'map:{m:02X} skipped: invalid ({bad[m]})')
+        targets += sweep.targets_from_maps(base, [m for m in ranges(a.maps) if m not in bad])
     if a.only:
         keep = set(a.only.split(','))
         targets = [t for t in targets if t['id'] in keep]
