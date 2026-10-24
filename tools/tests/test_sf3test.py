@@ -147,3 +147,29 @@ class Diff(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class BeetleReference(unittest.TestCase):
+    def test_prepare_links_bios_and_writes_a_plain_bkr(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            (t / 'bios').mkdir()
+            (t / 'bios' / 'invented.bin').write_bytes(b'not a bios')
+            (t / 'bios' / 'notes.txt').write_text('skip me')
+            for d in ('core-save', 'core-system'):
+                (t / 'w' / d).mkdir(parents=True)
+            r = rec()
+            diff.prepare_beetle(t / 'w', '/discs/game.cue', r, t / 'bios')
+            self.assertEqual(sorted(p.name for p in (t / 'w' / 'core-system').iterdir()), ['invented.bin'])
+            bkr = (t / 'w' / 'core-save' / 'game.bkr').read_bytes()
+            self.assertEqual(len(bkr), 0x8000)
+            self.assertTrue(bkr.startswith(saves.MAGIC))   # not byte-interleaved
+            self.assertEqual(saves.parse_bram(bkr)[0]['data'], r['data'])
+
+
+class FatalLines(unittest.TestCase):
+    def test_both_fatal_forms(self):
+        log = 'FATAL: unresolved jump\n[  55.780 FATAL] returned to 06000010, expected 06000020\n'
+        self.assertEqual([m.group(1).strip() for m in sweep.FATAL.finditer(log)],
+                         ['unresolved jump', 'returned to 06000010, expected 06000020'])

@@ -14,6 +14,9 @@ from . import memory_map, saves, sweep
 YABAUSE_WORK_RAM = ((0x06000000, 0),)
 YABAUSE_OPTIONS = {'yabause_force_hle_bios': 'enabled', 'yabause_frameskip': 'disabled',
                    'yabause_addon_cartridge': 'none'}
+# Beetle Saturn (Mednafen) with a real BIOS: the core reads its own .bkr (raw, not interleaved) from the
+# save directory, so the frontend's .srm path is switched off; no cartridge, as on our side.
+BEETLE_OPTIONS = {'beetle_saturn_save_method': 'mednafen', 'beetle_saturn_cart': 'None'}
 
 
 def block_diff(ours, theirs, skip=()):
@@ -113,17 +116,28 @@ def tick_of(side, tick):
     return int.from_bytes(side.read(tick, 4), 'big')
 
 
-def drive_to_load(side, tick, start_ticks, limit, start_frames=None):
+STEADY = 120
+
+
+def drive_to_load(side, tick, start_ticks, limit, start_frames=None, alternate=False):
     """Title and Continue menu on one side: START when the boot tick reaches each of `start_ticks`
     (or at `start_frames`, appending the ticks there to `start_ticks`), then C every C_EVERY frames
-    until the tick jumps (the save's play time is restored). Returns the frame of the load, or None."""
+    until the tick jumps (the save's play time is restored). Returns the frame of the load, or None.
+    The tick is only trusted once it has counted steadily for STEADY frames: before the game runs
+    (a real BIOS boot) that address holds whatever the BIOS left there."""
     pending = list(start_frames if start_frames else start_ticks)
-    release, last_c, prev = None, None, tick_of(side, tick)
+    release, last_c, prev, steady, n = None, None, tick_of(side, tick), 0, 0
     while side.frames < limit:
         now = tick_of(side, tick)
+        jump = prev is not None and now - prev > LOAD_JUMP
+        steady = steady + 1 if prev is not None and 0 <= now - prev <= 2 else (steady if jump else 0)
+        if steady < STEADY and not start_frames:
+            prev = now
+            side.step()
+            continue
         if start_frames and pending and side.frames >= pending[0]:
             start_ticks.append(now)
-        if prev is not None and now - prev > LOAD_JUMP:
+        if not pending and jump:
             side.pad(())
             return side.frames
         prev = now
@@ -135,13 +149,31 @@ def drive_to_load(side, tick, start_ticks, limit, start_frames=None):
             side.pad(('START',))
             release, last_c = side.frames + 8, side.frames
         elif not pending and release is None and (last_c is None or side.frames - last_c >= C_EVERY):
-            side.pad(('C',))
+            # alternate: START and C in turn, for a side whose intro timing differs (a real BIOS and
+            # drive), where a START placed by tick can land on a screen that ignores it
+            n += 1
+            side.pad(('START',) if alternate and n % 2 else ('C',))
             release, last_c = side.frames + 8, side.frames
         side.step()
     return None
 
 
-def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, tick=None, tol=24):
+def prepare_beetle(work, cue, rec, bios):
+    """Links the BIOS dumps into the core's system directory and writes the record as a Mednafen
+    .bkr; both stay in `work`, outside the repository."""
+    import os
+    work = Path(work)
+    for f in Path(bios).iterdir():
+        if f.suffix.lower() == '.bin':
+            link = work / 'core-system' / f.name
+            if not link.exists():
+                os.symlink(f.resolve(), link)
+    (work / 'core-save' / (Path(cue).stem + '.bkr')).write_bytes(saves.build_bram([rec], interleave=False))
+
+
+def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, tick=None, tol=24, bios=None):
+    """`bios`: a directory of the user's own BIOS dumps (Mednafen names); given, the core is driven as
+    Beetle Saturn booting that BIOS, otherwise as the patched HLE Yabause."""
     """Play one save on both and compare; writes work/diff.json and side-by-side pictures.
 
     Each side drives the title and Continue menu on its own (dialogue speed differs with CD timing),
@@ -184,11 +216,16 @@ def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, t
             ours.step()
         our_end = tick_of(ours, tick)
 
-    R.WORK_RAM = YABAUSE_WORK_RAM
-    core = R.Core(core_so, str(work / 'core-system'), str(cue), options=YABAUSE_OPTIONS,
-                  save_dir=str(work / 'core-save'))
+    if bios:
+        prepare_beetle(work, cue, rec, bios)
+        core = R.Core(core_so, str(work / 'core-system'), str(cue), options=dict(R.OPTIONS, **BEETLE_OPTIONS),
+                      save_dir=str(work / 'core-save'))
+    else:
+        R.WORK_RAM = YABAUSE_WORK_RAM
+        core = R.Core(core_so, str(work / 'core-system'), str(cue), options=YABAUSE_OPTIONS,
+                      save_dir=str(work / 'core-save'))
     theirs = CoreSide(core)
-    core_load = drive_to_load(theirs, tick, start_ticks, vblanks * 3)
+    core_load = drive_to_load(theirs, tick, start_ticks, vblanks * 3, alternate=bool(bios))
     theirs_at, j, place = {}, 0, R.Place()
     events.sort(key=lambda e: (e[0], e[1] != 'pad'))
     while core_load is not None and j < len(events) and theirs.frames < vblanks * 4:
