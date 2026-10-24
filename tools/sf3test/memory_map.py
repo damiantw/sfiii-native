@@ -28,7 +28,17 @@ _SC3_HIGH_INVALID = (
     0xF6, 0xF7, 0xF8, 0xF9,
 )
 
+# Sc2 V2.000 ids from 0xCE up that fail in the sweep and show only black or 'CD READ ERROR' on Beetle
+# with a real BIOS (round 7 probes, 600 frames after the load; 0xCF falls back to map 0x63).
+_SC2_HIGH_INVALID = (
+    0xCE, 0xCF, 0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9,
+    0xDA, 0xDC, 0xDD, 0xDE, 0xDF, 0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6,
+    0xE7, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF1,
+)
+
 INVALID_MAPS = {1: {0x70: 'black after the load on Beetle with a real BIOS'},
+                2: {m: 'black or CD READ ERROR after the load on Beetle with a real BIOS (V2.000)'
+                    for m in _SC2_HIGH_INVALID},
                 3: {0x4D: 'black after the load on Beetle with a real BIOS, then map id 0',
                     **{m: 'black or CD READ ERROR after the load on Beetle with a real BIOS'
                        for m in _SC3_HIGH_INVALID}}}
