@@ -80,7 +80,7 @@ def run_one(saturn, cue, profile, target, work, play, seed, shots_every=600):
         result['status'] = 'no-load'
     result.update(id=target['id'], load=load, seconds=round(time.time() - t0, 1), work=str(work), seed=seed,
                   autoplay_sha1=res and res['sha1'], autoplay_events=res and res['events'][:100],
-                  autoplay_presses=res and len(res['presses']), resets=res and res['resets'], outcomes=res and res.get('outcomes'), attacks=res and res.get('attacks'), pokes=res and res.get('pokes'), assist=ASSIST, maps_seen=sorted({e[1] for e in (res or {}).get('events', []) if e[1] >= 0}),
+                  autoplay_presses=res and len(res['presses']), resets=res and res['resets'], outcomes=res and res.get('outcomes'), attacks=res and res.get('attacks'), pokes=res and res.get('pokes'), casts=res and res.get('casts'), assist=ASSIST, maps_seen=sorted({e[1] for e in (res or {}).get('events', []) if e[1] >= 0}),
                   battles_seen=sorted({e[2] for e in (res or {}).get('events', []) if e[2] > 0}))
     if res:
         (work / 'autoplay.txt').write_text(autoplay.script_text(res['presses']) + '\n')
