@@ -27,6 +27,17 @@ UNIT_ON_FIELD = 0x40
 UNIT_MAX_HP, UNIT_MAX_MP = 0x10, 0x12
 UNIT_MP, UNIT_ATK, UNIT_DEF, UNIT_AGI, UNIT_MOV = 0x84, 0x85, 0x86, 0x87, 0x89
 BATTLE_UNITS = {'scenario1-usa-v25_1': dict(enemies=0x0602F6F0, force=0x06032030)}
+# Round 13 (sc2-2.000 58271484, sc3 0e80231f; black-box, same method: scan work RAM for named
+# records at stride 0xB0 in a Ch1 battle, then read them against the status window: Sc2 Ch1 :01
+# Campbell 12/13, Sc3 Ch1 :01 Julian 52/52). Same layout, enemies again 60 records before the
+# force table, but the force table is the whole roster (every scenario's characters) and the 0x80/0x40
+# flag byte is stale there (Sc3 Julian on the field reads 0x00, benched Medion 0xE0). The on-field
+# test that holds in both: u8 at +0x98 (2 in Sc2, 3 in Sc3, 0 when benched) and u8 at +0x99 (1 while
+# alive) both non-zero ('live'). Sc3 names past the Sc3 cast are still Japanese (bytes >= 0xA0).
+BATTLE_UNITS.update({
+    'scenario2-v25_1-v2_000': dict(enemies=0x06030970, force=0x060332B0, live=0x98),
+    'scenario3-v25_1-redump': dict(enemies=0x060312A0, force=0x06033BE0, live=0x98),
+})
 
 # Map ids a map sweep must not edit into a save: checked on Beetle Saturn with a real BIOS (the game
 # never draws again after the load), so a failure there says nothing about the port.
@@ -78,21 +89,29 @@ def lookup(profile):
                 units=BATTLE_UNITS.get(profile))
 
 
-def read_units(read, table):
+def on_field(rec, live=None):
+    """Sc1: flag 0x40. With `live` (Sc2/Sc3): the bytes at live and live+1 both non-zero."""
+    return bool(rec[live] and rec[live + 1]) if live else bool(rec[UNIT_FLAGS] & UNIT_ON_FIELD)
+
+
+def read_units(read, table, live=None):
     """[(slot, x, y, flags, hp)] for the on-field records of a unit table; `read(addr, n)`."""
     raw = read(table, UNIT_STRIDE * UNIT_COUNT)
     out = []
     for k in range(UNIT_COUNT):
         e = raw[k * UNIT_STRIDE:(k + 1) * UNIT_STRIDE]
-        if e[UNIT_FLAGS] & UNIT_ON_FIELD:
+        if on_field(e, live):
             out.append((k, e[UNIT_X], e[UNIT_Y], e[UNIT_FLAGS], int.from_bytes(e[UNIT_HP:UNIT_HP + 2], 'big')))
     return out
 
 
-def looks_like_force(rec):
+def looks_like_force(rec, live=None):
     """A force record starts with its name (printable ASCII, NUL-padded) and has flag 0x80; other
     battles may put their tables elsewhere (round 12: Sc1 Battle 30 does), so check before a poke."""
     name = rec[:12].rstrip(b'\0 ')
+    if live:  # roster tables: ASCII or Japanese (>= 0xA0) names, flags unused
+        return bool(name) and all(32 <= c < 127 or c >= 0xA0 for c in name) and \
+            rec[UNIT_X] < 128 and rec[UNIT_Y] < 128
     return bool(name) and all(32 <= c < 127 for c in name) and bool(rec[UNIT_FLAGS] & 0x80)
 
 
@@ -104,15 +123,15 @@ def assist_writes(read, units, enemy_hp=None, hp=999, stat=99, move=12):
     raw = read(units['force'], UNIT_STRIDE * UNIT_COUNT)
     for k in range(UNIT_COUNT):
         e = raw[k * UNIT_STRIDE:(k + 1) * UNIT_STRIDE]
-        if not e[UNIT_FLAGS] & UNIT_ON_FIELD or not looks_like_force(e):
+        if not on_field(e, units.get('live')) or not looks_like_force(e, units.get('live')):
             continue
         a = units['force'] + k * UNIT_STRIDE
         out += [(a + UNIT_MAX_HP, hp.to_bytes(2, 'big')), (a + UNIT_HP, hp.to_bytes(2, 'big')),
                 (a + UNIT_MAX_MP, bytes([stat])), (a + UNIT_MP, bytes([stat])),
                 (a + UNIT_ATK, bytes([stat, stat, stat])), (a + UNIT_MOV, bytes([move]))]
     if enemy_hp is not None:
-        for k, x, y, f, h in read_units(read, units['enemies']):
-            if h > enemy_hp and not f & 0x80 and x < 128 and y < 128:
+        for k, x, y, f, h in read_units(read, units['enemies'], units.get('live')):
+            if h > enemy_hp and (units.get('live') or not f & 0x80) and x < 128 and y < 128:
                 out.append((units['enemies'] + k * UNIT_STRIDE + UNIT_HP, enemy_hp.to_bytes(2, 'big')))
     return out
 

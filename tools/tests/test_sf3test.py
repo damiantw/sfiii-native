@@ -267,6 +267,20 @@ class BattleTurns(unittest.TestCase):
         w = dict(memory_map.assist_writes(rd, dict(force=0, enemies=0x1000), enemy_hp=1))
         self.assertEqual(w[0x1000 + mm.UNIT_HP], b'\x00\x01')
 
+    def test_live_byte_tables(self):
+        mm = memory_map                                           # invented roster records
+        raw = bytearray(mm.UNIT_STRIDE * mm.UNIT_COUNT)
+        raw[0:4], raw[mm.UNIT_STRIDE:mm.UNIT_STRIDE + 3] = b'Hero', bytes([0xB8, 0xDE, 0xD7])
+        raw[0x98:0x9A] = b'\x03\x01'                              # on the field, flags 0
+        raw[mm.UNIT_STRIDE + mm.UNIT_FLAGS] = 0xE0                # stale flags, benched
+        units = dict(force=0, enemies=0x1000, live=0x98)
+        rd = lambda a, n: bytes(raw[:n]) if a == 0 else bytes(n)
+        self.assertEqual([u[0] for u in mm.read_units(rd, 0, 0x98)], [0])
+        w = dict(mm.assist_writes(rd, units))
+        self.assertIn(mm.UNIT_HP, w)
+        self.assertNotIn(mm.UNIT_STRIDE + mm.UNIT_HP, w)
+        self.assertEqual(mm.lookup('scenario3-v25_1-redump')['units']['live'], 0x98)
+
 
 class FakeSide:
     """An invented game: the battle id at the state block switches on after `battle_at` frames,
@@ -304,7 +318,7 @@ class FakeSide:
 
 
 class Autoplay(unittest.TestCase):
-    P = 'scenario3-v25_1-redump'
+    P = 'scenario2-v25_1-v1_003'   # a profile without a unit table: the probing policy
 
     def test_same_seed_same_script(self):
         a = autoplay.play(FakeSide(self.P), self.P, 3000, 5)
