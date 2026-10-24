@@ -225,7 +225,7 @@ def aimed_turn(side, units, pol, press):
     moved = [k for k, x, y, f, hp in force if after.get(k) != (x, y)]
     if not moved:                                  # a message (C) or a menu left open (B), in turn
         pol.idle += 1
-        return tap(('B',), gap=16) * 2 if pol.idle % 2 else tap(('C',), gap=30)
+        return tap(('B',), gap=16) if pol.idle % 3 == 0 else tap(('C',), gap=30)
     pol.idle = 0
     force = [(k, *after[k], f, hp) for k, x, y, f, hp in force]
     return pol.aim(force, enemies, moved[0])
