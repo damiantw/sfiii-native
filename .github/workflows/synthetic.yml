@@ -35,6 +35,21 @@ jobs:
         run: |
           python -B tools/check-source-package.py --tracked --out "$RUNNER_TEMP/source-check.json"
           python -X utf8 -B -m unittest discover -s tools/tests -p 'test_*.py'
+      - name: Python tests from a payload-style copy (no git checkout)
+        shell: bash
+        run: |
+          # The packaged application ships `git ls-files` plus the runtime sources, with no .git.
+          # Run the suite the way tools/validate-posix-package.py does, so checkout-only
+          # assumptions fail here instead of only in the Linux/macOS candidates workflow.
+          app="$RUNNER_TEMP/payload-app"
+          mkdir -p "$app/.local/saturn-recomp"
+          git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$app"
+          cp -R .local/saturn-recomp/src .local/saturn-recomp/runtime "$app/.local/saturn-recomp/"
+          (cd "$app" && find . -type f | sort) > "$RUNNER_TEMP/payload-before.txt"
+          cd "$RUNNER_TEMP"
+          python -X utf8 -B -m unittest discover -s "$app/tools/tests" -p 'test_*.py'
+          # Like package-files-unchanged: the suite must not write into the application.
+          (cd "$app" && find . -type f | sort) | diff "$RUNNER_TEMP/payload-before.txt" -
       - name: Translation patcher (synthetic discs, pure-Python EDC/ECC)
         shell: bash
         run: |

@@ -3,6 +3,10 @@ on:
   workflow_dispatch:
   push:
     branches: [main, codex/linux-macos]
+  # Validate candidates before merge too, so main is never the first place they break.
+  # Per-ref concurrency below cancels superseded PR runs.
+  pull_request:
+    branches: [main]
 permissions:
   contents: read
 concurrency:
