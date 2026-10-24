@@ -43,6 +43,7 @@ class Policy:
         self.rng = random.Random(seed)
         self.heading = self.rng.choice(DIRS)
         self.idle = 0
+        self.attacks = 0
 
     def town(self):
         r = self.rng.random()
@@ -136,6 +137,7 @@ def play(side, profile, frames, seed, log=None, reload=None):
     prev = None
     held = None
     resets = []
+    outcomes, last_outcome = [], None
     last_tick = None
 
     def state():
@@ -191,6 +193,13 @@ def play(side, profile, frames, seed, log=None, reload=None):
             if prev and b and prev[1] != b:
                 turn = 0
             prev = (m, b)
+        if b and mm.get('units'):
+            oc = battle_outcome(side.read, mm['units'])
+            if oc != last_outcome:
+                outcomes.append((done, oc))
+                if log:
+                    log(f'autoplay {done}: battle outcome {oc}')
+                last_outcome = oc
         if b and mm.get('units') and same < STUCK_CHECKS:
             phrase = aimed_turn(side, mm['units'], pol, press)
         else:
@@ -204,31 +213,98 @@ def play(side, profile, frames, seed, log=None, reload=None):
             if done >= frames:
                 break
     script = script_text(presses)
-    return dict(presses=presses, events=events, resets=resets, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
+    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
                 script=script)
 
 
-def aimed_turn(side, units, pol, press):
-    """Probe which force unit is under control (tap toward the enemies, see whose x/y moved), then
-    return the aimed phrase. The probe taps are pressed here and are part of the run's input."""
-    rd = side.read
-    force = memory_map.read_units(rd, units['force'])
+STEP = {'RIGHT': (1, 0), 'LEFT': (-1, 0), 'UP': (0, 1), 'DOWN': (0, -1)}
+# Sc1 battle command ring (round 10, binary sc1-usa b92d515b): it opens on C once the unit under
+# control has moved (C with no step taken did not open it), cursor starts on Hold;
+# UP = Attack, LEFT = Magic, RIGHT = Item, DOWN = Hold. Attack with no one in reach says
+# 'There is no target...'; with a target, the next C picks the highlighted enemy and the next C confirms.
+RING = {'attack': 'UP', 'magic': 'LEFT', 'item': 'RIGHT', 'hold': 'DOWN'}
+
+
+def battle_outcome(rd, units):
+    """'won' when no enemy on the field has HP left, 'lost' when no force unit has, else None."""
     enemies = memory_map.read_units(rd, units['enemies'])
-    live = [e for e in enemies if e[4] > 0]
+    force = memory_map.read_units(rd, units['force'])
+    if enemies and not any(e[4] > 0 for e in enemies):
+        return 'won'
+    if force and not any(f[4] > 0 for f in force):
+        return 'lost'
+    return None
+
+
+def aimed_turn(side, units, pol, press):
+    """Closed-loop battle turn. Probe which force unit is under control (tap toward the enemies,
+    see whose x/y moved), walk it step by step toward the nearest live enemy (checking the unit
+    table after each step, turning to the other axis when blocked), open the command ring, Attack
+    when next to an enemy, else Hold. Returns the trailing phrase (messages, enemy turns)."""
+    rd = side.read
+
+    def pos():
+        return {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rd, units['force'])}
+
+    enemies = memory_map.read_units(rd, units['enemies'])
+    live = [(x, y) for k, x, y, f, hp in enemies if hp > 0]
     if not live:
         return tap(('C',), gap=30) * 4
-    cx = sum(e[1] for e in live) / len(live)
-    d = 'LEFT' if force and cx < force[0][1] else 'RIGHT'
-    press((d,), 8)
-    press((), 10)
-    after = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rd, units['force'])}
-    moved = [k for k, x, y, f, hp in force if after.get(k) != (x, y)]
+    before = pos()
+    cx = sum(e[0] for e in live) / len(live)
+    lead = next(iter(before.values()), (0, 0))
+    moved = []
+    for d in (('LEFT', 'RIGHT') if cx < lead[0] else ('RIGHT', 'LEFT')):
+        press((d,), 8)
+        press((), 10)
+        now = pos()
+        moved = [k for k in before if now.get(k) != before[k]]
+        if moved:
+            break
     if not moved:                                  # a message (C) or a menu left open (B), in turn
         pol.idle += 1
         return tap(('B',), gap=16) if pol.idle % 3 == 0 else tap(('C',), gap=30)
     pol.idle = 0
-    force = [(k, *after[k], f, hp) for k, x, y, f, hp in force]
-    return pol.aim(force, enemies, moved[0])
+    me = moved[0]
+    steps = 1
+
+    def dist(p):
+        return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)
+
+    for _ in range(10):
+        p = pos()[me]
+        if dist(p) <= 1:
+            break
+        tx, ty = min(live, key=lambda e: abs(e[0] - p[0]) + abs(e[1] - p[1]))
+        dx = ('RIGHT' if tx > p[0] else 'LEFT') if tx != p[0] else None
+        dy = ('UP' if ty > p[1] else 'DOWN') if ty != p[1] else None
+        order = [d for d in ((dx, dy) if abs(tx - p[0]) >= abs(ty - p[1]) else (dy, dx)) if d]
+        went = False
+        for d in order:
+            press((d,), 8)
+            press((), 10)
+            if pos()[me] != p:
+                went, steps = True, steps + 1
+                break
+        if not went:                               # blocked or out of movement range
+            break
+    adjacent = dist(pos()[me]) <= 1
+    press(('C',), 6)
+    press((), 30)                                  # command ring, cursor on Hold
+    if adjacent:
+        press((RING['attack'],), 6)
+        press((), 14)
+        press(('C',), 6)
+        press((), 30)                              # target choice, nearest enemy highlighted
+        press(('C',), 6)
+        press((), 40)
+        pol.attacks += 1
+    else:
+        press((RING['hold'],), 6)
+        press((), 14)
+        press(('C',), 6)
+        press((), 30)
+    return tap(('C',), gap=40) * 4
 
 
 def reload_menu(side, profile, limit):
