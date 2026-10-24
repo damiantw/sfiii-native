@@ -22,6 +22,7 @@ for p in (ROOT / '.local' / 'saturn-recomp' / 'src',):
 from sf3test import autoplay, diff, frames, memory_map, sweep  # noqa: E402
 
 LOAD_LIMIT = 6500
+PRELUDE = None             # --prelude name, set by main
 
 
 def run_one(saturn, cue, profile, target, work, play, seed, shots_every=600):
@@ -50,7 +51,7 @@ def run_one(saturn, cue, profile, target, work, play, seed, shots_every=600):
         if load is None:
             rc = 'no-load'
         else:
-            res = autoplay.play(side, profile, total - side.frames - 2, seed, reload=lambda sd: autoplay.reload_menu(
+            res = autoplay.play(side, profile, total - side.frames - 2, seed, prelude=PRELUDE, reload=lambda sd: autoplay.reload_menu(
                 sd, profile, max(1, min(LOAD_LIMIT, total - 2 - sd.frames))))
             while True:
                 side.step()
@@ -98,7 +99,10 @@ def main():
     ap.add_argument('--jobs', type=int, default=3)
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--only', help='comma-separated target ids')
+    ap.add_argument('--prelude', choices=sorted(autoplay.PRELUDES), help='scripted input before autoplay')
     a = ap.parse_args()
+    global PRELUDE
+    PRELUDE = a.prelude
     for p in [a.cue, *a.saves, a.out]:
         sweep.external(p, ROOT)
     mm = memory_map.lookup(a.profile)

@@ -125,7 +125,7 @@ class Policy:
         return self.battle(state.get('turn', 0)) if state.get('battle') else self.town()
 
 
-def play(side, profile, frames, seed, log=None, reload=None):
+def play(side, profile, frames, seed, log=None, reload=None, prelude=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -163,6 +163,8 @@ def play(side, profile, frames, seed, log=None, reload=None):
             if done >= frames:
                 break
 
+    for buttons, n in prelude_phrase(PRELUDES[prelude]) if prelude else ():
+        press(buttons, n)
     want = memory_map.PAYLOAD_SIZE[mm['scenario']] - 8
     size_ok = side.read(mm['state_base'], 4) == want.to_bytes(4, 'big')
     while done < frames:
@@ -217,12 +219,46 @@ def play(side, profile, frames, seed, log=None, reload=None):
                 script=script)
 
 
+# Scripted input segments run before autoplay (round 10, sc1-usa b92d515b, black-box walks):
+# 'BUTTONS*hold' = hold for that many frames then release for 10, 'wN' = wait N frames.
+PRELUDES = {
+    # Sc1 Ch1:01 (save record 01, church map 0x2C): down the aisle and out of the door to the
+    # town square in front of the church (map id stays 0x2C), about 900 frames
+    'sc1-church-exit': 'w60,DOWN*60,DOWN*60,RIGHT*90,DOWN*90,DOWN*90,RIGHT*90,DOWN*90,w120',
+}
+
+
+def prelude_phrase(text):
+    out = []
+    for c in text.split(','):
+        if c.startswith('w'):
+            out.append(((), int(c[1:])))
+        else:
+            b, _, k = c.partition('*')
+            out += [(tuple(b.split('+')), int(k or 6)), ((), 10)]
+    return out
+
+
 STEP = {'RIGHT': (1, 0), 'LEFT': (-1, 0), 'UP': (0, 1), 'DOWN': (0, -1)}
 # Sc1 battle command ring (round 10, binary sc1-usa b92d515b): it opens on C once the unit under
 # control has moved (C with no step taken did not open it), cursor starts on Hold;
 # UP = Attack, LEFT = Magic, RIGHT = Item, DOWN = Hold. Attack with no one in reach says
 # 'There is no target...'; with a target, the next C picks the highlighted enemy and the next C confirms.
 RING = {'attack': 'UP', 'magic': 'LEFT', 'item': 'RIGHT', 'hold': 'DOWN'}
+
+
+def panel_share(frame):
+    """Share of the lower 3/8 of the picture covered by the game's dark-blue window colour (menus,
+    the command ring's label, messages); about 0 on an open battle field. A black-box picture test."""
+    w, h, rgb = frame.width, frame.height, frame.rgb
+    n = t = 0
+    for y in range(h * 5 // 8, h, 4):
+        row = y * w * 3
+        for x in range(0, w, 4):
+            r, g, b = rgb[row + x * 3], rgb[row + x * 3 + 1], rgb[row + x * 3 + 2]
+            t += 1
+            n += b >= 60 and b > r + 35 and b > g + 20 and r < 70
+    return n / max(t, 1)
 
 
 def battle_outcome(rd, units):
@@ -250,6 +286,9 @@ def aimed_turn(side, units, pol, press):
     live = [(x, y) for k, x, y, f, hp in enemies if hp > 0]
     if not live:
         return tap(('C',), gap=30) * 4
+    if panel_share(side.frame()) > 0.02:          # a menu or message is up: back out (B), or C
+        pol.idle += 1
+        return tap(('C',), gap=30) if pol.idle % 3 == 0 else tap(('B',), gap=20)
     before = pos()
     cx = sum(e[0] for e in live) / len(live)
     lead = next(iter(before.values()), (0, 0))
