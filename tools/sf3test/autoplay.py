@@ -96,15 +96,19 @@ class Policy:
         return self.battle(state.get('turn', 0)) if state.get('battle') else self.town()
 
 
-def play(side, profile, frames, seed, log=None):
+def play(side, profile, frames, seed, log=None, reload=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
-    events, sha1): presses as [(frame offset, buttons)], events the map/battle changes."""
+    events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
+    When the play-time tick falls back (the game went back to its title: a menu's quit, a game
+    over), `reload(side)` is called to load the save again, if given; each such reset is logged."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     presses, events = [], []
     done, last_key, same, turn = 0, None, 0, 0
     prev = None
     held = None
+    resets = []
+    last_tick = None
 
     def state():
         m = side.read(mm['map_id'], 1)[0]
@@ -112,6 +116,21 @@ def play(side, profile, frames, seed, log=None):
         return m, b
 
     while done < frames:
+        t = int.from_bytes(side.read(mm['tick'], 4), 'big')
+        if last_tick is not None and t + 100 < last_tick:
+            resets.append(done)
+            events.append((done, -1, -1))
+            if log:
+                log(f'autoplay {done}: back at the title (tick {last_tick} -> {t})')
+            if reload:
+                start = side.frames
+                side.pad(())
+                held = ()
+                reload(side)
+                done += side.frames - start
+                prev = None
+                t = int.from_bytes(side.read(mm['tick'], 4), 'big')
+        last_tick = t
         m, b = state()
         if prev is None or (m, b) != prev:
             events.append((done, m, b))
@@ -142,7 +161,7 @@ def play(side, profile, frames, seed, log=None):
             if done >= frames:
                 break
     script = script_text(presses)
-    return dict(presses=presses, events=events, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
+    return dict(presses=presses, events=events, resets=resets, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
                 script=script)
 
 

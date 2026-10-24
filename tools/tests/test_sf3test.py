@@ -187,12 +187,14 @@ class FakeSide:
     """An invented game: the battle id at the state block switches on after `battle_at` frames,
     the picture changes only while a button is held."""
 
-    def __init__(self, profile, battle_at=None):
+    def __init__(self, profile, battle_at=None, reset_at=None):
         self.mm = memory_map.lookup(profile)
         self.frames, self.held, self.battle_at, self.pads = 0, (), battle_at, []
+        self.reset_at, self.tick = reset_at, 5000
 
     def step(self):
         self.frames += 1
+        self.tick = 0 if self.frames == self.reset_at else self.tick + 1
 
     def pad(self, buttons):
         self.held = tuple(buttons)
@@ -203,6 +205,8 @@ class FakeSide:
             return bytes([0x81 if self.battle_at is not None and self.frames >= self.battle_at else 0])
         if addr == self.mm['map_id']:
             return bytes([0x36])
+        if addr == self.mm['tick']:
+            return self.tick.to_bytes(4, 'big')
         return bytes(n)
 
     def frame(self):
@@ -229,6 +233,16 @@ class Autoplay(unittest.TestCase):
         after = [b for f, b in r['presses'] if f > r['events'][1][0]]
         self.assertIn('C', after)
         self.assertTrue(set(after) & set(autoplay.DIRS))
+
+    def test_back_at_title_reloads(self):
+        def reload(side):
+            for _ in range(200):
+                side.step()
+            side.tick = 9000
+        r = autoplay.play(FakeSide(self.P, reset_at=1000), self.P, 3000, 1, reload=reload)
+        self.assertEqual(len(r['resets']), 1)
+        self.assertTrue(1000 <= r['resets'][0] < 1400)
+        self.assertIn((r['resets'][0], -1, -1), r['events'])
 
     def test_stuck_picture_escapes(self):
         pol = autoplay.Policy(3)

@@ -50,7 +50,8 @@ def run_one(saturn, cue, profile, target, work, play, seed, shots_every=600):
         if load is None:
             rc = 'no-load'
         else:
-            res = autoplay.play(side, profile, total - side.frames - 2, seed)
+            res = autoplay.play(side, profile, total - side.frames - 2, seed, reload=lambda sd: diff.drive_to_load(
+                sd, mm['tick'], [], min(total - 2, sd.frames + LOAD_LIMIT), alternate=True))
             while True:
                 side.step()
     except (agent.RunEnded, agent.AgentError, BrokenPipeError, ConnectionResetError):
@@ -77,8 +78,8 @@ def run_one(saturn, cue, profile, target, work, play, seed, shots_every=600):
         result['status'] = 'no-load'
     result.update(id=target['id'], load=load, seconds=round(time.time() - t0, 1), work=str(work), seed=seed,
                   autoplay_sha1=res and res['sha1'], autoplay_events=res and res['events'][:100],
-                  autoplay_presses=res and len(res['presses']), maps_seen=sorted({e[1] for e in (res or {}).get('events', [])}),
-                  battles_seen=sorted({e[2] for e in (res or {}).get('events', []) if e[2]}))
+                  autoplay_presses=res and len(res['presses']), resets=res and res['resets'], maps_seen=sorted({e[1] for e in (res or {}).get('events', []) if e[1] >= 0}),
+                  battles_seen=sorted({e[2] for e in (res or {}).get('events', []) if e[2] > 0}))
     if res:
         (work / 'autoplay.txt').write_text(autoplay.script_text(res['presses']) + '\n')
     (work / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
