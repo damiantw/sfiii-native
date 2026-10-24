@@ -50,8 +50,8 @@ def run_one(saturn, cue, profile, target, work, play, seed, shots_every=600):
         if load is None:
             rc = 'no-load'
         else:
-            res = autoplay.play(side, profile, total - side.frames - 2, seed, reload=lambda sd: diff.drive_to_load(
-                sd, mm['tick'], [], min(total - 2, sd.frames + LOAD_LIMIT), alternate=True))
+            res = autoplay.play(side, profile, total - side.frames - 2, seed, reload=lambda sd: autoplay.reload_menu(
+                sd, profile, max(1, min(LOAD_LIMIT, total - 2 - sd.frames))))
             while True:
                 side.step()
     except (agent.RunEnded, agent.AgentError, BrokenPipeError, ConnectionResetError):

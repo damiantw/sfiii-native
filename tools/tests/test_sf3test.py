@@ -205,6 +205,9 @@ class FakeSide:
             return bytes([0x81 if self.battle_at is not None and self.frames >= self.battle_at else 0])
         if addr == self.mm['map_id']:
             return bytes([0x36])
+        if addr == self.mm['state_base']:
+            lost = self.reset_at is not None and self.frames >= self.reset_at and self.tick < 9000
+            return (0 if lost else memory_map.PAYLOAD_SIZE[3] - 8).to_bytes(4, 'big')
         if addr == self.mm['tick']:
             return self.tick.to_bytes(4, 'big')
         return bytes(n)

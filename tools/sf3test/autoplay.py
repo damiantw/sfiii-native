@@ -115,13 +115,16 @@ def play(side, profile, frames, seed, log=None, reload=None):
         b = side.read(mm['battle_id'], 1)[0]
         return m, b
 
+    want = memory_map.PAYLOAD_SIZE[mm['scenario']] - 8
+    size_ok = side.read(mm['state_base'], 4) == want.to_bytes(4, 'big')
     while done < frames:
         t = int.from_bytes(side.read(mm['tick'], 4), 'big')
-        if last_tick is not None and t + 100 < last_tick:
+        lost = size_ok and side.read(mm['state_base'], 4) != want.to_bytes(4, 'big')
+        if lost or (last_tick is not None and t + 100 < last_tick):
             resets.append(done)
             events.append((done, -1, -1))
             if log:
-                log(f'autoplay {done}: back at the title (tick {last_tick} -> {t})')
+                log(f'autoplay {done}: back at the title (tick {last_tick} -> {t}, state block lost {lost})')
             if reload:
                 start = side.frames
                 side.pad(())
@@ -163,6 +166,27 @@ def play(side, profile, frames, seed, log=None, reload=None):
     script = script_text(presses)
     return dict(presses=presses, events=events, resets=resets, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
                 script=script)
+
+
+def reload_menu(side, profile, limit):
+    """Back at the title: START and C in turn every 80 frames until the state block holds a loaded
+    save again (its size word is right for 120 frames), or `limit` frames."""
+    mm = memory_map.lookup(profile)
+    want = (memory_map.PAYLOAD_SIZE[mm['scenario']] - 8).to_bytes(4, 'big')
+    good, n = 0, 0
+    for k in range(limit):
+        good = good + 1 if side.read(mm['state_base'], 4) == want else 0
+        if good >= 120:
+            side.pad(())
+            return True
+        if k % 80 == 0:
+            n += 1
+            side.pad(('START',) if n % 2 else ('C',))
+        elif k % 80 == 8:
+            side.pad(())
+        side.step()
+    side.pad(())
+    return False
 
 
 def script_text(presses, offset=0):
