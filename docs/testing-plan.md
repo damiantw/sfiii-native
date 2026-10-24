@@ -183,8 +183,31 @@ No full-game Shining Force III TAS, movie or input file exists publicly. TASVide
 | Profile | Replay source | Anchor saves | Checkpoints manifest | Status |
 |---|---|---|---|---|
 | Sc1 USA V1.001 (unpatched) | own BizHawk segments (to record) | TP FTP Sc1 chapter ×3 + complete | TBD | not started |
-| Sc1 + latest Translation Project | own BizHawk segments (to record) | TP FTP Sc1 chapter ×3 + complete | TBD | not started |
-| Sc2 V1.003 + latest TP | own BizHawk segments (to record) | TP FTP Sc2 chapter ×6 + complete; hardware saves | TBD | not started |
-| Sc2 V2.000 + latest TP | own BizHawk segments (to record) | TP FTP Sc2 chapter ×6 + complete; hardware saves | TBD | not started |
-| Sc3 + latest TP (V25.1 + V25+ updates) | own BizHawk segments (to record) | TP FTP Sc3 chapter ×7 + complete; bucanero pre/post final battle | TBD | not started |
+| Sc1 + latest Translation Project | own BizHawk segments (to record) | TP FTP Sc1 chapter ×3 + complete | TBD | sweep + differential running (see Status) |
+| Sc2 V1.003 + latest TP | own BizHawk segments (to record) | TP FTP Sc2 chapter ×6 + complete; hardware saves | TBD | sweep + differential running (see Status) |
+| Sc2 V2.000 + latest TP | own BizHawk segments (to record) | TP FTP Sc2 chapter ×6 + complete; hardware saves | TBD | sweep + differential running (see Status) |
+| Sc3 + latest TP (V25.1 + V25+ updates) | own BizHawk segments (to record) | TP FTP Sc3 chapter ×7 + complete; bucanero pre/post final battle | TBD | sweep + differential running (see Status) |
 | Premium Disc | boot-and-browse script | none | TBD | not started |
+
+## Status (2026-10-24): layers 2 and 3 for the latest-translation profiles
+
+**Layer 3, reachability sweep** (`tools/sf3-sweep.py`). Each save record of the TP FTP chapter saves, the complete-game saves and the hardware/bucanero saves is loaded through Continue, then driven by seeded input for 8000 VBlanks:
+
+```
+python tools/sf3-sweep.py --saturn BUILD/saturn --cue DISC.cue --profile scenario1-usa-v25_1 \
+    --out /private/sweep/sc1 --saves A.bin B.bkr C.BUP --jobs 5 [--maps 0-255 --map-base SAVE:NN]
+```
+
+| profile | targets | result | maps / battle ids reached | functions run (union) |
+|---|---|---|---|---|
+| Sc1 V25.1 | 112 | 112 ok | 65 / 44 | 3.7% |
+| Sc2 V2.000 | 125 | 125 ok | 71 / 50 | 3.3% |
+| Sc2 V1.003 | 125 | 125 ok | 73 / 52 | 3.4% |
+| Sc3 | 116 | 114 ok, 2 false no-loads (fixed in the analyzer) | 59 / 49 | 3.1% |
+
+No crash, FATAL, unresolved call, hang, black or frozen run. The VDP2 features the runtime noted as missing (line scroll, extended colour calculation) were implemented; the remaining notes are line colour from rotation coefficients (KTCTL LCCE) and vertical cell scroll.
+
+**Layer 2, differential** (`tools/sf3-diff.py`). The reference is a libretro core passed by path (no emulator code in this repository). Each side drives its own menus to the load; inputs and checkpoints are then placed by the game's play-time tick. The state block at every checkpoint matched for Sc1, Sc2 (both revisions) and Sc3 chapter-1 records. Caveats:
+- Yabause with the HLE BIOS stops in Sc1/Sc2 battles (invalid opcode), so it is only a valid reference through boot, menus, loading and towns. Beetle/Mednafen with a real BIOS is needed for battles.
+- Frame diffs drift once dialogue/camera timing desynchronizes the input placement; treat them as evidence only before the first divergence.
+- Sweep runs are not bit-identical under load; for before/after rendering checks, step both builds through the agent with the same inputs.
