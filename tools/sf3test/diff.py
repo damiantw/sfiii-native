@@ -171,7 +171,8 @@ def prepare_beetle(work, cue, rec, bios):
     (work / 'core-save' / (Path(cue).stem + '.bkr')).write_bytes(saves.build_bram([rec], interleave=False))
 
 
-def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, tick=None, tol=24, bios=None):
+def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, tick=None, tol=24, bios=None,
+        dump_wram=False):
     """`bios`: a directory of the user's own BIOS dumps (Mednafen names); given, the core is driven as
     Beetle Saturn booting that BIOS, otherwise as the patched HLE Yabause."""
     """Play one save on both and compare; writes work/diff.json and side-by-side pictures.
@@ -251,6 +252,11 @@ def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, t
             continue
         p = compare_point(k, ours_at[k], theirs_at[k])
         p['wram_bytes_differing'] = sum(a != b for a, b in zip(ours_at[k]['wram'], theirs_at[k]['wram']))
+        p['wram_ranges_differing'] = [[f'{0x06000000 + a:08X}', b - a] for a, b in
+                                      runs(block_diff(ours_at[k]['wram'], theirs_at[k]['wram']))][:64]
+        if dump_wram:   # the run's own RAM, written to its (private) work directory only
+            (work / f'wram-{k}-ours.bin').write_bytes(ours_at[k]['wram'])
+            (work / f'wram-{k}-core.bin').write_bytes(theirs_at[k]['wram'])
         p['block_changed_since_load'] = ours_at[k]['block'] != ours_at[min(ours_at)]['block']
         a, b = ours_at[k]['frame'], theirs_at[k]['frame']
         if a is not None and b is not None:
