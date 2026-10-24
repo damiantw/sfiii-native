@@ -378,8 +378,9 @@ def aimed_turn(side, units, pol, press):
     adjacent = dist(pos()[me]) <= 1
     press(('C',), 6)
     press((), 30)                                  # command ring, cursor on Hold
-    cast_now = adjacent and pol.cast and pol.tried.get(me, 0) % 2 == 0
-    if adjacent and pol.cast:
+    near = dist(pos()[me]) <= 2                    # first-level spells reach 2 tiles (Blaze, Heal)
+    cast_now = near and pol.cast and pol.tried.get(me, 0) % 2 == 0
+    if near and pol.cast:
         pol.tried[me] = pol.tried.get(me, 0) + 1
     if cast_now:
         # --assist runs: each unit's turns alternate Magic and Attack, Magic first (first spell, its first level, the
