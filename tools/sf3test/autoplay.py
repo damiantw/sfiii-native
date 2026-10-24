@@ -44,7 +44,7 @@ class Policy:
         self.heading = self.rng.choice(DIRS)
         self.idle = 0
         self.attacks = 0
-        self.cast, self.casts = False, 0
+        self.cast, self.casts, self.tried = False, 0, {}
 
     def town(self):
         r = self.rng.random()
@@ -378,8 +378,11 @@ def aimed_turn(side, units, pol, press):
     adjacent = dist(pos()[me]) <= 1
     press(('C',), 6)
     press((), 30)                                  # command ring, cursor on Hold
-    if adjacent and pol.cast and pol.attacks % 2:
-        # --assist runs: every other attack is Magic instead (first spell, its first level, the
+    cast_now = adjacent and pol.cast and pol.tried.get(me, 0) % 2 == 0
+    if adjacent and pol.cast:
+        pol.tried[me] = pol.tried.get(me, 0) + 1
+    if cast_now:
+        # --assist runs: each unit's turns alternate Magic and Attack, Magic first (first spell, its first level, the
         # highlighted target, confirm); a unit with no spells gets a message the trailing C closes
         press((RING['magic'],), 6)
         press((), 14)

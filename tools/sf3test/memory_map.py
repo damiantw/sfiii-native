@@ -89,6 +89,13 @@ def read_units(read, table):
     return out
 
 
+def looks_like_force(rec):
+    """A force record starts with its name (printable ASCII, NUL-padded) and has flag 0x80; other
+    battles may put their tables elsewhere (round 12: Sc1 Battle 30 does), so check before a poke."""
+    name = rec[:12].rstrip(b'\0 ')
+    return bool(name) and all(32 <= c < 127 for c in name) and bool(rec[UNIT_FLAGS] & 0x80)
+
+
 def assist_writes(read, units, enemy_hp=None, hp=999, stat=99, move=12):
     """Test-only assist (never on by default): [(addr, bytes)] that give every on-field force unit
     `hp` HP and max HP, full MP and `stat` attack/defence/agility, `move` movement, and, with
@@ -97,7 +104,7 @@ def assist_writes(read, units, enemy_hp=None, hp=999, stat=99, move=12):
     raw = read(units['force'], UNIT_STRIDE * UNIT_COUNT)
     for k in range(UNIT_COUNT):
         e = raw[k * UNIT_STRIDE:(k + 1) * UNIT_STRIDE]
-        if not e[UNIT_FLAGS] & UNIT_ON_FIELD:
+        if not e[UNIT_FLAGS] & UNIT_ON_FIELD or not looks_like_force(e):
             continue
         a = units['force'] + k * UNIT_STRIDE
         out += [(a + UNIT_MAX_HP, hp.to_bytes(2, 'big')), (a + UNIT_HP, hp.to_bytes(2, 'big')),
@@ -105,7 +112,7 @@ def assist_writes(read, units, enemy_hp=None, hp=999, stat=99, move=12):
                 (a + UNIT_ATK, bytes([stat, stat, stat])), (a + UNIT_MOV, bytes([move]))]
     if enemy_hp is not None:
         for k, x, y, f, h in read_units(read, units['enemies']):
-            if h > enemy_hp:
+            if h > enemy_hp and not f & 0x80 and x < 128 and y < 128:
                 out.append((units['enemies'] + k * UNIT_STRIDE + UNIT_HP, enemy_hp.to_bytes(2, 'big')))
     return out
 

@@ -252,6 +252,7 @@ class BattleTurns(unittest.TestCase):
         mm = memory_map
         raw = bytearray(mm.UNIT_STRIDE * mm.UNIT_COUNT)          # invented: force record 1, enemy record 0
         raw[mm.UNIT_STRIDE + mm.UNIT_FLAGS] = 0xC0
+        raw[mm.UNIT_STRIDE:mm.UNIT_STRIDE + 4] = b'Hero'
         en = bytearray(mm.UNIT_STRIDE * mm.UNIT_COUNT)
         en[mm.UNIT_FLAGS] = 0x40
         en[mm.UNIT_HP + 1] = 14
@@ -260,6 +261,9 @@ class BattleTurns(unittest.TestCase):
         self.assertEqual(w[mm.UNIT_STRIDE + mm.UNIT_HP], (999).to_bytes(2, 'big'))
         self.assertEqual(w[mm.UNIT_STRIDE + mm.UNIT_ATK], bytes([99, 99, 99]))
         self.assertNotIn(0x1000 + mm.UNIT_HP, w)
+        raw[mm.UNIT_STRIDE:mm.UNIT_STRIDE + 4] = bytes(4)            # not a force record: no poke
+        self.assertEqual(memory_map.assist_writes(rd, dict(force=0, enemies=0x1000)), [])
+        raw[mm.UNIT_STRIDE:mm.UNIT_STRIDE + 4] = b'Hero'
         w = dict(memory_map.assist_writes(rd, dict(force=0, enemies=0x1000), enemy_hp=1))
         self.assertEqual(w[0x1000 + mm.UNIT_HP], b'\x00\x01')
 
