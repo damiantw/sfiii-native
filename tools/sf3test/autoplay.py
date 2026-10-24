@@ -240,8 +240,8 @@ def prelude_phrase(text):
 
 
 STEP = {'RIGHT': (1, 0), 'LEFT': (-1, 0), 'UP': (0, 1), 'DOWN': (0, -1)}
-# Sc1 battle command ring (round 10, binary sc1-usa b92d515b): it opens on C once the unit under
-# control has moved (C with no step taken did not open it), cursor starts on Hold;
+# Sc1 battle command ring (round 10/11, binary sc1-usa b92d515b): C opens it, after a step or
+# without one (round 11: a boxed-in unit's C opened it and Attack hit); cursor starts on Hold;
 # UP = Attack, LEFT = Magic, RIGHT = Item, DOWN = Hold. Attack with no one in reach says
 # 'There is no target...'; with a target, the next C picks the highlighted enemy and the next C confirms.
 RING = {'attack': 'UP', 'magic': 'LEFT', 'item': 'RIGHT', 'hold': 'DOWN'}
@@ -272,6 +272,12 @@ def battle_outcome(rd, units):
     return None
 
 
+def next_to(p, live):
+    """True when a live enemy stands on a tile next to `p` (walls and drops are not in the unit
+    tables, so a unit can be stuck with free-looking tiles around it)."""
+    return any(abs(p[0] - e[0]) + abs(p[1] - e[1]) == 1 for e in live)
+
+
 def aimed_turn(side, units, pol, press):
     """Closed-loop battle turn. Probe which force unit is under control (tap toward the enemies,
     see whose x/y moved), walk it step by step toward the nearest live enemy (checking the unit
@@ -293,15 +299,23 @@ def aimed_turn(side, units, pol, press):
     cx = sum(e[0] for e in live) / len(live)
     lead = next(iter(before.values()), (0, 0))
     moved = []
-    for d in (('LEFT', 'RIGHT') if cx < lead[0] else ('RIGHT', 'LEFT')):
+    for d in (('LEFT', 'RIGHT') if cx < lead[0] else ('RIGHT', 'LEFT')) + ('UP', 'DOWN'):
         press((d,), 8)
         press((), 10)
         now = pos()
         moved = [k for k in before if now.get(k) != before[k]]
         if moved:
             break
-    if not moved:                                  # a message (C) or a menu left open (B), in turn
+    if not moved:
+        # Nothing moved: a message (C), a menu left open (B), or (round 11) a unit that cannot
+        # step (enemies, teammates or terrain all round). The ring opens on C without a step too, so
+        # every other idle turn tries Attack in place (C, UP, C, C); with no one in reach the
+        # game says so and the trailing C closes it.
         pol.idle += 1
+        if pol.idle % 2 == 0 and any(next_to(p, live) for p in before.values()):
+            pol.attacks += 1
+            return [(('C',), 6), ((), 30), ((RING['attack'],), 6), ((), 14), (('C',), 6), ((), 30),
+                    (('C',), 6), ((), 40)] + tap(('C',), gap=40) * 4
         return tap(('B',), gap=16) if pol.idle % 3 == 0 else tap(('C',), gap=30)
     pol.idle = 0
     me = moved[0]
