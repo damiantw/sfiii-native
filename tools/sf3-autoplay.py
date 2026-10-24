@@ -24,6 +24,7 @@ from sf3test import autoplay, diff, frames, memory_map, sweep  # noqa: E402
 LOAD_LIMIT = 6500
 PRELUDE = None             # --prelude name, set by main
 ASSIST = None              # --assist (test-only), set by main
+WALKER = False             # --walker (round 13 town wall-follower), set by main
 
 
 def run_one(saturn, cue, profile, target, work, play, seed, shots_every=600):
@@ -52,7 +53,7 @@ def run_one(saturn, cue, profile, target, work, play, seed, shots_every=600):
         if load is None:
             rc = 'no-load'
         else:
-            res = autoplay.play(side, profile, total - side.frames - 2, seed, prelude=PRELUDE, assist=ASSIST, reload=lambda sd: autoplay.reload_menu(
+            res = autoplay.play(side, profile, total - side.frames - 2, seed, prelude=PRELUDE, assist=ASSIST, walker=WALKER, reload=lambda sd: autoplay.reload_menu(
                 sd, profile, max(1, min(LOAD_LIMIT, total - 2 - sd.frames))))
             while True:
                 side.step()
@@ -80,7 +81,7 @@ def run_one(saturn, cue, profile, target, work, play, seed, shots_every=600):
         result['status'] = 'no-load'
     result.update(id=target['id'], load=load, seconds=round(time.time() - t0, 1), work=str(work), seed=seed,
                   autoplay_sha1=res and res['sha1'], autoplay_events=res and res['events'][:100],
-                  autoplay_presses=res and len(res['presses']), resets=res and res['resets'], outcomes=res and res.get('outcomes'), attacks=res and res.get('attacks'), pokes=res and res.get('pokes'), casts=res and res.get('casts'), assist=ASSIST, maps_seen=sorted({e[1] for e in (res or {}).get('events', []) if e[1] >= 0}),
+                  autoplay_presses=res and len(res['presses']), resets=res and res['resets'], outcomes=res and res.get('outcomes'), attacks=res and res.get('attacks'), pokes=res and res.get('pokes'), casts=res and res.get('casts'), assist=ASSIST, walker=WALKER, blocked=res and res.get('blocked'), maps_seen=sorted({e[1] for e in (res or {}).get('events', []) if e[1] >= 0}),
                   battles_seen=sorted({e[2] for e in (res or {}).get('events', []) if e[2] > 0}))
     if res:
         (work / 'autoplay.txt').write_text(autoplay.script_text(res['presses']) + '\n')
@@ -101,11 +102,13 @@ def main():
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--only', help='comma-separated target ids')
     ap.add_argument('--prelude', choices=sorted(autoplay.PRELUDES), help='scripted input before autoplay')
+    ap.add_argument('--walker', action='store_true',
+                    help='towns: wall-following walk that examines and talks where blocked (finds doors, shops)')
     ap.add_argument('--assist', choices=['party', 'party+enemy1'],
                     help='TEST ONLY: poke the force\'s battle stats up (and enemy HP to 1) over the agent socket')
     a = ap.parse_args()
-    global PRELUDE, ASSIST
-    PRELUDE, ASSIST = a.prelude, a.assist
+    global PRELUDE, ASSIST, WALKER
+    PRELUDE, ASSIST, WALKER = a.prelude, a.assist, a.walker
     for p in [a.cue, *a.saves, a.out]:
         sweep.external(p, ROOT)
     mm = memory_map.lookup(a.profile)
