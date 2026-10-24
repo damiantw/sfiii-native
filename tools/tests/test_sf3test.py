@@ -216,6 +216,38 @@ class BattleTurns(unittest.TestCase):
         self.assertEqual(autoplay.battle_outcome(rd, units), 'won')
 
 
+    def test_stuck_unit_attacks_in_place(self):
+        # invented: a unit that cannot step, an enemy on the next tile; the second idle turn attacks
+        self.assertTrue(autoplay.next_to((5, 5), [(6, 5)]))
+        self.assertFalse(autoplay.next_to((5, 5), [(7, 5), (6, 6)]))
+        mm = memory_map
+        raw = bytearray(mm.UNIT_STRIDE * 2)
+        raw[mm.UNIT_FLAGS] = 0xC0                       # force record 0 at (5, 5), 9 HP
+        raw[mm.UNIT_X] = raw[mm.UNIT_Y] = 5
+        raw[mm.UNIT_HP + 1] = 9
+        en = bytearray(raw)
+        en[mm.UNIT_FLAGS] = 0x40                         # enemy record 0 at (6, 5)
+        en[mm.UNIT_X] = 6
+
+        class Side:
+            def read(self, a, n):
+                src = raw if a == 0 else en
+                return bytes(src[:n]) + bytes(max(0, n - len(src)))
+
+            def frame(self):
+                class F:
+                    width, height, rgb = 4, 8, bytes(4 * 8 * 3)
+                return F()
+
+        pol = autoplay.Policy(1)
+        units = dict(force=0, enemies=1)
+        first = autoplay.aimed_turn(Side(), units, pol, lambda b, n: None)
+        second = autoplay.aimed_turn(Side(), units, pol, lambda b, n: None)
+        self.assertNotIn(('UP',), [b for b, _ in first])
+        self.assertIn((autoplay.RING['attack'],), [b for b, _ in second])
+        self.assertEqual(pol.attacks, 1)
+
+
 class FakeSide:
     """An invented game: the battle id at the state block switches on after `battle_at` frames,
     the picture changes only while a button is held."""
