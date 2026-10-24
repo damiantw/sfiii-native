@@ -265,9 +265,9 @@ def battle_outcome(rd, units):
     """'won' when no enemy on the field has HP left, 'lost' when no force unit has, else None."""
     enemies = memory_map.read_units(rd, units['enemies'])
     force = memory_map.read_units(rd, units['force'])
-    if enemies and not any(e[4] > 0 for e in enemies):
+    if not any(e[4] > 0 for e in enemies):      # a defeated enemy leaves the field (flag 0x40 clears)
         return 'won'
-    if force and not any(f[4] > 0 for f in force):
+    if not any(f[4] > 0 for f in force):
         return 'lost'
     return None
 
@@ -327,6 +327,17 @@ def aimed_turn(side, units, pol, press):
                 break
         if not went:                               # blocked or out of movement range
             break
+    for _ in range(4):                             # never end on a tile another force unit holds
+        now = pos()
+        if now[me] not in [v for k, v in now.items() if k != me]:
+            break
+        p = now[me]
+        for d in ('LEFT', 'UP', 'DOWN', 'RIGHT'):
+            press((d,), 8)
+            press((), 10)
+            q = pos()
+            if q[me] != p and q[me] not in [v for k, v in q.items() if k != me]:
+                break
     adjacent = dist(pos()[me]) <= 1
     press(('C',), 6)
     press((), 30)                                  # command ring, cursor on Hold
