@@ -81,7 +81,7 @@ def run_one(saturn, cue, profile, target, work, play, seed, shots_every=600):
         result['status'] = 'no-load'
     result.update(id=target['id'], load=load, seconds=round(time.time() - t0, 1), work=str(work), seed=seed,
                   autoplay_sha1=res and res['sha1'], autoplay_events=res and res['events'][:100],
-                  autoplay_presses=res and len(res['presses']), resets=res and res['resets'], outcomes=res and res.get('outcomes'), attacks=res and res.get('attacks'), pokes=res and res.get('pokes'), casts=res and res.get('casts'), assist=ASSIST, walker=WALKER, blocked=res and res.get('blocked'), maps_seen=sorted({e[1] for e in (res or {}).get('events', []) if e[1] >= 0}),
+                  autoplay_presses=res and len(res['presses']), resets=res and res['resets'], outcomes=res and res.get('outcomes'), attacks=res and res.get('attacks'), pokes=res and res.get('pokes'), casts=res and res.get('casts'), assist=ASSIST, walker=WALKER, legs=res and res.get('legs'), maps_seen=sorted({e[1] for e in (res or {}).get('events', []) if e[1] >= 0}),
                   battles_seen=sorted({e[2] for e in (res or {}).get('events', []) if e[2] > 0}))
     if res:
         (work / 'autoplay.txt').write_text(autoplay.script_text(res['presses']) + '\n')
@@ -103,7 +103,7 @@ def main():
     ap.add_argument('--only', help='comma-separated target ids')
     ap.add_argument('--prelude', choices=sorted(autoplay.PRELUDES), help='scripted input before autoplay')
     ap.add_argument('--walker', action='store_true',
-                    help='towns: wall-following walk that examines and talks where blocked (finds doors, shops)')
+                    help='towns: square-spiral walk that examines and talks at each corner (finds doors, shops)')
     ap.add_argument('--assist', choices=['party', 'party+enemy1'],
                     help='TEST ONLY: poke the force\'s battle stats up (and enemy HP to 1) over the agent socket')
     a = ap.parse_args()

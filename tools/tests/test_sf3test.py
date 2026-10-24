@@ -322,6 +322,12 @@ class Autoplay(unittest.TestCase):
         self.assertIn('C', after)
         self.assertTrue(set(after) & set(autoplay.DIRS))
 
+    def test_town_walker_spirals_and_talks(self):
+        r = autoplay.play(FakeSide(self.P), self.P, 3000, 2, walker=True)
+        pressed = {b for f, b in r['presses']}
+        self.assertTrue(set(autoplay.DIRS) <= pressed and {'A', 'C'} <= pressed)
+        self.assertGreater(r['legs'], 4)
+
     def test_back_at_title_reloads(self):
         def reload(side):
             for _ in range(200):

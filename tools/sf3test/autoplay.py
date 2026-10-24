@@ -133,10 +133,9 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     over), `reload(side)` is called to load the save again, if given; each such reset is logged.
     `assist` (test-only, off unless given): 'party' pokes the force's stats up each battle turn
     (memory_map.assist_writes), 'party+enemy1' also sets every enemy's HP to 1.
-    `walker` (round 13): in towns, walk a wall-following route instead of random bursts: hold one
-    heading for WALK_HOLD frames; when the picture stops changing (blocked: a wall, an NPC or a
-    counter) examine and talk there (C, A, then C through the dialogue, which takes a shop or
-    bar's first choice), then turn clockwise; a door is found by walking into it (map id change)."""
+    `walker` (round 13): in towns, walk square spirals instead of random bursts and examine/talk
+    at each corner; a door is found by walking into it (map id change). (A blocked test by picture
+    did not work: town animations change the picture while the player stands at a wall.)"""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     pol.cast = bool(assist)
@@ -149,7 +148,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     seen_outcome, seen_at = None, 0
     pokes = 0
     last_tick = None
-    heading, blocked, maps_seen = pol.heading, 0, set()
+    heading, blocked, maps_seen, leg = pol.heading, 0, set(), 0
 
     def state():
         m = side.read(mm['map_id'], 1)[0]
@@ -226,18 +225,18 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
         if b and mm.get('units') and same < STUCK_CHECKS:
             phrase = aimed_turn(side, mm['units'], pol, press)
         elif walker and not b:
-            before = frame_key(side.frame())
-            press((heading,), WALK_HOLD)
-            press((), 4)
-            maps_seen.add(m)
-            if frame_key(side.frame()) == before:          # blocked: examine, talk, then turn
-                blocked += 1
-                phrase = tap(('C',), gap=30) + tap(('A',), gap=30) + tap(('C',), gap=30) * 4 + \
-                    tap(('B',), gap=20)
-                turn_by = 1 if blocked % 4 else pol.rng.choice((1, 2, 3))
-                heading = CLOCKWISE[(CLOCKWISE.index(heading) + turn_by) % 4]
-            else:
-                phrase = []
+            # a square spiral out from where the town starts: legs of 1, 1, 2, 2, 3, 3 ... x
+            # WALK_HOLD frames turning clockwise, starting again (with a random first heading)
+            # after WALK_LEGS legs or on a map change; examine and talk at the end of each leg (C,
+            # A, then C through any dialogue, which takes a shop or bar's first choice)
+            if m not in maps_seen or leg >= WALK_LEGS:
+                maps_seen.add(m)
+                leg, heading = 0, pol.rng.choice(CLOCKWISE)
+            press((heading,), WALK_HOLD * (1 + leg // 2))
+            leg += 1
+            blocked += 1
+            heading = CLOCKWISE[(CLOCKWISE.index(heading) + 1) % 4]
+            phrase = tap(('C',), gap=30) + tap(('A',), gap=30) + tap(('C',), gap=30) * 4 + tap(('B',), gap=20)
         else:
             phrase = pol.next_phrase(dict(map=m, battle=b, stuck=same >= STUCK_CHECKS, turn=turn))
         if same >= STUCK_CHECKS:
@@ -249,11 +248,12 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
             if done >= frames:
                 break
     script = script_text(presses)
-    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, casts=pol.casts, pokes=pokes, blocked=blocked, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
+    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, casts=pol.casts, pokes=pokes, legs=blocked, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
                 script=script)
 
 
-WALK_HOLD = 40
+WALK_HOLD = 24
+WALK_LEGS = 24
 CLOCKWISE = ('UP', 'RIGHT', 'DOWN', 'LEFT')
 
 
