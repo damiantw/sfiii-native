@@ -119,14 +119,14 @@ def tick_of(side, tick):
 STEADY = 120
 
 
-def drive_to_load(side, tick, start_ticks, limit, start_frames=None):
+def drive_to_load(side, tick, start_ticks, limit, start_frames=None, alternate=False):
     """Title and Continue menu on one side: START when the boot tick reaches each of `start_ticks`
     (or at `start_frames`, appending the ticks there to `start_ticks`), then C every C_EVERY frames
     until the tick jumps (the save's play time is restored). Returns the frame of the load, or None.
     The tick is only trusted once it has counted steadily for STEADY frames: before the game runs
     (a real BIOS boot) that address holds whatever the BIOS left there."""
     pending = list(start_frames if start_frames else start_ticks)
-    release, last_c, prev, steady = None, None, tick_of(side, tick), 0
+    release, last_c, prev, steady, n = None, None, tick_of(side, tick), 0, 0
     while side.frames < limit:
         now = tick_of(side, tick)
         jump = prev is not None and now - prev > LOAD_JUMP
@@ -149,7 +149,10 @@ def drive_to_load(side, tick, start_ticks, limit, start_frames=None):
             side.pad(('START',))
             release, last_c = side.frames + 8, side.frames
         elif not pending and release is None and (last_c is None or side.frames - last_c >= C_EVERY):
-            side.pad(('C',))
+            # alternate: START and C in turn, for a side whose intro timing differs (a real BIOS and
+            # drive), where a START placed by tick can land on a screen that ignores it
+            n += 1
+            side.pad(('START',) if alternate and n % 2 else ('C',))
             release, last_c = side.frames + 8, side.frames
         side.step()
     return None
@@ -222,7 +225,7 @@ def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, t
         core = R.Core(core_so, str(work / 'core-system'), str(cue), options=YABAUSE_OPTIONS,
                       save_dir=str(work / 'core-save'))
     theirs = CoreSide(core)
-    core_load = drive_to_load(theirs, tick, start_ticks, vblanks * 3)
+    core_load = drive_to_load(theirs, tick, start_ticks, vblanks * 3, alternate=bool(bios))
     theirs_at, j, place = {}, 0, R.Place()
     events.sort(key=lambda e: (e[0], e[1] != 'pad'))
     while core_load is not None and j < len(events) and theirs.frames < vblanks * 4:
