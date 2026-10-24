@@ -43,6 +43,7 @@ class Policy:
         self.rng = random.Random(seed)
         self.heading = self.rng.choice(DIRS)
         self.idle = 0
+        self.attacks = 0
 
     def town(self):
         r = self.rng.random()
@@ -124,7 +125,7 @@ class Policy:
         return self.battle(state.get('turn', 0)) if state.get('battle') else self.town()
 
 
-def play(side, profile, frames, seed, log=None, reload=None):
+def play(side, profile, frames, seed, log=None, reload=None, prelude=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -136,6 +137,7 @@ def play(side, profile, frames, seed, log=None, reload=None):
     prev = None
     held = None
     resets = []
+    outcomes, last_outcome = [], None
     last_tick = None
 
     def state():
@@ -161,6 +163,8 @@ def play(side, profile, frames, seed, log=None, reload=None):
             if done >= frames:
                 break
 
+    for buttons, n in prelude_phrase(PRELUDES[prelude]) if prelude else ():
+        press(buttons, n)
     want = memory_map.PAYLOAD_SIZE[mm['scenario']] - 8
     size_ok = side.read(mm['state_base'], 4) == want.to_bytes(4, 'big')
     while done < frames:
@@ -191,6 +195,13 @@ def play(side, profile, frames, seed, log=None, reload=None):
             if prev and b and prev[1] != b:
                 turn = 0
             prev = (m, b)
+        if b and mm.get('units'):
+            oc = battle_outcome(side.read, mm['units'])
+            if oc != last_outcome:
+                outcomes.append((done, oc))
+                if log:
+                    log(f'autoplay {done}: battle outcome {oc}')
+                last_outcome = oc
         if b and mm.get('units') and same < STUCK_CHECKS:
             phrase = aimed_turn(side, mm['units'], pol, press)
         else:
@@ -204,31 +215,146 @@ def play(side, profile, frames, seed, log=None, reload=None):
             if done >= frames:
                 break
     script = script_text(presses)
-    return dict(presses=presses, events=events, resets=resets, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
+    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
                 script=script)
 
 
-def aimed_turn(side, units, pol, press):
-    """Probe which force unit is under control (tap toward the enemies, see whose x/y moved), then
-    return the aimed phrase. The probe taps are pressed here and are part of the run's input."""
-    rd = side.read
-    force = memory_map.read_units(rd, units['force'])
+# Scripted input segments run before autoplay (round 10, sc1-usa b92d515b, black-box walks):
+# 'BUTTONS*hold' = hold for that many frames then release for 10, 'wN' = wait N frames.
+PRELUDES = {
+    # Sc1 Ch1:01 (save record 01, church map 0x2C): down the aisle and out of the door to the
+    # town square in front of the church (map id stays 0x2C), about 900 frames
+    'sc1-church-exit': 'w60,DOWN*60,DOWN*60,RIGHT*90,DOWN*90,DOWN*90,RIGHT*90,DOWN*90,w120',
+}
+
+
+def prelude_phrase(text):
+    out = []
+    for c in text.split(','):
+        if c.startswith('w'):
+            out.append(((), int(c[1:])))
+        else:
+            b, _, k = c.partition('*')
+            out += [(tuple(b.split('+')), int(k or 6)), ((), 10)]
+    return out
+
+
+STEP = {'RIGHT': (1, 0), 'LEFT': (-1, 0), 'UP': (0, 1), 'DOWN': (0, -1)}
+# Sc1 battle command ring (round 10, binary sc1-usa b92d515b): it opens on C once the unit under
+# control has moved (C with no step taken did not open it), cursor starts on Hold;
+# UP = Attack, LEFT = Magic, RIGHT = Item, DOWN = Hold. Attack with no one in reach says
+# 'There is no target...'; with a target, the next C picks the highlighted enemy and the next C confirms.
+RING = {'attack': 'UP', 'magic': 'LEFT', 'item': 'RIGHT', 'hold': 'DOWN'}
+
+
+def panel_share(frame):
+    """Share of the lower 3/8 of the picture covered by the game's dark-blue window colour (menus,
+    the command ring's label, messages); about 0 on an open battle field. A black-box picture test."""
+    w, h, rgb = frame.width, frame.height, frame.rgb
+    n = t = 0
+    for y in range(h * 5 // 8, h, 4):
+        row = y * w * 3
+        for x in range(0, w, 4):
+            r, g, b = rgb[row + x * 3], rgb[row + x * 3 + 1], rgb[row + x * 3 + 2]
+            t += 1
+            n += b >= 60 and b > r + 35 and b > g + 20 and r < 70
+    return n / max(t, 1)
+
+
+def battle_outcome(rd, units):
+    """'won' when no enemy on the field has HP left, 'lost' when no force unit has, else None."""
     enemies = memory_map.read_units(rd, units['enemies'])
-    live = [e for e in enemies if e[4] > 0]
+    force = memory_map.read_units(rd, units['force'])
+    if not any(e[4] > 0 for e in enemies):      # a defeated enemy leaves the field (flag 0x40 clears)
+        return 'won'
+    if not any(f[4] > 0 for f in force):
+        return 'lost'
+    return None
+
+
+def aimed_turn(side, units, pol, press):
+    """Closed-loop battle turn. Probe which force unit is under control (tap toward the enemies,
+    see whose x/y moved), walk it step by step toward the nearest live enemy (checking the unit
+    table after each step, turning to the other axis when blocked), open the command ring, Attack
+    when next to an enemy, else Hold. Returns the trailing phrase (messages, enemy turns)."""
+    rd = side.read
+
+    def pos():
+        return {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rd, units['force'])}
+
+    enemies = memory_map.read_units(rd, units['enemies'])
+    live = [(x, y) for k, x, y, f, hp in enemies if hp > 0]
     if not live:
         return tap(('C',), gap=30) * 4
-    cx = sum(e[1] for e in live) / len(live)
-    d = 'LEFT' if force and cx < force[0][1] else 'RIGHT'
-    press((d,), 8)
-    press((), 10)
-    after = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rd, units['force'])}
-    moved = [k for k, x, y, f, hp in force if after.get(k) != (x, y)]
+    if panel_share(side.frame()) > 0.02:          # a menu or message is up: back out (B), or C
+        pol.idle += 1
+        return tap(('C',), gap=30) if pol.idle % 3 == 0 else tap(('B',), gap=20)
+    before = pos()
+    cx = sum(e[0] for e in live) / len(live)
+    lead = next(iter(before.values()), (0, 0))
+    moved = []
+    for d in (('LEFT', 'RIGHT') if cx < lead[0] else ('RIGHT', 'LEFT')):
+        press((d,), 8)
+        press((), 10)
+        now = pos()
+        moved = [k for k in before if now.get(k) != before[k]]
+        if moved:
+            break
     if not moved:                                  # a message (C) or a menu left open (B), in turn
         pol.idle += 1
         return tap(('B',), gap=16) if pol.idle % 3 == 0 else tap(('C',), gap=30)
     pol.idle = 0
-    force = [(k, *after[k], f, hp) for k, x, y, f, hp in force]
-    return pol.aim(force, enemies, moved[0])
+    me = moved[0]
+    steps = 1
+
+    def dist(p):
+        return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)
+
+    for _ in range(10):
+        p = pos()[me]
+        if dist(p) <= 1:
+            break
+        tx, ty = min(live, key=lambda e: abs(e[0] - p[0]) + abs(e[1] - p[1]))
+        dx = ('RIGHT' if tx > p[0] else 'LEFT') if tx != p[0] else None
+        dy = ('UP' if ty > p[1] else 'DOWN') if ty != p[1] else None
+        order = [d for d in ((dx, dy) if abs(tx - p[0]) >= abs(ty - p[1]) else (dy, dx)) if d]
+        went = False
+        for d in order:
+            press((d,), 8)
+            press((), 10)
+            if pos()[me] != p:
+                went, steps = True, steps + 1
+                break
+        if not went:                               # blocked or out of movement range
+            break
+    for _ in range(4):                             # never end on a tile another force unit holds
+        now = pos()
+        if now[me] not in [v for k, v in now.items() if k != me]:
+            break
+        p = now[me]
+        for d in ('LEFT', 'UP', 'DOWN', 'RIGHT'):
+            press((d,), 8)
+            press((), 10)
+            q = pos()
+            if q[me] != p and q[me] not in [v for k, v in q.items() if k != me]:
+                break
+    adjacent = dist(pos()[me]) <= 1
+    press(('C',), 6)
+    press((), 30)                                  # command ring, cursor on Hold
+    if adjacent:
+        press((RING['attack'],), 6)
+        press((), 14)
+        press(('C',), 6)
+        press((), 30)                              # target choice, nearest enemy highlighted
+        press(('C',), 6)
+        press((), 40)
+        pol.attacks += 1
+    else:
+        press((RING['hold'],), 6)
+        press((), 14)
+        press(('C',), 6)
+        press((), 30)
+    return tap(('C',), gap=40) * 4
 
 
 def reload_menu(side, profile, limit):
