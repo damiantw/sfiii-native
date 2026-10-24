@@ -26,6 +26,7 @@
 !/docs/POSIX.md
 !/docs/linux-bringup.md
 !/docs/testing-plan.md
+!/docs/translation-patcher.md
 !/native/
 !/profiles/
 /profiles/*
@@ -66,6 +67,7 @@
 !/tools/runtime-diagnostics.patch
 !/tools/windows.cmake
 !/tools/tests/
+!/tools/sf3patch/
 __pycache__/
 *.pyc
 *.bin
