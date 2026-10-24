@@ -13,6 +13,16 @@ PREV_MAP = 0x21    # u8 map the party came from
 
 PAYLOAD_SIZE = {1: 12904, 2: 16248, 3: 24344}
 
+# Battle unit tables (Sc1 USA, round 9 RAM diffs on Battle 1, record 02): two arrays of 60 records,
+# stride 0xB0, enemies first, then the force (record 0 is the leader; name at +0).
+# Fields: u8 x at +0x7C, u8 y at +0x7E (pad RIGHT = x+1, UP = y+1; live while a unit moves),
+# u8 flags at +0x80 (0x80 force, 0x40 on the field), u16 HP at +0x82, u16 max HP at +0x10 (force).
+UNIT_STRIDE = 0xB0
+UNIT_COUNT = 60
+UNIT_X, UNIT_Y, UNIT_FLAGS, UNIT_HP = 0x7C, 0x7E, 0x80, 0x82
+UNIT_ON_FIELD = 0x40
+BATTLE_UNITS = {'scenario1-usa-v25_1': dict(enemies=0x0602F6F0, force=0x06032030)}
+
 # Map ids a map sweep must not edit into a save: checked on Beetle Saturn with a real BIOS (the game
 # never draws again after the load), so a failure there says nothing about the port.
 # Sc3 ids from 0xA5 up that fail in the sweep and show only black or 'CD READ ERROR' on Beetle
@@ -59,7 +69,19 @@ def lookup(profile):
         raise KeyError(f'no SF3 memory map for profile {profile}')
     scenario, base, tick = PROFILES[profile]
     return dict(profile=profile, scenario=scenario, state_base=base, tick=tick,
-                map_id=base + MAP_ID, battle_id=base + BATTLE_ID, prev_map=base + PREV_MAP)
+                map_id=base + MAP_ID, battle_id=base + BATTLE_ID, prev_map=base + PREV_MAP,
+                units=BATTLE_UNITS.get(profile))
+
+
+def read_units(read, table):
+    """[(slot, x, y, flags, hp)] for the on-field records of a unit table; `read(addr, n)`."""
+    raw = read(table, UNIT_STRIDE * UNIT_COUNT)
+    out = []
+    for k in range(UNIT_COUNT):
+        e = raw[k * UNIT_STRIDE:(k + 1) * UNIT_STRIDE]
+        if e[UNIT_FLAGS] & UNIT_ON_FIELD:
+            out.append((k, e[UNIT_X], e[UNIT_Y], e[UNIT_FLAGS], int.from_bytes(e[UNIT_HP:UNIT_HP + 2], 'big')))
+    return out
 
 
 def fix_checksum(payload):
