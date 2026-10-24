@@ -214,3 +214,13 @@ No crash, FATAL, unresolved call, hang, black or frozen run. The VDP2 features t
 - **Beetle Saturn with a real BIOS** (`--bios DIR`, a directory of your own BIOS dumps under Mednafen's names; they are linked into the run's directory, never copied into the repository). Build the core from libretro/beetle-saturn-libretro and pass it as `--core`. This is the battle-accurate reference; Yabause/HLE remains usable for boot, menus and towns.
 - **Sc1 battle 1 vs Beetle at no-input alignment.** Camera and units match. The remaining work-RAM differences are not port bugs: 0x06064000-0x06067FFF is the title screen's animation table, last written by X009 before START and never touched again, so its contents depend on the frame START is pressed on (moving START by 10 VBlanks changes it; of the 22 words battle code writes in 0x06063000-0x06067FFF, all match except a per-frame counter at 0x060633A8); 0x0609C000 is a pre-load buffer Beetle refills later than ours and partly leaves stale; 0x060B0000 is a 16-bit image rebuilt every few frames (same colours, different animation phase). The floor's per-pixel differences come from VDP1 texture stepping: the runtime's own rasterizer, not RAM.
 - **Map sweep, 0x61** read 0x003030EC: work RAM low appears twice, at 0x00200000 and 0x00300000, and the runtime mapped only the first. Fixed in `tools/runtime-diagnostics.patch`; map 0x61 now plays.
+
+### Scenario 3 map sweep: crashes at 0x6B/0x74/0x75/0x76 and 0x4D (round 6)
+
+- 0x6B, 0x74, 0x75 and 0x76 load and play on Beetle Saturn with a real BIOS (valid maps). In the port they died
+  with a 2-byte read of 001FFEAA: X003 (function 06038970) indexes a WRAM-L table at 0x00200030 with
+  (id - 32) * 26 for an id of 0x11, landing 390 bytes below WRAM-L. That address is in the backup-RAM area,
+  which repeats every 64 KiB from 0x00180000 to 0x001FFFFF; the runtime only mapped the first 64 KiB.
+  Fixed by mirroring backup RAM over the whole area; all four maps now run 8000 VBlanks ok.
+- 0x4D: black screen after the load on Beetle, then map id 0, so it is not a map the game can enter; the
+  port's crash (4-byte write to 00FF00FF after a jump to 0) is not a port bug. Marked invalid.

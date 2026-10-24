@@ -15,7 +15,8 @@ PAYLOAD_SIZE = {1: 12904, 2: 16248, 3: 24344}
 
 # Map ids a map sweep must not edit into a save: checked on Beetle Saturn with a real BIOS (the game
 # never draws again after the load), so a failure there says nothing about the port.
-INVALID_MAPS = {1: {0x70: 'black after the load on Beetle with a real BIOS'}}
+INVALID_MAPS = {1: {0x70: 'black after the load on Beetle with a real BIOS'},
+                3: {0x4D: 'black after the load on Beetle with a real BIOS, then map id 0'}}
 
 PROFILES = {
     # profile id: (scenario, state_base, tick)  tick: u32 the game adds one to each frame it runs
