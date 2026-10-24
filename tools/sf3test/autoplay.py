@@ -222,9 +222,12 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
                 if log:
                     log(f'autoplay {done}: battle outcome {oc}')
                 last_outcome = oc
-        if b and mm.get('units') and same < STUCK_CHECKS:
+        # after a won battle the map stays a battle map (battle id set) with free walking
+        # (Sc1 Central Saraband after Battle 1): the walker takes over once no enemy is alive
+        free = walker and (not b or (mm.get('units') and last_outcome == 'won'))
+        if b and mm.get('units') and same < STUCK_CHECKS and not free:
             phrase = aimed_turn(side, mm['units'], pol, press)
-        elif walker and not b:
+        elif free:
             # a square spiral out from where the town starts: legs of 1, 1, 2, 2, 3, 3 ... x
             # WALK_HOLD frames turning clockwise, starting again (with a random first heading)
             # after WALK_LEGS legs or on a map change; examine and talk at the end of each leg (C,
