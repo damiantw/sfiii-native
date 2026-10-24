@@ -42,6 +42,7 @@ class Policy:
     def __init__(self, seed):
         self.rng = random.Random(seed)
         self.heading = self.rng.choice(DIRS)
+        self.idle = 0
 
     def town(self):
         r = self.rng.random()
@@ -85,6 +86,33 @@ class Policy:
             out += tap(('B',)) + tap(('B',)) + tap(('C',), gap=20) + tap(('DOWN',)) + tap(('C',), gap=30)
         return out
 
+    def aim(self, force, enemies, active):
+        """Battle turn aimed at the nearest live enemy: walk the active unit (a force slot, found by
+        which record moved after a probe tap) toward it, attack when next to it, else stay."""
+        me = next(((x, y) for k, x, y, f, hp in force if k == active), None)
+        live = [(x, y) for k, x, y, f, hp in enemies if hp > 0]
+        if me is None or not live:
+            return tap(('C',), gap=30) * 3
+        tx, ty = min(live, key=lambda e: abs(e[0] - me[0]) + abs(e[1] - me[1]))
+        x, y = me
+        out = []
+        for _ in range(8):                             # greedy steps, stop next to the target
+            if abs(tx - x) + abs(ty - y) <= 1:
+                break
+            if abs(tx - x) >= abs(ty - y):
+                d, x = ('RIGHT', x + 1) if tx > x else ('LEFT', x - 1)
+            else:
+                d, y = ('UP', y + 1) if ty > y else ('DOWN', y - 1)
+            out += tap((d,), hold=8, gap=10)
+        out += tap(('C',), gap=24)                     # command menu
+        if abs(tx - x) + abs(ty - y) <= 1:
+            out += tap(('UP',), gap=12) + tap(('C',), gap=24) + tap(('C',), gap=40)   # attack, target
+        else:
+            out += tap(('DOWN',), gap=12) + tap(('C',), gap=30)                       # stay
+        for _ in range(5):                             # animation, messages, enemy turns
+            out += tap(('C',), gap=40)
+        return out
+
     def stuck(self):
         self.heading = self.rng.choice([d for d in DIRS if d != self.heading])
         return (tap(('B',), gap=16) * 2 + tap(('START',), gap=30) + tap(('B',), gap=16)
@@ -115,11 +143,32 @@ def play(side, profile, frames, seed, log=None, reload=None):
         b = side.read(mm['battle_id'], 1)[0]
         return m, b
 
+    def press(buttons, n):
+        nonlocal held, done, same, last_key
+        if done >= frames:
+            return
+        if buttons != held:
+            side.pad(buttons)
+            presses.append((done, '+'.join(sorted(buttons))))
+            held = buttons
+        for _ in range(n):
+            side.step()
+            done += 1
+            if done % SAMPLE == 0:
+                k = frame_key(side.frame())
+                same = same + 1 if k == last_key else 0
+                last_key = k
+            if done >= frames:
+                break
+
     want = memory_map.PAYLOAD_SIZE[mm['scenario']] - 8
     size_ok = side.read(mm['state_base'], 4) == want.to_bytes(4, 'big')
     while done < frames:
         t = int.from_bytes(side.read(mm['tick'], 4), 'big')
-        lost = size_ok and side.read(mm['state_base'], 4) != want.to_bytes(4, 'big')
+        # the size word alone is not enough: a battle reuses the block's head (Sc1 Battle 1 lost
+        # it 90 frames in while still playing), so the title also needs map and battle id 0
+        lost = (size_ok and side.read(mm['state_base'], 4) != want.to_bytes(4, 'big')
+                and side.read(mm['map_id'], 1)[0] == 0 and side.read(mm['battle_id'], 1)[0] == 0)
         if lost or (last_tick is not None and t + 100 < last_tick):
             resets.append(done)
             events.append((done, -1, -1))
@@ -142,30 +191,44 @@ def play(side, profile, frames, seed, log=None, reload=None):
             if prev and b and prev[1] != b:
                 turn = 0
             prev = (m, b)
-        phrase = pol.next_phrase(dict(map=m, battle=b, stuck=same >= STUCK_CHECKS, turn=turn))
+        if b and mm.get('units') and same < STUCK_CHECKS:
+            phrase = aimed_turn(side, mm['units'], pol, press)
+        else:
+            phrase = pol.next_phrase(dict(map=m, battle=b, stuck=same >= STUCK_CHECKS, turn=turn))
         if same >= STUCK_CHECKS:
             same = 0
         if b:
             turn += 1
         for buttons, n in phrase:
-            if buttons != held:
-                side.pad(buttons)
-                presses.append((done, '+'.join(sorted(buttons))))
-                held = buttons
-            for _ in range(n):
-                side.step()
-                done += 1
-                if done % SAMPLE == 0:
-                    k = frame_key(side.frame())
-                    same = same + 1 if k == last_key else 0
-                    last_key = k
-                if done >= frames:
-                    break
+            press(buttons, n)
             if done >= frames:
                 break
     script = script_text(presses)
     return dict(presses=presses, events=events, resets=resets, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
                 script=script)
+
+
+def aimed_turn(side, units, pol, press):
+    """Probe which force unit is under control (tap toward the enemies, see whose x/y moved), then
+    return the aimed phrase. The probe taps are pressed here and are part of the run's input."""
+    rd = side.read
+    force = memory_map.read_units(rd, units['force'])
+    enemies = memory_map.read_units(rd, units['enemies'])
+    live = [e for e in enemies if e[4] > 0]
+    if not live:
+        return tap(('C',), gap=30) * 4
+    cx = sum(e[1] for e in live) / len(live)
+    d = 'LEFT' if force and cx < force[0][1] else 'RIGHT'
+    press((d,), 8)
+    press((), 10)
+    after = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rd, units['force'])}
+    moved = [k for k, x, y, f, hp in force if after.get(k) != (x, y)]
+    if not moved:                                  # a message (C) or a menu left open (B), in turn
+        pol.idle += 1
+        return tap(('B',), gap=16) * 2 if pol.idle % 2 else tap(('C',), gap=30)
+    pol.idle = 0
+    force = [(k, *after[k], f, hp) for k, x, y, f, hp in force]
+    return pol.aim(force, enemies, moved[0])
 
 
 def reload_menu(side, profile, limit):

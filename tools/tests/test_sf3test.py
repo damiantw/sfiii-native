@@ -183,6 +183,24 @@ class InvalidMaps(unittest.TestCase):
                 self.assertTrue(0 <= m <= 0xFF and why)
 
 
+class BattleUnits(unittest.TestCase):
+    def test_read_units_and_aim(self):
+        mm = memory_map
+        raw = bytearray(mm.UNIT_STRIDE * mm.UNIT_COUNT)       # invented records, no game bytes
+        for k, (x, y, f, hp) in {0: (10, 5, 0xC0, 12), 3: (2, 5, 0x40, 0), 7: (1, 1, 0x00, 9)}.items():
+            e = k * mm.UNIT_STRIDE
+            raw[e + mm.UNIT_X], raw[e + mm.UNIT_Y], raw[e + mm.UNIT_FLAGS] = x, y, f
+            raw[e + mm.UNIT_HP:e + mm.UNIT_HP + 2] = hp.to_bytes(2, 'big')
+        units = mm.read_units(lambda a, n: bytes(raw[:n]), 0)
+        self.assertEqual(units, [(0, 10, 5, 0xC0, 12), (3, 2, 5, 0x40, 0)])
+        pol = autoplay.Policy(1)
+        out = pol.aim([(0, 10, 5, 0xC0, 12)], [(1, 7, 5, 0x40, 5), (2, 9, 9, 0x40, 0)], 0)
+        moves = [b for b, n in out if b in (('LEFT',), ('RIGHT',), ('UP',), ('DOWN',))]
+        self.assertEqual(moves[:2], [('LEFT',), ('LEFT',)])   # two steps, then next to the live one
+        self.assertEqual(moves[2], ('UP',))                    # Attack in the command menu
+        self.assertEqual(mm.lookup('scenario1-usa-v25_1')['units']['force'], 0x06032030)
+
+
 class FakeSide:
     """An invented game: the battle id at the state block switches on after `battle_at` frames,
     the picture changes only while a button is held."""
