@@ -272,6 +272,7 @@ class BattleTurns(unittest.TestCase):
         raw = bytearray(mm.UNIT_STRIDE * mm.UNIT_COUNT)
         raw[0:4], raw[mm.UNIT_STRIDE:mm.UNIT_STRIDE + 3] = b'Hero', bytes([0xB8, 0xDE, 0xD7])
         raw[0x98:0x9A] = b'\x03\x01'                              # on the field, flags 0
+        raw[mm.UNIT_MAX_HP + 1] = 20
         raw[mm.UNIT_STRIDE + mm.UNIT_FLAGS] = 0xE0                # stale flags, benched
         units = dict(force=0, enemies=0x1000, live=0x98)
         rd = lambda a, n: bytes(raw[:n]) if a == 0 else bytes(n)
@@ -335,6 +336,12 @@ class Autoplay(unittest.TestCase):
         after = [b for f, b in r['presses'] if f > r['events'][1][0]]
         self.assertIn('C', after)
         self.assertTrue(set(after) & set(autoplay.DIRS))
+
+    def test_town_walker_spirals_and_talks(self):
+        r = autoplay.play(FakeSide(self.P), self.P, 3000, 2, walker=True)
+        pressed = {b for f, b in r['presses']}
+        self.assertTrue(set(autoplay.DIRS) <= pressed and {'A', 'C'} <= pressed)
+        self.assertGreater(r['legs'], 4)
 
     def test_back_at_title_reloads(self):
         def reload(side):
