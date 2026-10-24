@@ -13,10 +13,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.sf3patch import cdimage, edcecc, ipbin, output, package, patcher, selection
+from tools.sf3patch import cli as sf3cli
 from tools.sf3patch.cli import content_sha256, main as cli_main, matching_profiles
 
 try:
@@ -307,11 +309,38 @@ class Build(unittest.TestCase):
             self.assertTrue(out.with_suffix(".cue").exists())
             self.assertEqual(cli_main(["compare", str(out.with_suffix(".cue")), str(out.with_suffix(".cue"))]), 0)
             self.assertEqual(cli_main(["list", str(self.cue), "--package", str(self.pkg_root)]), 0)
-            rc = cli_main(["patch", str(self.cue), "--package", str(self.pkg_root), "-o",
-                           str(Path(__file__).resolve().parent / "nope.bin"), "--any-disc"])
-        self.assertEqual(rc, 2)   # refuses to write inside the checkout
         self.assertIn("[x] general       1  Translation", log.getvalue())
-        self.assertFalse((Path(__file__).resolve().parent / "nope.bin").exists())
+
+    def _refuse(self, target):
+        log = io.StringIO()
+        with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+            rc = cli_main(["patch", str(self.cue), "--package", str(self.pkg_root), "-o", str(target),
+                           "--any-disc"])
+        self.assertEqual(rc, 2, log.getvalue())
+        self.assertIn("refusing to write a disc image inside the sfiii-native checkout", log.getvalue())
+        self.assertFalse(target.exists())
+        self.assertFalse(target.with_suffix(".cue").exists())
+
+    def test_cli_refuses_checkout_output(self):
+        # The guard keeps game data out of a git checkout. Exercise it against an
+        # invented checkout so it is tested wherever the suite runs, including the
+        # packaged application payload, which has no .git and must not be written to.
+        fake = self.base / "fake-checkout"
+        (fake / ".git").mkdir(parents=True)
+        with mock.patch.object(sf3cli, "REPO", fake.resolve()):
+            self._refuse(fake / "tools" / "tests" / "nope.bin")
+            self.assertFalse((fake / "tools").exists())
+            (fake / ".git").rmdir()
+            (fake / ".git").write_text("gitdir: elsewhere\n")   # a worktree's .git is a file
+            self.assertTrue(sf3cli._inside_repo(fake / "x.bin"))
+            (fake / ".git").unlink()
+            self.assertFalse(sf3cli._inside_repo(fake / "x.bin"))   # not a checkout: no refusal
+            self.assertFalse(sf3cli._inside_repo(self.base / "elsewhere.bin"))
+
+    def test_cli_refuses_real_checkout(self):
+        if not (sf3cli.REPO / ".git").exists():
+            self.skipTest("not running from a git checkout (e.g. the packaged application payload)")
+        self._refuse(Path(__file__).resolve().parent / "nope.bin")
 
 
 if __name__ == "__main__":
