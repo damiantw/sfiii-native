@@ -13,6 +13,10 @@ PREV_MAP = 0x21    # u8 map the party came from
 
 PAYLOAD_SIZE = {1: 12904, 2: 16248, 3: 24344}
 
+# Map ids a map sweep must not edit into a save: checked on Beetle Saturn with a real BIOS (the game
+# never draws again after the load), so a failure there says nothing about the port.
+INVALID_MAPS = {1: {0x70: 'black after the load on Beetle with a real BIOS'}}
+
 PROFILES = {
     # profile id: (scenario, state_base, tick)  tick: u32 the game adds one to each frame it runs
     'scenario1-usa-v25_1': (1, 0x06090FE0, 0x0601FC68),

@@ -173,3 +173,11 @@ class FatalLines(unittest.TestCase):
         log = 'FATAL: unresolved jump\n[  55.780 FATAL] returned to 06000010, expected 06000020\n'
         self.assertEqual([m.group(1).strip() for m in sweep.FATAL.finditer(log)],
                          ['unresolved jump', 'returned to 06000010, expected 06000020'])
+
+
+class InvalidMaps(unittest.TestCase):
+    def test_entries_are_map_ids_with_a_reason(self):
+        for sc, maps in memory_map.INVALID_MAPS.items():
+            self.assertIn(sc, memory_map.PAYLOAD_SIZE)
+            for m, why in maps.items():
+                self.assertTrue(0 <= m <= 0xFF and why)
