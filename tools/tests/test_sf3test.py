@@ -6,7 +6,7 @@ import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from sf3test import diff, frames, memory_map, saves, sweep  # noqa: E402
+from sf3test import autoplay, diff, frames, memory_map, saves, sweep  # noqa: E402
 
 
 def sf3_payload(n, fill=7):
@@ -181,3 +181,65 @@ class InvalidMaps(unittest.TestCase):
             self.assertIn(sc, memory_map.PAYLOAD_SIZE)
             for m, why in maps.items():
                 self.assertTrue(0 <= m <= 0xFF and why)
+
+
+class FakeSide:
+    """An invented game: the battle id at the state block switches on after `battle_at` frames,
+    the picture changes only while a button is held."""
+
+    def __init__(self, profile, battle_at=None):
+        self.mm = memory_map.lookup(profile)
+        self.frames, self.held, self.battle_at, self.pads = 0, (), battle_at, []
+
+    def step(self):
+        self.frames += 1
+
+    def pad(self, buttons):
+        self.held = tuple(buttons)
+        self.pads.append((self.frames, self.held))
+
+    def read(self, addr, n):
+        if addr == self.mm['battle_id']:
+            return bytes([0x81 if self.battle_at is not None and self.frames >= self.battle_at else 0])
+        if addr == self.mm['map_id']:
+            return bytes([0x36])
+        return bytes(n)
+
+    def frame(self):
+        class F:
+            rgb = bytes([self.frames % 251 if self.held else 0]) * 64
+        return F()
+
+
+class Autoplay(unittest.TestCase):
+    P = 'scenario3-v25_1-redump'
+
+    def test_same_seed_same_script(self):
+        a = autoplay.play(FakeSide(self.P), self.P, 3000, 5)
+        b = autoplay.play(FakeSide(self.P), self.P, 3000, 5)
+        c = autoplay.play(FakeSide(self.P), self.P, 3000, 6)
+        self.assertEqual(a['sha1'], b['sha1'])
+        self.assertNotEqual(a['sha1'], c['sha1'])
+        self.assertTrue(a['script'].startswith('0:'))
+
+    def test_battle_state_changes_policy_and_is_logged(self):
+        side = FakeSide(self.P, battle_at=600)
+        r = autoplay.play(side, self.P, 3000, 1)
+        self.assertEqual([e[2] for e in r['events']][:2], [0, 0x81])
+        after = [b for f, b in r['presses'] if f > r['events'][1][0]]
+        self.assertIn('C', after)
+        self.assertTrue(set(after) & set(autoplay.DIRS))
+
+    def test_stuck_picture_escapes(self):
+        pol = autoplay.Policy(3)
+        h = pol.heading
+        phrase = pol.next_phrase(dict(map=1, battle=0, stuck=True))
+        self.assertIn(('B',), [b for b, n in phrase])
+        self.assertNotEqual(pol.heading, h)
+
+    def test_script_and_replay(self):
+        presses = [(0, 'UP'), (10, ''), (20, 'A+C')]
+        self.assertEqual(autoplay.script_text(presses, 100), '100:UP,110:,120:A+C')
+        side = FakeSide(self.P)
+        autoplay.replay(side, presses, 30)
+        self.assertEqual(side.pads, [(0, ('UP',)), (10, ()), (20, ('A', 'C'))])
