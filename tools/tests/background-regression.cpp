@@ -178,6 +178,17 @@ TEST(extended_colour_calculation_averages_the_second_and_third_images) {
     reg16(0xEC, 0x0401);                   // not when NBG1's own colour calculation is off
     vdp2_compose(f);
     CHECK_EQ(f.px[0], 0x7C7C00u);
+    reg16(0x0E, 0x1000);                   // colour RAM mode 1: the back screen is RGB, so still averaged
+    reg16(0xEC, 0x0403);
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x7C3E3Eu);
+    reg16(0x20, 0x0407); reg16(0xFA, 0x0001); // NBG2 third, its transparent dots drawn (colour RAM 0)
+    reg16(0xEC, 0x0403);
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x7C7C00u);          // a colour RAM dot third: not averaged in modes 1 and 2
+    reg16(0x0E, 0x0000);
+    vdp2_compose(f);
+    CHECK_EQ(f.px[0], 0x7C3E00u);          // mode 0 averages it
 }
 
 TEST(vdp1_corner_coverage_does_not_count_one_end_code_twice) {
