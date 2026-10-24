@@ -91,7 +91,11 @@ def lookup(profile):
 
 def on_field(rec, live=None):
     """Sc1: flag 0x40. With `live` (Sc2/Sc3): the bytes at live and live+1 both non-zero."""
-    return bool(rec[live] and rec[live + 1]) if live else bool(rec[UNIT_FLAGS] & UNIT_ON_FIELD)
+    # Sc2: the enemy table also holds max-HP-1, MOV-0 placeholder records (map objects?) that stay
+    # 'live' all battle; they are not units
+    if live:
+        return bool(rec[live] and rec[live + 1]) and int.from_bytes(rec[UNIT_MAX_HP:UNIT_MAX_HP + 2], 'big') > 1
+    return bool(rec[UNIT_FLAGS] & UNIT_ON_FIELD)
 
 
 def read_units(read, table, live=None):

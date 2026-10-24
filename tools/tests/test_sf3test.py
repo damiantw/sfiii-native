@@ -272,6 +272,7 @@ class BattleTurns(unittest.TestCase):
         raw = bytearray(mm.UNIT_STRIDE * mm.UNIT_COUNT)
         raw[0:4], raw[mm.UNIT_STRIDE:mm.UNIT_STRIDE + 3] = b'Hero', bytes([0xB8, 0xDE, 0xD7])
         raw[0x98:0x9A] = b'\x03\x01'                              # on the field, flags 0
+        raw[mm.UNIT_MAX_HP + 1] = 20
         raw[mm.UNIT_STRIDE + mm.UNIT_FLAGS] = 0xE0                # stale flags, benched
         units = dict(force=0, enemies=0x1000, live=0x98)
         rd = lambda a, n: bytes(raw[:n]) if a == 0 else bytes(n)
