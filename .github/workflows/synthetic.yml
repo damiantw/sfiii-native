@@ -35,6 +35,11 @@ jobs:
         run: |
           python -B tools/check-source-package.py --tracked --out "$RUNNER_TEMP/source-check.json"
           python -X utf8 -B -m unittest discover -s tools/tests -p 'test_*.py'
+      - name: Translation patcher (synthetic discs, pure-Python EDC/ECC)
+        shell: bash
+        run: |
+          python -B -m tools.sf3patch --version
+          python -X utf8 -B -c "import sys; sys.modules['numpy'] = None; import unittest; r = unittest.main(module=None, argv=['t', 'discover', '-s', 'tools/tests', '-p', 'test_sf3patch_*.py', '-v'], exit=False).result; sys.exit(not r.wasSuccessful())"
       - name: Build required runtime regressions
         shell: bash
         run: |

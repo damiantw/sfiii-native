@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.sf3patch import conflicts, dfr, dotnet, edcecc, ipbin, isobuild, netjson, output, package, selection
+from tools.sf3patch import conflicts, dfr, dotnet, edcecc, identify, ipbin, isobuild, netjson, output, package, selection
 
 
 class NetJson(unittest.TestCase):
@@ -314,6 +314,54 @@ class Selection(unittest.TestCase):
         _, notes = selection.layer([], [mri])
         self.assertFalse(mri.enabled)
         self.assertTrue(any(n.startswith("unticked") for n in notes))
+
+
+class _Track:
+    def __init__(self, sha1, size, sector_size=2352):
+        self.sector_size, self._h = sector_size, (sha1, size)
+
+    def hash_sha1(self):
+        return self._h
+
+
+class _FakeDisc:
+    def __init__(self, product, version, track1, track2=identify.STD_AUDIO):
+        raw = bytearray(b" " * 0x100) + bytearray(0x1700)
+        raw[0:16] = b"SEGA SEGASATURN "
+        raw[0x20:0x2A] = product.ljust(10).encode()
+        raw[0x2A:0x30] = version.ljust(6).encode()
+        self.ip_raw = bytes(raw)
+        self.data = _Track(*track1)
+        self._audio = [_Track(*track2)] if track2 else []
+
+    def audio_tracks(self):
+        return self._audio
+
+
+class Identify(unittest.TestCase):
+    def test_every_known_dump(self):
+        for k in identify.KNOWN:
+            r = identify.identify(_FakeDisc(k.serial, k.version, k.track1, k.track2))
+            self.assertTrue(r.verified, (k.key, r.warnings))
+            self.assertEqual((r.serial, r.version, r.known.key), (k.serial, k.version, k.key))
+
+    def test_revisions_are_told_apart(self):
+        keys = {(k.serial, k.version): k.key for k in identify.KNOWN}
+        self.assertEqual(keys[("GS-9188", "V1.003")], "sc2-1.003")
+        self.assertEqual(keys[("GS-9188", "V2.000")], "sc2-2.000")
+        self.assertIn(("6106979", "V1.000"), keys)
+        self.assertEqual(len({k.track1[0] for k in identify.KNOWN}), len(identify.KNOWN))
+
+    def test_mismatches_warn(self):
+        sc2 = next(k for k in identify.KNOWN if k.key == "sc2-1.003")
+        r = identify.identify(_FakeDisc("GS-9188", "V2.000", sc2.track1))
+        self.assertFalse(r.verified)
+        self.assertTrue(any("IP.BIN says" in w for w in r.warnings))
+        r = identify.identify(_FakeDisc("GS-9188", "V1.003", ("0" * 40, 1)))
+        self.assertIsNone(r.known)
+        self.assertEqual((r.serial, r.version), ("GS-9188", "V1.003"))   # IP.BIN fallback
+        r = identify.identify(_FakeDisc("GS-9188", "V1.003", sc2.track1, ("1" * 40, 5)))
+        self.assertTrue(any("audio" in w for w in r.warnings))
 
 
 if __name__ == "__main__":

@@ -280,3 +280,18 @@ through dialogs. It is therefore **not headless** under Wine. Running it needs `
 .NET desktop runtime, the image mounted as a Wine CD drive (e.g. via `winecfg` and a loop-mounted
 ISO), and a virtual display such as `xvfb-run` with someone or a script (`xdotool`) clicking through
 the dialogs. This is planned as a one-off manual check per disc, not as CI.
+
+### Comparison checklist
+
+1. Start from a Redump dump. `sf3patch identify x.cue` must say it is verified.
+2. Wizard side: mount the data track as a CD drive in Wine. Run the wizard with
+   `TZ=UTC xvfb-run wine SF3Patch.exe`, or on a desktop. Leave the default ticks and save
+   `wizard.bin/.cue` outside the checkout. Note the time the patch ran.
+3. Our side: run `sf3patch patch x.cue --package SF3Patch.exe -o ours.bin --host-utc-offset +00:00 --now <that time>`.
+4. Run `sf3patch compare ours.cue wizard.cue`. Any difference other than times is a bug in
+   sf3patch. Then run `--times` to check our time rules.
+5. Check that `content_sha256` matches. For Scenario 3 it should match the checked-in profile.
+6. Repeat for each disc and revision: MK-81383 V1.001, GS-9188 V1.003 and V2.000, GS-9203 V1.001,
+   6106979 V1.000, and JP Sc1 if available. Then repeat once with a few `--enable`/`--disable`
+   changes.
+
