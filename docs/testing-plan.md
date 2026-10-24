@@ -130,13 +130,61 @@ At every layer-1 checkpoint:
 
 ## Final acceptance replays
 
-_Placeholder: to be filled in with the full-game replay sources per profile._
+### Sources (researched 2026-10-24)
 
-| Profile | Replay source (route/input file, origin, licence) | Initial backup / clock | Checkpoints manifest | Status |
+No full-game Shining Force III TAS, movie or input file exists publicly. TASVideos has no SF3 entry, and [speedrun.com](https://www.speedrun.com/shining_force_3s1) has only Scenario 1 videos, with no input logs. We therefore **record our own segmented replays**.
+
+**Recording tool:** BizHawk 2.10+ with the Saturnus core (Mednafen 1.32.1).
+- Its `.bk2` input log is a per-frame text log ([BK2 format](https://tasvideos.org/Bizhawk/BK2Format)), trivially convertible to our `--input` syntax and to `reference.play_synced` presses.
+- Pin, in each segment's manifest, the disc `content_sha256`, the BizHawk version and the core SyncSettings (region, BIOS, cart, RTC).
+
+**Segmentation:**
+- one segment per chapter, and per battle where useful
+- each segment starts from a known save, so a broken segment is re-recorded in isolation
+
+**Anchor saves.** Link to these; **do not vendor** them in this repository.
+
+- Translation Project FTP, [Game Saves / Emulator Saves](https://sf3transftp.shiningforcecentral.com/Game%20Saves/Emulator%20Saves/):
+  - complete-game saves for Sc1-3 in many emulator formats, including Mednafen `.bkr`
+  - chapter saves (Sc1 ×3, Sc2 ×6, Sc3 ×7) with time and location notes
+  - real-hardware Sc2 saves under [Game Saves / Hardware Saves](https://sf3transftp.shiningforcecentral.com/Game%20Saves/Hardware%20Saves/)
+- bucanero's [saturn-save-tools: Shining Force III](https://bucanero.github.io/saturn-save-tools/shining-force-3/): pre- and post-final-battle `.BUP` saves.
+- Save editor: [game-tools-collection SF3 save editor](https://game-tools-collection.com/shining-force-3/save-editor), for crafting targeted states, e.g. a party for a battle-sweep start.
+- Format facts:
+  - saves are `SFORCE31_NN` / `SFORCE32_NN` / `SFORCE33_NN` entries in Saturn backup RAM, with a simple-sum checksum
+  - `import-saturn-save.py` already brings BIN/YSBAK into `experimental-backup.bin`
+  - Mednafen `.bkr` and `.BUP` need converters (to be written, data-free)
+
+### Harness
+
+- **Event-driven, not frame-exact, for long segments.** CD timing, lag frames and RNG drift mean a frame-exact input log from Saturnus will not stay aligned with our runtime over a chapter. The runner advances to RAM *conditions* from the Step 0 memory map, then replays the next input block. Example conditions:
+  - "waiting for input"
+  - "battle N started"
+  - "battle N won"
+  - "save written"
+
+  This is layer 1 with conditions instead of VBlank numbers, plus `--progress` for scene changes.
+- **Frame-exact lockstep only for short segments.** For in-battle segments started from a save, use layer 2: frame-exact input with RAM diffs against Mednafen/Beetle at every tick. Precedents: [zelda3](https://github.com/snesrev/zelda3)'s lockstep RAM comparison against the original, and sm64-port's `controller_recorded_tas.c` playback.
+- **RNG:** SF3's RNG source is unknown. Find it in the recompiled code: look for the LCG/seed update, and whether it is fed by frame counts, input or the RTC. That determines whether event-driven replays stay deterministic through battles, or whether the runner must pin the seed with `--write` at segment start.
+
+### Pass condition per scenario
+
+1. Reach the ending and write the complete-game save (`_02`).
+2. Byte-compare that save, excluding names and timestamps, with the emulator's save produced from the same replay.
+3. Import it into the next scenario (Sc1 → Sc2 → Sc3) and pass that scenario's opening transfer checkpoint (layer 6).
+
+### Caveats
+
+- Separate recordings are needed per revision (Sc2 V1.003 vs V2.000), per Translation Project patch level, and for NTSC vs PAL.
+- The Premium Disc has no saves to anchor on. Use a boot-and-browse script that walks every menu and viewer, instead of a playthrough.
+
+### Per-profile status
+
+| Profile | Replay source | Anchor saves | Checkpoints manifest | Status |
 |---|---|---|---|---|
-| Sc1 USA V1.001 (unpatched) | TBD | TBD | TBD | not started |
-| Sc1 + latest Translation Project | TBD | TBD | TBD | not started |
-| Sc2 V1.003 + latest TP | TBD | TBD | TBD | not started |
-| Sc2 V2.000 + latest TP | TBD | TBD | TBD | not started |
-| Sc3 + latest TP (V25.1 + V25+ updates) | TBD | TBD | TBD | not started |
-| Premium Disc | TBD | TBD | TBD | not started |
+| Sc1 USA V1.001 (unpatched) | own BizHawk segments (to record) | TP FTP Sc1 chapter ×3 + complete | TBD | not started |
+| Sc1 + latest Translation Project | own BizHawk segments (to record) | TP FTP Sc1 chapter ×3 + complete | TBD | not started |
+| Sc2 V1.003 + latest TP | own BizHawk segments (to record) | TP FTP Sc2 chapter ×6 + complete; hardware saves | TBD | not started |
+| Sc2 V2.000 + latest TP | own BizHawk segments (to record) | TP FTP Sc2 chapter ×6 + complete; hardware saves | TBD | not started |
+| Sc3 + latest TP (V25.1 + V25+ updates) | own BizHawk segments (to record) | TP FTP Sc3 chapter ×7 + complete; bucanero pre/post final battle | TBD | not started |
+| Premium Disc | boot-and-browse script | none | TBD | not started |
