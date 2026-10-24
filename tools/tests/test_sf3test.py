@@ -103,6 +103,12 @@ class Sweep(unittest.TestCase):
         self.assertEqual(sweep.analyze(stall, prog, shots, 8000)['status'], 'hang')
         same = [(v, dict(sha1='z', black=False)) for v in (6000, 6600, 7200)]
         self.assertEqual(sweep.analyze(ok_log, prog, same, 8000)['status'], 'frozen')
+        # the record's map id already in the block before the load: nothing logged at the load
+        held = [(10, 0x46, 0x70), (5500, 0x09, 0)]
+        r = sweep.analyze(ok_log, held, shots, 8000, expect=(0x46, 0), loaded_after=5000)
+        self.assertEqual((r['status'], r['maps'], r['loaded_at'], r['load_inferred']), ('ok', [0x09, 0x46], 5000, True))
+        r = sweep.analyze(ok_log, [(10, 0x47, 0)], shots, 8000, expect=(0x46, 0), loaded_after=5000)
+        self.assertEqual(r['status'], 'no-load')
 
     def test_coverage_union(self):
         a = 'M1 06000000 10 1\nM1 06000010 5 0\nM2 06001000 7 0\n'

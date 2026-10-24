@@ -84,6 +84,14 @@ def analyze(log, progress, shots, vblanks, expect=None, loaded_after=LOAD_END):
     # the state block holds other data until a save is loaded into it: count from the load on
     loaded_at = next((v for v, m, b in progress if expect is None or (m, b) == tuple(expect)), None)
     after = [(v, m, b) for v, m, b in progress if loaded_at is not None and v >= loaded_at]
+    # --progress logs changes only: when the title left the record's map id in the block before the
+    # load (seen in Sc3), nothing is logged at the load; take the value held after the menus instead
+    inferred = False
+    if loaded_at is None and expect is not None:
+        held = [p for p in progress if p[0] <= loaded_after]
+        if held and held[-1][1] == expect[0]:
+            loaded_at, inferred = loaded_after, True
+            after = [(loaded_after, held[-1][1], held[-1][2])] + [p for p in progress if p[0] > loaded_after]
     maps = sorted({m for v, m, b in after})
     battles = sorted({b for v, m, b in after if b})
     late = [s for v, s in shots if v > loaded_after]
@@ -105,7 +113,7 @@ def analyze(log, progress, shots, vblanks, expect=None, loaded_after=LOAD_END):
         status = 'ok'
     return dict(status=status, vblanks_run=ran, loaded_at=loaded_at, fatal=fatals[:5], unresolved_calls=[list(c) for c in calls],
                 stalls=stalls, maps=maps, battles=battles, black_shots=black, frozen=frozen,
-                unimplemented=not_done)
+                unimplemented=not_done, load_inferred=inferred)
 
 
 def external(path, root):
