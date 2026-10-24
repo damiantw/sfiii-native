@@ -149,6 +149,8 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     pokes = 0
     last_tick = None
     heading, blocked, maps_seen, leg = pol.heading, 0, set(), 0
+    areas, area = [], None
+    idle_over = False
 
     def state():
         m = side.read(mm['map_id'], 1)[0]
@@ -204,13 +206,14 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
                 log(f'autoplay {done}: map {m:02X} battle {b:02X}')
             if prev and b and prev[1] != b:
                 turn = 0
+                idle_over = False
             prev = (m, b)
         if b and mm.get('units') and assist:
             for addr, data in memory_map.assist_writes(side.read, mm['units'],
                                                        enemy_hp=1 if assist == 'party+enemy1' else None):
                 side.write(addr, data)
                 pokes += 1
-        if b and mm.get('units'):
+        if b and mm.get('units') and not idle_over:
             # debounced: the on-field flag clears for a while in attack scenes (round 11), so an
             # outcome counts once it has read the same for OUTCOME_HOLD frames
             raw_oc = battle_outcome(side.read, mm['units'])
@@ -224,7 +227,27 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
                 last_outcome = oc
         # after a won battle the map stays a battle map (battle id set) with free walking
         # (Sc1 Central Saraband after Battle 1): the walker takes over once no enemy is alive
-        free = walker and (not b or (mm.get('units') and last_outcome == 'won'))
+        # area key (round 14): town exits keep the map id (Sc1 church -> square stays 0x2C), but each
+        # town area loads its own overlay at AREA_OVERLAY, so a change in its first bytes marks a door
+        a_key = hashlib.sha1(side.read(AREA_OVERLAY, 64)).hexdigest()[:8]
+        if a_key != area:
+            areas.append((done, a_key))
+            if log and area is not None:
+                log(f'autoplay {done}: area {a_key}')
+            if area is not None:
+                leg = WALK_LEGS                             # new area: start a new spiral
+            area = a_key
+        # round 14 (Sc2 Ch1 :01 on sc2-2.000 58271484): after the enemies die the battle map turns into
+        # free walking ('Nothing found', the INSPECT ring) while two enemy-table records (max HP 15
+        # and 9, never moving) stay live, so 'won' never fires. No force unit moving in the table for
+        # IDLE_OVER aimed turns in a row is logged as outcome 'idle' and hands over to the walker
+        if b and mm.get('units') and pol.idle >= IDLE_OVER and not idle_over and last_outcome != 'won':
+            idle_over = True
+            outcomes.append((done, 'idle'))
+            if log:
+                log(f'autoplay {done}: battle outcome idle (no unit moved for {pol.idle} turns)')
+            last_outcome = 'idle'
+        free = walker and (not b or (mm.get('units') and last_outcome in ('won', 'idle')))
         if b and mm.get('units') and same < STUCK_CHECKS and not free:
             phrase = aimed_turn(side, mm['units'], pol, press)
         elif free:
@@ -239,7 +262,9 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
             leg += 1
             blocked += 1
             heading = CLOCKWISE[(CLOCKWISE.index(heading) + 1) % 4]
-            phrase = tap(('C',), gap=30) + tap(('A',), gap=30) + tap(('C',), gap=30) * 4 + tap(('B',), gap=20)
+            # talk at every third corner only: dialogue (a priest's save menu) ate most of round 13
+            phrase = tap(('C',), gap=30) + tap(('A',), gap=30) + tap(('C',), gap=30) * 4 + tap(('B',), gap=20) \
+                if leg % 3 == 0 else tap(('B',), gap=10)
         else:
             phrase = pol.next_phrase(dict(map=m, battle=b, stuck=same >= STUCK_CHECKS, turn=turn))
         if same >= STUCK_CHECKS:
@@ -251,11 +276,13 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
             if done >= frames:
                 break
     script = script_text(presses)
-    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, casts=pol.casts, pokes=pokes, legs=blocked, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
+    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, casts=pol.casts, pokes=pokes, legs=blocked, areas=areas, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
                 script=script)
 
 
 WALK_HOLD = 24
+IDLE_OVER = 30
+AREA_OVERLAY = 0x0605F000   # Sc1 town overlays (X1*) all load here (coverage.tsv module addresses)
 WALK_LEGS = 24
 CLOCKWISE = ('UP', 'RIGHT', 'DOWN', 'LEFT')
 
