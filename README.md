@@ -2,11 +2,37 @@
 
 An experimental native static recompilation project for **Shining Force III**, with profiles for **Scenario 1 USA MK-81383 V1.001**, **Scenario 2 Translation Project v24** and **Scenario 3 Translation Project v25.1**. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; experimental Linux x64, Apple Silicon and Intel Mac candidates are built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services; static recompilation does not remove the need to model those systems.
 
-**Work in progress.** Scenario 1 USA, Scenario 2 Translation Project v24 and Scenario 3 Translation Project v25.1 are supported experimental profiles. Recorded Windows gameplay routes pass; the complete games, Premium Disc and unregistered revisions remain unvalidated or unsupported.
+## Current status — October 24, 2026
 
-**v0.6.0-preview1 for Windows:** [download the native application and optional local graphics builder](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.6.0-preview1). The optional builder creates AI-enhanced world textures and CHR/CHP character artwork from your own supported discs, with three selectable styles and cached loading. It is an experiment you can leave off; menus and HUD retain original artwork. No generated artwork packs are distributed. See [desktop setup](docs/DESKTOP.md#optional-graphics-builder).
+**The project is playable in tested Windows routes and remains an experimental preview.** The latest published preview is [**v0.6.0-preview1**](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.6.0-preview1). Complete campaigns and hardware-faithful rendering/audio have not been fully validated.
 
-**Linux/macOS:** [v0.5.0-alpha packages remain available](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.5.0-alpha) as the existing baseline. Their synthetic checks do not certify real-disc gameplay. The new graphics builder is a Windows download, and AI gameplay on Linux/macOS remains unvalidated. See [portable setup](docs/POSIX.md).
+| Component | Available now | Validation status |
+| --- | --- | --- |
+| Windows x64 application | [v0.6.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/SFIII-Native-0.6.0-preview1-win64.zip), with automatic local game preparation | Recorded gameplay routes, limited native-state continuations and captured GPU rendering cases tested locally. |
+| Optional graphics builder | [Separate Windows download](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/SFIII-Offline-Graphics-Builder-0.6.0-preview1-Windows-x64.zip), about 22 MB | Automatic setup, all three registered discs and three GPU styles tested with limited samples; in-game artwork validation is focused on Scenario 2. |
+| Linux x64 and macOS Apple Silicon / Intel | [v0.5.0-alpha published packages](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.5.0-alpha) | New v0.6.0 candidates also [passed hosted builds and synthetic validation](https://github.com/mattkuhnQAAI/sfiii-native/actions/runs/40089746225) on all three targets. Real-disc gameplay and AI graphics on these platforms remain unvalidated. |
+
+The v0.6.0 Linux/macOS candidates have not been added to the release downloads; the linked v0.5.0-alpha packages remain the published baseline. Build and synthetic-test success is separate from real-game compatibility. See [portable setup](docs/POSIX.md).
+
+### Registered game editions
+
+| Game | Accepted disc revision | Current gameplay coverage |
+| --- | --- | --- |
+| Scenario 1 | USA MK-81383 V1.001, unpatched | Local title, town, battle and transition routes; full campaign unvalidated. |
+| Scenario 2 | Shining Force III Translation Project v24, registered disc contents | The broadest local gameplay testing: towns, battles, menus, selected item/spell paths and native-state continuations. Other routes and effects remain unvalidated. |
+| Scenario 3 | Shining Force III Translation Project v25.1, registered disc contents | Fresh-game setup, ship dialogue, first-battle screen and priest interior reached in limited Windows routes. Broader battles and campaign transfers remain unvalidated. |
+| Premium Disc / other revisions | No registered profile yet | Planned; currently unsupported. |
+
+Disc verification checks contents, so a matching filename or translation label alone does not establish compatibility. Static module compilation and actual gameplay coverage are tracked separately in [Status and validation](#status-and-validation).
+
+### What the latest preview adds
+
+- **Optional local AI artwork:** generate eligible world textures and CHR/CHP character frames from your own discs, then choose **Off / AnimeVideo v3 / x4plus anime / x4plus general**. Menus and HUD retain original artwork. View the [same-frame screenshot comparisons](#screenshots).
+- **A standalone GPU builder:** generation runs on your own Vulkan GPU, with resumable work and automatic playable-pack assembly. First-run setup downloads verified tools; processing then runs locally without Codex, API keys or paid services. Generated artwork packs are not distributed. See [builder setup](docs/DESKTOP.md#optional-graphics-builder).
+- **Faster pack loading and bounded caches:** startup indexes reduce file scanning, replacement pixels load as needed, and the GPU uploads visible materials. The [measured local result](#status-and-validation) covers artwork initialization rather than total launch time.
+- **Launcher pack controls and simpler resolution choices:** attach optional packs or restore original artwork; the new Windows menu offers **1× / 2× / 5×** rendering. Earlier AA and ray-shadow menu experiments are not offered in this preview.
+
+Current priorities are broader gameplay/save-state validation, remaining background and texture defects, improved widescreen culling, and more disc editions. Background-plane artwork replacement and complete character/campaign artwork coverage remain unfinished. See [upcoming work](#upcoming-features).
 
 When updating, extract into a new application folder and choose your existing scenario data folder, then run **Prepare game** again. The bundled tools handle preparation automatically. Existing in-game saves remain in the separate data folder. Native quick states are build-specific: keep your previous application and prepared build if you need its old states; use an ordinary in-game save to transfer progress to the new build.
 
@@ -89,13 +115,17 @@ Source builds write **Launch Native SFIII.cmd** into the work folder. See [build
 
 ## Bring your own saves
 
-The included **Import Saturn Saves.cmd** utility lets you bring your existing progress into the native application. The launcher accepts raw `SFORCE31_XX.BIN` / `SFORCE32_XX.BIN` saves and version-1 JSON `.ysbak` exports containing those saves. Scenario 2 requires the experimental translated-v24 profile. Arbitrary `.bin` files, whole backup-memory images and emulator save states are not automatically compatible.
+The included **Import Saturn Saves.cmd** utility lets you bring your existing progress into the native application. The launcher accepts supported raw `SFORCE31_XX.BIN`, `SFORCE32_XX.BIN` and `SFORCE33_XX.BIN` saves, plus version-1 JSON `.ysbak` exports containing those records. Use the matching registered scenario edition. Import-format support does not establish that campaign carryover or every save works in gameplay. Arbitrary `.bin` files, whole backup-memory images and emulator save states are not automatically compatible.
+
+The current Windows file-picker title still says “Scenarios 1 and 2”; the importer also accepts supported Scenario 3 records.
 
 Close the game, click **Import saves** in the desktop application (or open **Import Saturn Saves.cmd** in your work folder), select your exported saves, and choose **internal memory** or **cartridge memory**. Then launch the game and use its own load menu. The importer validates the save layout and checksum, leaves your original export untouched, and backs up an existing destination before writing. The desktop package includes Python; source builds require Python 3.11+. See [save formats and storage details](docs/USAGE.md#game-saves).
 
 ## Status and validation
 
 The v0.6.0-preview1 Windows candidate passed **six runtime regression targets and nine focused Scenario 2 transition routes**: 16 checks including emission. Twelve captured scene/style GPU rendering cases and four live style/state continuations also passed with unchanged native frames. These checks cover the available fixtures, rather than every spell, character animation, transition or campaign. Five older route fixtures are unavailable and were not counted as passing or rerun for this candidate.
+
+The local Windows Python suite ran **113 tests: 112 passed and one POSIX-only file-lock test was skipped**. The release source also [passed hosted source/synthetic checks](https://github.com/mattkuhnQAAI/sfiii-native/actions/runs/40089746216), and [Linux, Apple Silicon and Intel Mac candidates passed their build and synthetic-validation jobs](https://github.com/mattkuhnQAAI/sfiii-native/actions/runs/40089746225). Hosted jobs use invented data and do not validate real-disc gameplay, physical controllers or audio devices. The standalone builder's first-run setup, CHD conversion and limited GPU samples were tested separately on Windows.
 
 With the local three-style artwork set, measured warm artwork-pack initialization dropped from **16.9 seconds to 1.16 seconds** after indexing/caching. This measures artwork initialization on one PC, not complete game launch time or a performance guarantee for other hardware.
 
