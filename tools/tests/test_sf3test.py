@@ -260,3 +260,38 @@ class Autoplay(unittest.TestCase):
         side = FakeSide(self.P)
         autoplay.replay(side, presses, 30)
         self.assertEqual(side.pads, [(0, ('UP',)), (10, ()), (20, ('A', 'C'))])
+
+
+class RealCoverage(unittest.TestCase):
+    """An invented module at 06001000: f0 (bsr f1), f1 (mov.l literal -> f2), f2, an unreachable f3,
+    and f4 named only from a data word (a pointer table); module B holds a copy of f2."""
+
+    def module(self):
+        from sf3test import realcov
+        img = bytearray(0x40)
+        img[0x00:0x02] = (0xB000 | ((0x10 - 0x04) // 2)).to_bytes(2, 'big')   # 06001000 bsr 06001010
+        img[0x10:0x12] = (0xD000 | 1).to_bytes(2, 'big')                     # 06001010 mov.l @(4,pc) -> 06001018
+        img[0x18:0x1C] = (0x06001020).to_bytes(4, 'big')
+        img[0x20:0x22] = b'\x00\x09'                                         # f2: nop
+        img[0x28:0x2A] = b'\x00\x0b'                                         # f3: rts
+        img[0x3C:0x40] = (0x06001030).to_bytes(4, 'big')                     # data word -> f4
+        img[0x30:0x32] = b'\x00\x0b'
+        text = '# A: A.BIN at 06001000, 64 bytes, sha1 0\n# address\tfunction\tkind\tfile\tline\n'
+        for f, n in ((0x1000, 2), (0x1010, 2), (0x1020, 1), (0x1028, 1), (0x1030, 1)):
+            for i in range(n):
+                text += f'{0x06000000 + f + 2 * i:08X}\t{0x06000000 + f:08X}\tinsn\tx.cpp\t1\n'
+        a = realcov.parse_map(text)
+        b = realcov.parse_map('# B: B.BIN at 06001020, 2 bytes, sha1 1\n06001020\t06001020\tinsn\tx.cpp\t1\n')
+        return realcov, [a, b], {'A': bytes(img), 'B': b'\x00\x09'}
+
+    def test_reachability_duplicates_and_bytes(self):
+        realcov, mods, images = self.module()
+        rows, tot = realcov.analyze(mods, images, {}, {('A', 0x06001010)})
+        a = rows[0]
+        self.assertEqual(a['functions'], 5)
+        self.assertEqual(a['unreachable'], 1)              # f3 only
+        self.assertEqual(rows[1]['duplicate'], 1)          # B's copy of f2
+        self.assertEqual(a['real'], 4)
+        self.assertEqual(a['ran_bytes'], 4)
+        self.assertAlmostEqual(a['pct'], 100 * 4 / a['real_bytes'])
+        self.assertEqual(realcov.ran_set(['A 06001010 2 1\nA 06001012 0 0']), {('A', 0x06001010)})
