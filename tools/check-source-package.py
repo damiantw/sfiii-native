@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN = {'.bin', '.cue', '.iso', '.chd', '.wav', '.sav', '.state', '.exe', '.dll',
              '.obj', '.o', '.lib', '.pdb', '.png', '.jpg', '.zip', '.7z', '.log'}
 ALLOWED_TOP = {'native', 'profiles', 'tools', 'docs', 'LICENSES', 'desktop'}
-ALLOWED_ROOT = {'.gitignore', '.gitattributes', '.github/FUNDING.yml', '.github/workflows/portable.yml', '.github/workflows/synthetic.yml', 'README.md', 'LICENSE', 'THIRD_PARTY.md', 'dependencies.json'}
+ALLOWED_ROOT = {'.gitignore', '.gitattributes', '.github/FUNDING.yml', '.github/workflows/portable.yml', '.github/workflows/synthetic.yml', '.github/workflows/linux-native.yml', 'README.md', 'LICENSE', 'THIRD_PARTY.md', 'dependencies.json'}
 SOURCE_SUFFIXES = {'.c', '.cpp', '.h', '.hlsl', '.inc', '.py', '.ps1', '.cmd', '.cmake', '.patch', '.cs', '.manifest', '.rc'}
 PATTERNS = {
     'personal Windows path': re.compile(rb'[A-Za-z]:[\\/]+Users[\\/]+', re.I),
@@ -37,7 +37,7 @@ def main():
             failures.append([name,'unreviewed generation profile'])
         if path.parts[0] == 'desktop' and name not in {'desktop/dependencies.json','desktop/posix-dependencies.json'} and path.suffix not in {'.py','.cs'}:
             failures.append([name,'not desktop application source'])
-        if path.parts[0] == 'docs' and name not in {'docs/BUILDING.md','docs/USAGE.md','docs/DEVELOPMENT.md','docs/DESKTOP.md','docs/POSIX.md'}:
+        if path.parts[0] == 'docs' and name not in {'docs/BUILDING.md','docs/USAGE.md','docs/DEVELOPMENT.md','docs/DESKTOP.md','docs/POSIX.md','docs/linux-bringup.md'}:
             failures.append([name,'local history or unreviewed documentation'])
         if path.suffix.lower() in FORBIDDEN or any(x in {'.local','research','sessions','captures','generated','build','data','extract'} for x in path.parts):
             failures.append([name, 'game/build/debug artifact path'])
