@@ -63,6 +63,7 @@
 !/tools/runtime-diagnostics.patch
 !/tools/windows.cmake
 !/tools/tests/
+!/tools/offline-assets/
 __pycache__/
 *.pyc
 *.bin

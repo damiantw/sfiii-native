@@ -1,6 +1,7 @@
 // Local replacement-art pack and projection. Does not change guest textures.
 #pragma once
 #include "video.h"
+#include "hd-pack-index.h"
 #include <filesystem>
 #include <fstream>
 #include <unordered_map>
@@ -8,18 +9,27 @@
 #include <algorithm>
 #include <future>
 #include <thread>
+#include <deque>
 
 namespace sf3 {
 class HdAssets {
     friend class HdGpu;
-    struct Asset { int w,h; float uv[4]{0,0,1,1}; std::vector<uint32_t> original; Frame replacement; };
+    struct Asset { int w,h; float uv[4]{0,0,1,1}; std::vector<uint32_t> original;
+        mutable Frame replacement; std::filesystem::path replacement_path; bool character=false;
+        mutable uint64_t last_used=0; };
     std::vector<Asset> assets_;
     std::unordered_map<uint64_t,std::vector<size_t>> buckets_;
     mutable size_t last_pixels_=0;
     mutable Frame projected_,overlay_;
     mutable bool cache_valid_=false;
     mutable uint64_t cache_geometry_=0;
+    mutable uint64_t cache_materials_=0;
     mutable int cache_w_=0,cache_h_=0;
+    mutable uint64_t replacement_epoch_=0;
+    mutable size_t replacement_bytes_=0;
+    mutable std::deque<size_t> loaded_;
+    size_t replacement_budget_;
+    bool indexed_=false;
     static uint32_t blend_rgba(uint32_t a,uint32_t b,unsigned w) {
         unsigned t=256-w;
         auto pair=[&](uint32_t x,uint32_t y){return (((x&0xFF00FF)*t+(y&0xFF00FF)*w)>>8)&0xFF00FF;};
@@ -42,11 +52,30 @@ class HdAssets {
             |(uint32_t(bytes[i*4])<<16)|(uint32_t(bytes[i*4+1])<<8)|bytes[i*4+2];
         return true;
     }
-    const Asset* match(const HdTexture& t) const {
+    const Asset* match(const HdTexture& t,unsigned command=2) const {
         auto bucket=buckets_.find(key(t.w,t.h,t.rgba));
         if(bucket!=buckets_.end()) for(auto i:bucket->second) {
             const auto& a=assets_[i];
-            if(a.w==t.w && a.h==t.h && a.original==t.rgba) return &a;
+            if(a.w!=t.w || a.h!=t.h || a.original!=t.rgba
+               || (a.character ? command>2 : command!=2)) continue;
+            a.last_used=replacement_epoch_;
+            if(a.replacement.px.empty()) {
+                size_t bytes=size_t(a.replacement.w)*a.replacement.h*4;
+                // Keep every material matched in this frame pinned until upload/composition.
+                // A pathological frame may exceed the soft budget; later frames evict it.
+                size_t attempts=loaded_.size();
+                while(replacement_bytes_+bytes>replacement_budget_ && attempts-- && !loaded_.empty()) {
+                    auto old=loaded_.front();loaded_.pop_front();const auto& previous=assets_[old];
+                    if(previous.last_used==replacement_epoch_) {loaded_.push_back(old);continue;}
+                    replacement_bytes_-=previous.replacement.px.size()*4;
+                    std::vector<uint32_t>().swap(previous.replacement.px);
+                }
+                if(!read_rgba(a.replacement_path,a.replacement.w,a.replacement.h,a.replacement.px)) {
+                    std::vector<uint32_t>().swap(a.replacement.px);return nullptr;
+                }
+                replacement_bytes_+=bytes;loaded_.push_back(i);
+            }
+            return &a;
         }
         return nullptr; // Full original bytes are compared after hashing.
     }
@@ -68,8 +97,23 @@ class HdAssets {
         return true;
     }
 public:
+    explicit HdAssets(size_t budget=256*1024*1024):replacement_budget_(budget) {}
     size_t load(const std::string& root) {
         assets_.clear();buckets_.clear();cache_valid_=false;std::error_code error;
+        loaded_.clear();replacement_bytes_=0;replacement_epoch_=0;
+        indexed_=false;
+        std::vector<pack_index::Entry> indexed;
+        if(pack_index::read(root,indexed)) {
+            assets_.reserve(indexed.size());
+            for(auto& entry:indexed) {
+                Asset a;a.w=entry.w;a.h=entry.h;a.replacement.w=entry.hw;a.replacement.h=entry.hh;
+                std::copy(entry.uv.begin(),entry.uv.end(),a.uv);a.character=entry.character;
+                a.original=std::move(entry.original);
+                a.replacement_path=std::filesystem::path(root)/entry.replacement_path;
+                buckets_[key(a.w,a.h,a.original)].push_back(assets_.size());assets_.push_back(std::move(a));
+            }
+            indexed_=true;return assets_.size();
+        }
         for(std::filesystem::directory_iterator i(root,error),end;i!=end && !error;i.increment(error)) {
             if(!i->is_directory()) continue;
             std::ifstream descriptor(i->path()/"asset.txt");std::string magic;
@@ -81,14 +125,22 @@ public:
                 if(!(descriptor>>a.uv[0]>>a.uv[1]>>a.uv[2]>>a.uv[3])) continue;
                 bool valid=true;for(float v:a.uv) valid&=std::isfinite(v)&&v>=0&&v<=1;
                 if(!valid || a.uv[2]<=a.uv[0] || a.uv[3]<=a.uv[1]) continue;
+                std::string kind;
+                if(descriptor>>kind) {if(kind!="character" && kind!="world")continue;a.character=kind=="character";}
             }
-            if(!read_rgba(i->path()/"original.rgba",w,h,a.original)
-               || !read_rgba(i->path()/"replacement.rgba",hw,hh,a.replacement.px)) continue;
+            a.replacement_path=i->path()/"replacement.rgba";
+            std::error_code size_error;
+            auto replacement_size=std::filesystem::file_size(a.replacement_path,size_error);
+            if(size_error || replacement_size!=size_t(hw)*hh*4
+               || !read_rgba(i->path()/"original.rgba",w,h,a.original)) continue;
             buckets_[key(w,h,a.original)].push_back(assets_.size());assets_.push_back(std::move(a));
         }
         return assets_.size();
     }
     size_t count() const { return assets_.size(); }
+    bool loaded_from_index() const {return indexed_;}
+    void begin_frame() const {++replacement_epoch_;}
+    size_t cached_replacement_bytes() const {return replacement_bytes_;}
     size_t last_pixels() const { return last_pixels_; }
     const Frame& overlay(const Frame& source) const {
         overlay_.w=1440;overlay_.h=1080;overlay_.px.assign(1440*1080,0);
@@ -97,19 +149,31 @@ public:
     void apply(const Frame& source,Frame& output,bool overlay_mode=false) const {
         last_pixels_=0;
         if(!source.hd || source.hd->visible.size()!=source.px.size() || assets_.empty()) return;
+        begin_frame();
         unsigned hardware=std::thread::hardware_concurrency();
         int workers=hardware>=8 ? 4 : hardware>=4 ? 2 : 1;
-        if(!cache_valid_ || cache_geometry_!=source.hd->geometry || projected_.w!=output.w
+        uint64_t material_key=14695981039346656037ull;
+        for(const auto& q:source.hd->quads) {
+            material_key=(material_key^q.gpu_flags)*1099511628211ull;
+            material_key=(material_key^unsigned(q.gpu_eligible))*1099511628211ull;
+        }
+        if(!cache_valid_ || cache_geometry_!=source.hd->geometry || cache_materials_!=material_key || projected_.w!=output.w
             || projected_.h!=output.h || cache_w_!=source.w || cache_h_!=source.h) {
+        cache_valid_=false; // A no-match rebuild must not leave the previous cache identity valid.
         projected_.w=output.w;projected_.h=output.h;projected_.px.assign(output.w*output.h,0);
         std::vector<const Asset*> materials(source.hd->quads.size()+1,nullptr);
+        std::vector<uint8_t> visible(materials.size(),0);
+        for(auto id:source.hd->visible) if(id<visible.size())visible[id]=1;
         bool any=false;
-        std::unordered_map<const HdTexture*,const Asset*> matches;
+        std::unordered_map<const HdTexture*,const Asset*> matches[3];
         for(size_t i=0;i<source.hd->quads.size();++i) {
-            auto t=source.hd->quads[i].texture;if(!t) continue;
-            auto found=matches.find(t.get());
-            const Asset* asset=found==matches.end() ? match(*t) : found->second;
-            matches[t.get()]=asset;materials[i+1]=asset;
+            const auto& quad=source.hd->quads[i];
+            auto t=quad.texture;
+            unsigned command=(quad.gpu_flags>>16)&15;
+            if(!visible[i+1] || !quad.gpu_eligible || command>2 || !t) continue;
+            auto& bucket=matches[command];auto found=bucket.find(t.get());
+            const Asset* asset=found==bucket.end() ? match(*t,command) : found->second;
+            bucket[t.get()]=asset;materials[i+1]=asset;
             any|=asset!=nullptr;
         }
         if(!any) return;
@@ -164,7 +228,7 @@ public:
             pending.push_back(std::async(std::launch::async,rows,i*output.h/workers,(i+1)*output.h/workers));
         last_pixels_=rows(0,output.h/workers);
         for(auto& result:pending) last_pixels_+=result.get();
-        cache_geometry_=source.hd->geometry;cache_w_=source.w;cache_h_=source.h;cache_valid_=true;
+        cache_geometry_=source.hd->geometry;cache_materials_=material_key;cache_w_=source.w;cache_h_=source.h;cache_valid_=true;
         }
         std::vector<int> columns(output.w);
         for(int x=0;x<output.w;++x) columns[x]=std::min((int64_t(2*x+1)*source.w)/(2*output.w),int64_t(source.w-1));

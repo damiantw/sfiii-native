@@ -13,6 +13,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install pinned local-artwork test dependency
+        run: python -m pip install --disable-pip-version-check Pillow==12.3.0
       - name: Fetch pinned runtime and apply project changes
         shell: bash
         run: |
@@ -34,16 +36,19 @@ jobs:
         shell: bash
         run: |
           python -B tools/check-source-package.py --tracked --out "$RUNNER_TEMP/source-check.json"
+          python -B -c "from PIL import Image; import PIL; assert PIL.__version__ == '12.3.0'"
           python -X utf8 -B -m unittest discover -s tools/tests -p 'test_*.py'
       - name: Build required runtime regressions
         shell: bash
         run: |
           cmake -S tools/tests -B "$RUNNER_TEMP/sfiii-checks" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ "-DSATURN_RUNTIME=$GITHUB_WORKSPACE/.local/saturn-recomp/runtime"
-          cmake --build "$RUNNER_TEMP/sfiii-checks" --parallel 2 --target dsp_regression core_regression bup_regression machine_regression background_regression audio_buffer game_speed
+          cmake --build "$RUNNER_TEMP/sfiii-checks" --parallel 2 --target dsp_regression core_regression bup_regression machine_regression background_regression audio_buffer game_speed hd_assets hd_pack_index
       - name: Run required runtime regressions
         shell: bash
         run: |
           for target in dsp_regression core_regression bup_regression machine_regression background_regression audio_buffer game_speed; do
             "$RUNNER_TEMP/sfiii-checks/$target"
           done
+          "$RUNNER_TEMP/sfiii-checks/hd_assets" "$RUNNER_TEMP/sfiii-hd-assets"
+          "$RUNNER_TEMP/sfiii-checks/hd_pack_index" "$RUNNER_TEMP/sfiii-hd-index"
       # Real disc inventories, generated game code and gameplay fixtures stay local.

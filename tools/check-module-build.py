@@ -3,8 +3,12 @@ import argparse
 import json
 from pathlib import Path
 import re
+import sys
 from importlib.util import spec_from_file_location, module_from_spec
 
+# Executing a sibling by file path does not always add its directory to the
+# module search path (notably with embedded Python distributions).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 spec = spec_from_file_location('audit_modules',Path(__file__).with_name('audit-modules.py'))
 audit = module_from_spec(spec)
 spec.loader.exec_module(audit)

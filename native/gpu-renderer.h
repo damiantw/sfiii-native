@@ -12,7 +12,7 @@ class GpuRenderer {
     SDL_GPUShader* shader_=nullptr;
     SDL_GPURenderState* state_=nullptr;
     SDL_Texture *white_=nullptr,*output_=nullptr,*filtered_=nullptr;
-    bool aa_=false,filtered_valid_=false;
+    bool aa_=false,ray_shadows_=false,filtered_valid_=false;
     int width_=0,height_=0;
     std::vector<uint32_t> last_scene_,last_textures_;
     uint64_t submissions_=0,cache_hits_=0;
@@ -23,6 +23,8 @@ public:
     SDL_Texture* render(const Frame&,int scale);
     void antialiasing(bool enabled) {if(aa_!=enabled){aa_=enabled;filtered_valid_=false;last_scene_.clear();}}
     bool antialiasing()const{return aa_;}
+    void ray_shadows(bool enabled) {if(ray_shadows_!=enabled){ray_shadows_=enabled;filtered_valid_=false;last_scene_.clear();}}
+    bool ray_shadows()const{return ray_shadows_;}
     bool capture(Frame&);
     bool wait();
     uint64_t submissions()const{return submissions_;}

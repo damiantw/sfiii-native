@@ -128,6 +128,7 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
         }
         float minx=xy[0],maxx=xy[0],miny=xy[1],maxy=xy[1];
         for(int k=1;k<4;++k){minx=std::min(minx,xy[2*k]);maxx=std::max(maxx,xy[2*k]);miny=std::min(miny,xy[2*k+1]);maxy=std::max(maxy,xy[2*k+1]);}
+        data[at+33]=uint32_t(std::clamp((maxx-minx)*(maxy-miny),1.0f,1000000.0f));
         minx+=f.origin_x;maxx+=f.origin_x;
         if(maxx<-.5f || maxy<-.5f || minx>f.w || miny>f.h)continue;
         const int x0=std::clamp(int(std::floor((minx-1)/tile_size)),0,int(columns)-1),x1=std::clamp(int(std::floor((maxx+1)/tile_size)),0,int(columns)-1);
@@ -145,7 +146,7 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
     if(!SDL_FlushRenderer(renderer_) || !upload(scene_,data) || !upload(textures_,tex))return nullptr;
     auto* previous=SDL_GetRenderTarget(renderer_);
     if(!SDL_SetRenderTarget(renderer_,output_))return nullptr;
-    const uint32_t normal_pass[4]={0,0,0,0},aa_pass[4]={1,0,0,0};
+    const uint32_t normal_pass[4]={0,0,0,0},effects_pass[4]={uint32_t(aa_?1:0)|uint32_t(ray_shadows_?2:0),0,0,0};
     if(!SDL_SetGPURenderStateFragmentUniforms(state_,0,normal_pass,sizeof normal_pass)) {
         SDL_SetRenderTarget(renderer_,previous);return nullptr;
     }
@@ -153,18 +154,18 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
     bool ok=SDL_RenderTexture(renderer_,white_,nullptr,nullptr);
     SDL_SetGPURenderState(renderer_,nullptr);SDL_SetRenderTarget(renderer_,previous);
     filtered_valid_=false;
-    if(ok && aa_) {
+    if(ok && (aa_ || ray_shadows_)) {
         if(!filtered_) {
             filtered_=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,width,height);
             if(filtered_){SDL_SetTextureBlendMode(filtered_,SDL_BLENDMODE_NONE);SDL_SetTextureScaleMode(filtered_,SDL_SCALEMODE_LINEAR);}
         }
         if(filtered_ && SDL_SetRenderTarget(renderer_,filtered_) &&
-           SDL_SetGPURenderStateFragmentUniforms(state_,0,aa_pass,sizeof aa_pass)) {
+           SDL_SetGPURenderStateFragmentUniforms(state_,0,effects_pass,sizeof effects_pass)) {
             SDL_SetGPURenderState(renderer_,state_);
             filtered_valid_=SDL_RenderTexture(renderer_,output_,nullptr,nullptr);
         }
         SDL_SetGPURenderState(renderer_,nullptr);SDL_SetRenderTarget(renderer_,previous);
-        if(!filtered_valid_){SDL_Log("Light AA unavailable: %s; original picture retained",SDL_GetError());aa_=false;}
+        if(!filtered_valid_){SDL_Log("GPU presentation effects unavailable: %s; original picture retained",SDL_GetError());aa_=false;ray_shadows_=false;}
     }
     if(ok) {last_scene_=std::move(data);last_textures_=std::move(tex);++submissions_;}
     return ok?(filtered_valid_?filtered_:output_):nullptr;
