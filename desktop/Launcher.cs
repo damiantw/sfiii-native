@@ -10,7 +10,12 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 class Launcher : Form {
-    static readonly string[] Profiles = {"scenario1-usa-v1_001", "scenario2-translation-v24", "scenario3-translation-v25_1"};
+    // Accepted disc revision profiles per game slot (profiles/*.json ids). The first is the recommended disc.
+    static readonly string[][] Profiles = {
+        new[]{"scenario1-usa-v1_001", "scenario1-usa-translation-v25_1"},
+        new[]{"scenario2-translation-v25_1-v2_000", "scenario2-translation-v25_1-v1_003", "scenario2-translation-v24"},
+        new[]{"scenario3-translation-v25_1-redump", "scenario3-translation-v25_1"}};
+    static int SlotOf(string profile) {for(int i=0;i<Profiles.Length;i++)if(Array.IndexOf(Profiles[i],profile)>=0)return i;return -1;}
     static readonly string[] DataSuffixes = {"", "-Scenario2-v24", "-Scenario3-v25_1"};
     readonly string root = AppDomain.CurrentDomain.BaseDirectory;
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
@@ -59,7 +64,7 @@ class Launcher : Form {
         TextAt("Shining Force III Native",24,20,800,35).Font=new Font("Segoe UI",20,FontStyle.Bold);
         TextAt("Game",25,65,120,25);
         gameChoice.DropDownStyle=ComboBoxStyle.DropDownList;gameChoice.SetBounds(155,62,667,28);
-        gameChoice.Items.AddRange(new object[]{"Scenario 1 USA (unpatched V1.001)","Scenario 2 Translation v24 (experimental)","Scenario 3 Translation v25.1 (experimental)"});
+        gameChoice.Items.AddRange(new object[]{"Scenario 1 USA (V1.001 or Translation V25.1)","Scenario 2 Translation V25.1 / v24 (experimental)","Scenario 3 Translation V25.1 (experimental)"});
         gameChoice.SelectedIndex=0;Controls.Add(gameChoice);
         gameChoice.DrawMode=DrawMode.OwnerDrawFixed;
         gameChoice.DrawItem+=delegate(object sender,DrawItemEventArgs e) {
@@ -125,9 +130,8 @@ class Launcher : Form {
             var prepared=Read(Path.Combine(work.Text,"desktop-ready.json"));
             string preparedCue=(string)prepared["cue"];
             string source=prepared.ContainsKey("source") ? (string)prepared["source"] : preparedCue;
-            string profile=Profiles[activeGame];
             if(!prepared.ContainsKey("profile_id") && activeGame!=0)return false;
-            if(prepared.ContainsKey("profile_id") && (string)prepared["profile_id"]!=profile)return false;
+            if(prepared.ContainsKey("profile_id") && Array.IndexOf(Profiles[activeGame],(string)prepared["profile_id"])<0)return false;
             if(String.IsNullOrWhiteSpace(cue.Text))cue.Text=source;
             if(!String.Equals(Path.GetFullPath(cue.Text),Path.GetFullPath(source),StringComparison.OrdinalIgnoreCase))return false;
             string selected=File.ReadAllText(Path.Combine(work.Text,"native-build.txt")).Trim();
@@ -221,7 +225,7 @@ class Launcher : Form {
             try {
                 var ready=form.Read(Path.Combine(testRoot,"desktop-ready.json"));
                 if(ready.ContainsKey("profile_id")) {
-                    int index=Array.IndexOf(Profiles,(string)ready["profile_id"]);
+                    int index=SlotOf((string)ready["profile_id"]);
                     if(index>=0) {form.busy=true;form.activeGame=index;form.gameChoice.SelectedIndex=index;form.busy=false;}
                 }
             } catch { }
