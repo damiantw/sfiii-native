@@ -65,7 +65,10 @@ def main():
 
     with ThreadPoolExecutor(a.jobs) as ex:
         results = list(ex.map(one, enumerate(targets)))
-    report = dict(profile=mm['profile'], cue=str(a.cue), vblanks=a.vblanks, seed=a.seed, results=results)
+    report = dict(profile=mm['profile'], cue=str(a.cue), vblanks=a.vblanks, seed=a.seed, results=results,
+                  coverage=sweep.coverage_union(
+                      (Path(r['work']) / 'coverage.tsv').read_text() for r in results
+                      if (Path(r['work']) / 'coverage.tsv').exists()))
     (out / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     (out / 'matrix.md').write_text(sweep.matrix(report))
     counts = {s: sum(1 for r in results if r['status'] == s) for s in sweep.STATUSES}

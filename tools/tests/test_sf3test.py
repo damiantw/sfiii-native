@@ -104,6 +104,11 @@ class Sweep(unittest.TestCase):
         same = [(v, dict(sha1='z', black=False)) for v in (6000, 6600, 7200)]
         self.assertEqual(sweep.analyze(ok_log, prog, same, 8000)['status'], 'frozen')
 
+    def test_coverage_union(self):
+        a = 'M1 06000000 10 1\nM1 06000010 5 0\nM2 06001000 7 0\n'
+        b = 'M1 06000010 5 1\nM2 06001000 7 0\n'
+        self.assertEqual(sweep.coverage_union([a, b]), {'M1': [2, 2, 15, 15], 'M2': [1, 0, 7, 0]})
+
     def test_matrix(self):
         row = sweep.analyze('stopped (VBlank limit) after 10 VBlanks\n', [(1, 1, 0)], [], 10)
         row.update(id='save:x:01', kind='save', map=1, battle=0, last_shot=None)

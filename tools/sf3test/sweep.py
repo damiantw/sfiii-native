@@ -193,6 +193,27 @@ def backup_for(target, scenario):
     return saves.native_backup([rec])
 
 
+def coverage_union(texts):
+    """{module: [functions, ran in any run, instructions, instructions in ran functions]} from
+    --coverage files' text (lines "MODULE ADDR INSTRUCTIONS RAN")."""
+    seen = {}
+    for text in texts:
+        for line in text.splitlines():
+            parts = line.split()
+            if len(parts) != 4:
+                continue
+            key = (parts[0], parts[1])
+            seen[key] = (int(parts[2]), seen.get(key, (0, False))[1] or parts[3] == '1')
+    out = {}
+    for (mod, _), (size, ran) in seen.items():
+        row = out.setdefault(mod, [0, 0, 0, 0])
+        row[0] += 1
+        row[1] += ran
+        row[2] += size
+        row[3] += size if ran else 0
+    return out
+
+
 STATUSES = ['ok', 'frozen', 'black', 'no-load', 'stall', 'hang', 'died', 'crash']
 
 
@@ -207,7 +228,14 @@ def matrix(report):
              '| targets | ' + ' | '.join(str(counts[s]) for s in STATUSES) + ' |', '',
              f'Maps reached ({len(maps)}): ' + ' '.join(f'{m:02X}' for m in maps), '',
              f'Battles reached ({len(battles)}): ' + ' '.join(str(b) for b in battles), '',
-             '| target | map | battle | status | maps seen | detail |', '|---|---|---|---|---|---|']
+             ]
+    cov = report.get('coverage')
+    if cov:
+        f = sum(r[0] for r in cov.values()); ran = sum(r[1] for r in cov.values())
+        mods = sorted(m for m, r in cov.items() if r[1])
+        lines += [f'Functions executed (union): {ran}/{f} ({100 * ran / max(f, 1):.1f}%); modules with any '
+                  f'function run: {len(mods)}/{len(cov)}', '']
+    lines += ['| target | map | battle | status | maps seen | detail |', '|---|---|---|---|---|---|']
     for r in rows:
         detail = '; '.join(r['fatal'][:1] + [f'stall@{s}' for s in r['stalls'][:1]]
                            + (['frozen'] if r['frozen'] else []))
