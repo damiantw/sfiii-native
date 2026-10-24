@@ -1593,6 +1593,44 @@ index a17d926..2055f4c 100644
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
+diff --git a/runtime/src/machine/mmio.cpp b/runtime/src/machine/mmio.cpp
+index b9dd332..76b4a84 100644
+--- a/runtime/src/machine/mmio.cpp
++++ b/runtime/src/machine/mmio.cpp
+@@ -102,12 +102,13 @@ void mmio_log_write(const std::string& path) {
+ }
+ 
+ // ---- memory with no device behind it (yet) ------------------------------------------------------
+-static uint8_t g_backup[0x10000];       // backup RAM, odd bytes
++static uint8_t g_backup[0x10000];       // backup RAM, odd bytes; repeats every 64 KiB up to 0x001FFFFF
++static bool backup_area(uint32_t a) { return a >= 0x00180000u && a < 0x00200000u; }
+ static uint8_t g_cache[2][0x1000];      // each CPU's cache as RAM (0xC0000000)
+ 
+ static const char* area_of(uint32_t a) {
+     if (a < 0x00080000u) return "BIOS ROM";
+-    if (a >= 0x00180000u && a < 0x00190000u) return "backup RAM";
++    if (backup_area(a)) return "backup RAM";
+     if (a >= 0x02000000u && a < 0x05000000u) return "A-bus cartridge";
+     if (a >= 0x05A00000u && a < 0x05B00000u) return "SCSP RAM";
+     if (a >= 0x05C00000u && a < 0x05C80000u) return "VDP1 VRAM";
+@@ -135,7 +136,7 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
+     if (area != 0) { log_area("cache address array", a, 'R'); return 0; }
+     if (const char* n = area_of(a)) {
+         log_area(n, a, 'R');
+-        if (a >= 0x00180000u && a < 0x00190000u) return mem_rd(g_backup, a & 0xFFFF, size);
++        if (backup_area(a)) return mem_rd(g_backup, a & 0xFFFF, size);
+         if (video_owns(a)) return video_read(a, size);
+         if (a >= 0x02000000u && a < 0x05000000u) return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFFu;
+         return bios_rom_read(a, size);          // the BIOS ROM is not here
+@@ -164,7 +165,7 @@ void sh2_mmio_write(uint32_t a, uint32_t v, int size) {
+     if (area != 0) { log_area(area == 2 ? "cache purge" : "cache address array", a, 'W'); return; }
+     if (const char* n = area_of(a)) {
+         log_area(n, a, 'W');
+-        if (a >= 0x00180000u && a < 0x00190000u) { mem_wr(g_backup, a & 0xFFFF, v, size); return; }
++        if (backup_area(a)) { mem_wr(g_backup, a & 0xFFFF, v, size); return; }
+         if (video_owns(a)) { video_write(a, v, size); return; }
+         return;                                 // ROM, no cartridge
+     }
 diff --git a/runtime/src/machine/onchip.cpp b/runtime/src/machine/onchip.cpp
 index 33a2cdd..6b783ff 100644
 --- a/runtime/src/machine/onchip.cpp
@@ -3468,7 +3506,7 @@ index ebaa466..c68e655 100644
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
 diff --git a/runtime/tests/CMakeLists.txt b/runtime/tests/CMakeLists.txt
-index 39eb423..dd68f6d 100644
+index 39eb423..7f9d931 100644
 --- a/runtime/tests/CMakeLists.txt
 +++ b/runtime/tests/CMakeLists.txt
 @@ -8,5 +8,5 @@ if(NOT CMAKE_BUILD_TYPE)
@@ -3476,7 +3514,7 @@ index 39eb423..dd68f6d 100644
  endif()
  include(${CMAKE_CURRENT_LIST_DIR}/../runtime.cmake)
 -add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp)
-+add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp vdp1_steps_test.cpp)
++add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp vdp1_steps_test.cpp memmap_test.cpp)
  target_link_libraries(runtime_tests saturn_core saturn_machine saturn_host Threads::Threads)
 diff --git a/runtime/tests/bup_test.cpp b/runtime/tests/bup_test.cpp
 index 6943552..0c64057 100644
@@ -3511,6 +3549,28 @@ index 6943552..0c64057 100644
  }
  
  TEST(a_damaged_file_keeps_the_saves_before_the_damage) {
+diff --git a/runtime/tests/memmap_test.cpp b/runtime/tests/memmap_test.cpp
+new file mode 100644
+index 0000000..b1fe807
+--- /dev/null
++++ b/runtime/tests/memmap_test.cpp
+@@ -0,0 +1,16 @@
++// The address map outside the work RAMs.
++#include "saturn.h"
++#include "test.h"
++
++// Backup RAM (64 KiB window at 0x00180000) repeats through 0x001FFFFF: Shining Force III
++// Scenario 3 reads a table at a negative index from 0x00200030 and lands at 0x001FFEAA.
++TEST(backup_ram_repeats_every_64k_up_to_the_low_work_ram) {
++    uint32_t keep = sh2_mmio_read(0x0018FEAB, 1);
++    sh2_mmio_write(0x0018FEAB, 0x5A, 1);
++    CHECK_EQ(sh2_io_read(0x001FFEAB, 1), 0x5Au);
++    CHECK_EQ(sh2_io_read(0x0019FEAB, 1), 0x5Au);
++    CHECK_EQ(sh2_io_read(0x201FFEAB, 1), 0x5Au);   // cache-through
++    sh2_io_write(0x001FFEAB, 0xA5, 1);
++    CHECK_EQ(sh2_mmio_read(0x0018FEAB, 1), 0xA5u);
++    sh2_mmio_write(0x0018FEAB, keep, 1);
++}
 diff --git a/runtime/tests/vdp1_steps_test.cpp b/runtime/tests/vdp1_steps_test.cpp
 new file mode 100644
 index 0000000..cbab6eb
