@@ -236,3 +236,5 @@ Do all of this privately; never commit or upload disc-derived files (inventories
    - audio sanity (WAV capture, then listen)
    - controller setup from a terminal
 7. Add profiles in small commits: profile JSON plus the allowlist/launcher changes, with no disc bytes. Record results as "validated on Linux with <patch list>".
+
+To make translated images on Linux without the Windows PatchWizard, see [translation-patcher.md](translation-patcher.md).
