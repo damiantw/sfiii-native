@@ -48,10 +48,13 @@ class Track:
         f.seek(self.start)
         return f.read(self.end - self.start)
 
-    def hash_sha1(self):
-        """SHA-1 of the track as Redump stores it: an unstored PREGAP counts as silence."""
-        h = hashlib.sha1()
-        h.update(bytes(self.pregap * self.sector_size))
+    def hashes(self):
+        """(SHA-1, SHA-256, bytes) of the track as Redump stores it, in one pass: an unstored PREGAP
+        counts as silence."""
+        h1, h256 = hashlib.sha1(), hashlib.sha256()
+        silence = bytes(self.pregap * self.sector_size)
+        h1.update(silence)
+        h256.update(silence)
         with open(self.path, "rb") as f:
             f.seek(self.start)
             left = self.end - self.start
@@ -59,9 +62,15 @@ class Track:
                 chunk = f.read(min(left, 1 << 22))
                 if not chunk:
                     break
-                h.update(chunk)
+                h1.update(chunk)
+                h256.update(chunk)
                 left -= len(chunk)
-        return h.hexdigest(), self.pregap * self.sector_size + self.end - self.start
+        return h1.hexdigest(), h256.hexdigest(), self.pregap * self.sector_size + self.end - self.start
+
+    def hash_sha1(self):
+        """(SHA-1, bytes) of the track as Redump stores it."""
+        sha1, _, size = self.hashes()
+        return sha1, size
 
     def audio_from_index1(self):
         """What the wizard rips: raw CD-DA from INDEX 01 to the end of the track."""

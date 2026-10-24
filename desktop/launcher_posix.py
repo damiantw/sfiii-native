@@ -14,7 +14,11 @@ sys.dont_write_bytecode = True
 from prepare_posix import APP, PAYLOAD, common, lock, package_root
 from run_posix import selected_build
 
-PROFILES = ('scenario1-usa-v1_001', 'scenario2-translation-v24', 'scenario3-translation-v25_1')
+# Accepted disc revision profiles (profiles/*.json ids) per game slot; the first is the recommended disc.
+PROFILES = (('scenario1-usa-v1_001', 'scenario1-usa-translation-v25_1'),
+            ('scenario2-translation-v25_1-v2_000', 'scenario2-translation-v25_1-v1_003', 'scenario2-translation-v24'),
+            ('scenario3-translation-v25_1-redump', 'scenario3-translation-v25_1'))
+# Default data folders keep their original names so existing game data stays where it was.
 DATA_FOLDERS = ('Scenario1-USA', 'Scenario2-v24', 'Scenario3-v25_1')
 
 def data_root():
@@ -38,7 +42,7 @@ class Launcher:
         frame.pack(fill='both',expand=True)
         frame.columnconfigure(1,weight=1)
         ttk.Label(frame,text='Shining Force III Native',font=('',22,'bold')).grid(row=0,column=0,columnspan=3,sticky='w',pady=(0,18))
-        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 USA V1.001','Scenario 2 Translation Project v24 (experimental)','Scenario 3 Translation Project v25.1 (experimental)'])
+        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 USA (V1.001 or Translation Project V25.1)','Scenario 2 Translation Project V25.1 / v24 (experimental)','Scenario 3 Translation Project V25.1 (experimental)'])
         self.selection.grid(row=1,column=1,sticky='ew',pady=5)
         ttk.Label(frame,text='Game').grid(row=1,column=0,sticky='w',padx=(0,12))
         self.cue, self.work = tk.StringVar(), tk.StringVar()
@@ -94,8 +98,7 @@ class Launcher:
             work=Path(self.work.get())
             ready=json.loads((work/'desktop-ready.json').read_text())
             package=json.loads((PAYLOAD/'package.json').read_text())
-            expected=PROFILES[self.active]
-            return (ready['build_id']==package['build_id'] and ready['profile_id']==expected
+            return (ready['build_id']==package['build_id'] and ready['profile_id'] in PROFILES[self.active]
                     and common.sha(selected_build(work)/'saturn')==ready['executable_sha256'])
         except (OSError,ValueError,KeyError):return False
 

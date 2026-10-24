@@ -1,4 +1,6 @@
 """sf3patch: the small formats (metadata JSON, DFR, IP.BIN, CUE, EDC/ECC), synthetic data only."""
+import contextlib
+import io
 import functools
 import os
 import random
@@ -9,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.sf3patch import conflicts, dfr, dotnet, edcecc, identify, ipbin, isobuild, netjson, output, package, selection
+from tools.sf3patch import cli, conflicts, dfr, dotnet, edcecc, identify, ipbin, isobuild, netjson, output, package, selection
 
 
 class NetJson(unittest.TestCase):
@@ -317,22 +319,25 @@ class Selection(unittest.TestCase):
 
 
 class _Track:
-    def __init__(self, sha1, size, sector_size=2352):
-        self.sector_size, self._h = sector_size, (sha1, size)
+    def __init__(self, sha1, size, sha256=None, sector_size=2352):
+        self.sector_size, self._h = sector_size, (sha1, sha256, size)
+
+    def hashes(self):
+        return self._h
 
     def hash_sha1(self):
-        return self._h
+        return self._h[0], self._h[2]
 
 
 class _FakeDisc:
-    def __init__(self, product, version, track1, track2=identify.STD_AUDIO):
+    def __init__(self, product, version, track1, track2=identify.STD_AUDIO, s1=None, s2=None):
         raw = bytearray(b" " * 0x100) + bytearray(0x1700)
         raw[0:16] = b"SEGA SEGASATURN "
         raw[0x20:0x2A] = product.ljust(10).encode()
         raw[0x2A:0x30] = version.ljust(6).encode()
         self.ip_raw = bytes(raw)
-        self.data = _Track(*track1)
-        self._audio = [_Track(*track2)] if track2 else []
+        self.data = _Track(*track1, sha256=s1)
+        self._audio = [_Track(*track2, sha256=s2)] if track2 else []
 
     def audio_tracks(self):
         return self._audio
@@ -341,8 +346,10 @@ class _FakeDisc:
 class Identify(unittest.TestCase):
     def test_every_known_dump(self):
         for k in identify.KNOWN:
-            r = identify.identify(_FakeDisc(k.serial, k.version, k.track1, k.track2))
+            r = identify.identify(_FakeDisc(k.serial, k.version, k.track1, k.track2,
+                                            k.track1_sha256, k.track2_sha256))
             self.assertTrue(r.verified, (k.key, r.warnings))
+            self.assertEqual(r.track1_sha256, k.track1_sha256)
             self.assertEqual((r.serial, r.version, r.known.key), (k.serial, k.version, k.key))
 
     def test_revisions_are_told_apart(self):
@@ -362,6 +369,44 @@ class Identify(unittest.TestCase):
         self.assertEqual((r.serial, r.version), ("GS-9188", "V1.003"))   # IP.BIN fallback
         r = identify.identify(_FakeDisc("GS-9188", "V1.003", sc2.track1, ("1" * 40, 5)))
         self.assertTrue(any("audio" in w for w in r.warnings))
+
+    def test_sha256_is_checked_when_known(self):
+        sc3 = next(k for k in identify.KNOWN if k.key == "sc3")
+        r = identify.identify(_FakeDisc("GS-9203", "V1.001", sc3.track1, sc3.track2, "f" * 64,
+                                        sc3.track2_sha256))
+        self.assertFalse(r.verified)
+        self.assertTrue(any("SHA-256" in w for w in r.warnings))
+        r = identify.identify(_FakeDisc("GS-9203", "V1.001", sc3.track1, sc3.track2, sc3.track1_sha256,
+                                        "e" * 64))
+        self.assertTrue(any("audio track SHA-1 matches" in w for w in r.warnings))
+        # entries without a recorded SHA-256 (dumps not seen yet) only check SHA-1
+        eu = next(k for k in identify.KNOWN if k.key == "sc1-eu")
+        self.assertIsNone(eu.track1_sha256)
+        self.assertTrue(identify.identify(_FakeDisc(eu.serial, eu.version, eu.track1, s1="0" * 64)).verified)
+
+    def test_hashes_seen_on_real_dumps(self):
+        # metadata only: SHA-256 of the Redump tracks and the unpatched content_sha256
+        seen = {k.key: k for k in identify.KNOWN if k.track1_sha256}
+        self.assertEqual(set(seen), {"sc1-usa", "sc2-1.003", "sc2-2.000", "sc3", "pd"})
+        for k in seen.values():
+            self.assertRegex(k.track1_sha256, "^[0-9a-f]{64}$")
+            self.assertRegex(k.content_sha256, "^[0-9a-f]{64}$")
+        self.assertEqual(seen["sc1-usa"].track1_sha256[:12], "089c77470dec")
+        self.assertEqual(len({k.content_sha256 for k in seen.values()}), len(seen))
+
+    def test_unpatched_originals_are_named(self):
+        import json
+        sc1 = next(k for k in identify.KNOWN if k.key == "sc1-usa")
+        self.assertIs(identify.original_for_content(sc1.content_sha256), sc1)
+        self.assertIsNone(identify.original_for_content("0" * 64))
+        # upstream's USA profile is the unpatched USA disc; the JP originals have no profile
+        prof = json.loads((Path(__file__).resolve().parents[2] / "profiles" / "usa-v1.001.json").read_text())
+        self.assertEqual(prof["content_sha256"], sc1.content_sha256)
+        out = io.StringIO()
+        sc3 = next(k for k in identify.KNOWN if k.key == "sc3")
+        with contextlib.redirect_stdout(out):
+            cli._print_content_id(sc3.content_sha256)
+        self.assertIn("unpatched original", out.getvalue())
 
 
 if __name__ == "__main__":

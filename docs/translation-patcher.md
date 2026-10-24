@@ -234,15 +234,40 @@ DriveOrder file names. All 552 DFRs in the base package and add-ons parse, and e
 **What sfiii-native cares about does not depend on timestamps.** A profile's `content_sha256`
 covers IP.BIN, every file's size and SHA-1, and the audio from INDEX 01. It does not cover times or
 LBAs. `patch` and `identify --content-id` print this value and name the checked-in profile it
-matches, if any. For example, the default V25.1 selection on Redump Scenario 3 V1.001 should print
-`5a50848f…` (`scenario3-translation-v25_1`). That profile was made from a real wizard output, so a
-match is the acceptance test for a disc. **This has not been run yet:** there is no disc image on the
-build machine.
+matches, if any. `identify --content-id` on an unpatched Redump dump names the original disc and
+tells you to run `patch` first.
 
-**Unverified, needs a real disc:**
-- the exact `content_sha256` for each disc and revision;
-- the root time source: we use the root directory record's time;
-- whether Windows CDFS applies the ISO GMT offset;
+Measured on the Redump dumps (2026-10, sf3patch and the official V25.1 wizard give the same value
+for the default selection; see *Validation against the real wizard* below):
+
+| Disc | State | `content_sha256` |
+| --- | --- | --- |
+| MK-81383 V1.001 (Sc1 USA) | unpatched | `54aa1d2178407d7273a7fb54a7aef4b36c8364cc3b203acb997613e95eea81a9` |
+|  | V25.1 default | `0dee501e8ae60d10a288530d9f9161ae224786f08bb841a87a28e10efdccb1b5` |
+|  | V25.1 + V25+ | `64d62cfbd5756944f5349d1e7f727ff51a74e4e364e786d1cfb6cde4a2f5ff71` |
+| GS-9188 V1.003 (Sc2) | unpatched | `a855681edd77c5dd816033dc73dfc891c7e09048ecb9e45c85375dfc1543cc22` |
+|  | V25.1 default | `b967f06797b5d14f3612af8468f77e059f60402728bb8159003a539514b75d27` |
+|  | V25.1 + V25+ | `6e702ff5efa1646f094143c4f2684e98c12505e883c65473b19a9cad684e70a0` |
+| GS-9188 V2.000 (Sc2 Rev A) | unpatched | `d5def91943d7212174583fd0ca0f5ac0d031915c610aa4a2e4fe447fd2b16e38` |
+|  | V25.1 default | `1b835e56ea92ed8211ef603e4c82f923b26414fc881a177fa251be6a6a3e7dd9` |
+|  | V25.1 + V25+ | `e2dd53f65e94146bff4cc86ef035fd8a26d6599cbdcba1678c88628ecd2ae1db` |
+| GS-9203 V1.001 (Sc3) | unpatched | `598c40eab6a453e2a1fb8f4306b7d4d87f7ff8effea7f5dea43877fc6c886356` |
+|  | V25.1 default | `3fe9ec348e5feada7b15a28291f765c76d3cfbb41bef41378f9867e189ba987c` |
+|  | V25.1 + V25+ | `1b4d7442304cba8aad70e98d5d3188b0a404e4f81748689fc3df081e3b96bae8` |
+| 6106979 V1.000 (Premium Disc) | unpatched | `9a422bc58ae0dd9b00faad42c731e099c7a39a668fc4ebc43f4d08f0369bd5bb` |
+|  | V25.1 default | `a5976aa84d438c6d0dd3365e1108e19f0816a628780ecc8f42adb1df13450ac2` |
+|  | V25.1 + V25+ | `59d93cf9cb42648e77cb7960751d96398c558c987cddebfa5bf64eeb9b4596f3` |
+
+The full values are in `tools/sf3patch/identify.py` (unpatched) and in the `profiles/*-v25_1*.json`
+files (patched). **Correction:** this page used to say the default Sc3 selection should give
+`5a50848f…`, the value of the upstream `scenario3-translation-v25_1` profile. It does not: both
+sf3patch and the official wizard give `3fe9ec34…` from the Redump dump. We cannot tell how the
+upstream image was made (another wizard build, other ticks, or another dump). That profile is kept
+unchanged, and `scenario3-translation-v25_1-redump` was added for the Redump result.
+
+**Still unverified:**
+- the wizard's timestamps on real Windows CDFS (under Wine they cannot be reproduced, see below);
+- the `--addons` selection against the wizard (only the default selection was compared);
 - whether ties in the culture compare could ever differ. None occur in V25.1: no two patches in a
   category share both priority and text. With the add-ons, the JP bundle repeats some base patches'
   text and priority, but for GS-9175 only, where the base copies are not listed.
@@ -262,36 +287,47 @@ bit-level CRC and GF(2⁸) syndrome check.
 4. Never commit anything taken from the disc other than what the existing profiles already contain:
    addresses, IDs and hashes.
 
-## Validating against the real wizard (follow-up)
+## Validation against the real wizard
 
-Not done yet. To validate, run the official V25.1 wizard on the same dump, with the same ticks, and
-compare its output with ours:
+Done in October 2026 for the default selection on all five Redump dumps: MK-81383 V1.001,
+GS-9188 V1.003 and V2.000, GS-9203 V1.001 and 6106979 V1.000. The official V25.1 wizard
+(`SF3Translation.exe`, .NET 5) ran headless under Wine 10 and Xvfb. Each output was compared with
+ours:
 
 ```sh
 python3 -m tools.sf3patch compare ours.cue wizard.cue
 ```
 
-Expected result: identical apart from times. With `--times`, only the timestamps listed above should
-differ.
+Result: **identical (timestamps not compared) for all five discs**. All file contents, IP.BIN, the
+directory order, LBAs, the volume size, EDC/ECC, the audio and the CUE text (CRLF line ends) are the
+same. For Sc3, a raw `cmp` of the data tracks differs in 2668 bytes, all in sectors 16-46. Every one
+of them is a timestamp: the file times in the directory records and the root record time in the
+PVD. Every patched image also passes an independent EDC/ECC check of all Mode 1 sectors and extracts
+with `7z` like the original.
 
-The wizard is a .NET desktop GUI. It has no command line or batch mode. It
-reads the disc from a mounted CD-ROM drive letter, not from an image file, and asks for the output
-through dialogs. It is therefore **not headless** under Wine. Running it needs `wine` with a recent
-.NET desktop runtime, the image mounted as a Wine CD drive (e.g. via `winecfg` and a loop-mounted
-ISO), and a virtual display such as `xvfb-run` with someone or a script (`xdotool`) clicking through
-the dialogs. This is planned as a one-off manual check per disc, not as CI.
+Why timestamps cannot match under Wine: the wizard takes original-file times from
+`File.GetCreationTimeUtc` on the CD, and the root time from `Directory.GetCreationTime`. Wine
+reports the Linux birth time of the files it serves, so these are the time the disc was copied to
+the fake drive, not the ISO record times. On real Windows CDFS they would be the ISO times
+(`--cdfs-time`). Nothing in sfiii-native depends on them.
 
-### Comparison checklist
+### How the headless run was done
 
-1. Start from a Redump dump. `sf3patch identify x.cue` must say it is verified.
-2. Wizard side: mount the data track as a CD drive in Wine. Run the wizard with
-   `TZ=UTC xvfb-run wine SF3Patch.exe`, or on a desktop. Leave the default ticks and save
-   `wizard.bin/.cue` outside the checkout. Note the time the patch ran.
-3. Our side: run `sf3patch patch x.cue --package SF3Patch.exe -o ours.bin --host-utc-offset +00:00 --now <that time>`.
-4. Run `sf3patch compare ours.cue wizard.cue`. Any difference other than times is a bug in
-   sf3patch. Then run `--times` to check our time rules.
-5. Check that `content_sha256` matches. For Scenario 3 it should match the checked-in profile.
-6. Repeat for each disc and revision: MK-81383 V1.001, GS-9188 V1.003 and V2.000, GS-9203 V1.001,
-   6106979 V1.000, and JP Sc1 if available. Then repeat once with a few `--enable`/`--disable`
-   changes.
+The wizard has no batch mode. It reads the disc from a CD-ROM drive letter, checks the volume label
+and the TOC, and asks for the output path in a save dialog. We used a throw-away harness outside
+the repo (not committed, because it is specific to one machine):
 
+1. A Wine prefix with the .NET 5 desktop runtime. Drive `D:` is set to type `cdrom` in
+   `HKLM\Software\Wine\Drives` (`/reg:64`), with `d:` pointing at a directory holding the
+   extracted data track (`7z x`) and `d::` pointing at the data track as a 2048-byte ISO.
+2. A small `LD_PRELOAD` shim answers the Linux CD-ROM ioctls (TOC, Q subchannel) for that device,
+   with the real track layout (data track, 150-frame pregap, audio track).
+3. The volume label: Wine looks up the label through the DOS device that holds the ISO file. We put
+   the ISO on its own tmpfs, mapped it as `e:`, and wrote the PVD volume id into a `.windows-label`
+   file there. Without this the wizard sees an empty label and does not offer the disc.
+4. `xdotool` drives the dialogs: Return on the welcome page, then Right and Return to accept the
+   default ticks. The save dialog has no title, so it is found by its size. The output path is typed
+   in and Return is pressed.
+
+Still to do: the same comparison with a few `--enable`/`--disable` changes and with `--addons`,
+and a run on real Windows to check the timestamp rules.

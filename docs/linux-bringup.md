@@ -121,7 +121,7 @@ PKG="../build/rt/sfiii-package/SFIII Native/payload"
 
 ## Disc revision profiles: how they work and what a new one needs
 
-This is the most important part for the top roadmap item. The aim is to support the **latest Shining Force III Translation Project release** (V25.1 plus the post-release updates published under `https://sf3transftp.shiningforcecentral.com/V25+/`) for every scenario. Upstream today registers only Sc1 *unpatched* USA V1.001, Sc2 translation **v24**, and Sc3 V25.1.
+This is the most important part for the top roadmap item. The aim is to support the **latest Shining Force III Translation Project release** (V25.1 plus the post-release updates published under `https://sf3transftp.shiningforcecentral.com/V25+/`) for every scenario. Upstream registers Sc1 *unpatched* USA V1.001, Sc2 translation **v24**, and Sc3 V25.1. Branch `latest-translation-profiles` adds the V25.1 default selection for Sc1 USA, Sc2 on both bases and the Redump Sc3 dump; see *Latest-translation profiles* below.
 
 ### Identity
 
@@ -169,16 +169,15 @@ Because steps 2-4 are mostly *derivation*, a new translation revision generally 
 - seeds revalidated for any code file the patch changed
 - `stack_return_calls` rechecked if `1ST.BIN` changed (the Sc3+PD "Music Resume Fix RC2" touches `1ST.BIN`)
 
-### Code paths that also hard-code the three revisions
+### Code paths that hard-code the registered revisions
 
 A new profile is not picked up automatically. These must be updated together:
 - `tools/check-source-package.py`: profile allowlist
 - `tools/disc_profile.py`: error message
-- `desktop/launcher_posix.py`: `PROFILES` / `DATA_FOLDERS` / combobox labels
-- `desktop/Launcher.cs`: `Profiles` / `DataSuffixes` / labels / the Sc3 data-folder suffix check
-- `desktop/prepare*.py` and the launchers' `ready()` compare `desktop-ready.json`'s `profile_id` against **one** expected id per scenario slot
+- `desktop/launcher_posix.py`: `PROFILES` (a tuple of accepted profile ids per launcher slot) and the combobox labels
+- `desktop/Launcher.cs`: `Profiles` (a `string[][]`, one array per slot) and the labels
 
-So supporting two Sc2 bases needs either one slot per profile or a "set of accepted ids per scenario". The latter is the smaller change.
+Each launcher slot accepts a **set** of profile ids. `ready()` checks that `desktop-ready.json`'s `profile_id` is one of the slot's ids. The data folders (`DATA_FOLDERS`, `DataSuffixes`) are still one per slot and keep their old names, so existing game-data folders keep working. `tools/tests/test_posix.py` checks that every `profiles/*.json` id is in exactly one slot, in both launchers.
 
 ### What the V25+ patch set means
 
@@ -194,9 +193,43 @@ Several touch code files: X002, X013, X014, X017, X1 scenes, and `1ST.BIN`. Some
 1. Register **one canonical profile per scenario/base**: the PatchWizard's default selection, with the exact patch list and versions recorded in the profile's `support`/evidence text. Sc2 gets two (V1.003-based and V2.000-based).
 2. Later, consider a "base profile + allowed variants" mechanism: identify by the manifest *minus* files whose diffs are known not to touch code, or keep a per-mod table of file hashes and of code-affecting deltas such as seeds and `bytes`. Do not loosen identity for code files without a seed revalidation step.
 
+## Latest-translation profiles (branch `latest-translation-profiles`)
+
+Made from the Redump dumps with `tools/sf3patch` and the **default V25.1 selection** (no `--addons`). For every disc the default output was checked against the official V25.1 wizard run under Wine: identical apart from timestamps (see [translation-patcher.md](translation-patcher.md)).
+
+| Launcher slot | Profile id | Base disc (Redump) | `content_sha256` | Seeds |
+|---|---|---|---|---|
+| Scenario 1 | `scenario1-usa-v1_001` (upstream, unpatched) | MK-81383 V1.001 | `54aa1d21…81a9` | upstream |
+| Scenario 1 | `scenario1-usa-translation-v25_1` | MK-81383 V1.001 | `0dee501e…b1b5` | copied from `scenario1-usa-v1_001`. Every seed and BOOT stack-return site has the same bytes as on the unpatched disc. |
+| Scenario 2 | `scenario2-translation-v25_1-v2_000` | GS-9188 V2.000 (Rev A) | `1b835e56…7dd9` | copied from v24. The v24 profile was made on the V2.000 base, and its `1ST.BIN` is the same as the original Rev A's. |
+| Scenario 2 | `scenario2-translation-v25_1-v1_003` | GS-9188 V1.003 | `b967f067…5d27` | copied from v24, with 10 BOOT (`1ST.BIN`) seeds relocated for V1.003's BOOT. The new addresses were found by matching the function bytes. The stack-return sites are unchanged. |
+| Scenario 2 | `scenario2-translation-v24` (upstream) | | | upstream |
+| Scenario 3 | `scenario3-translation-v25_1-redump` | GS-9203 V1.001 | `3fe9ec34…987c` | copied from `scenario3-translation-v25_1`. The default V25.1 leaves `1ST.BIN` unchanged. |
+| Scenario 3 | `scenario3-translation-v25_1` (upstream) | | `5a50848f…3252` | upstream. Kept, but neither sf3patch nor the official wizard reproduces it from the Redump dump. |
+
+Results on Linux x86-64 (Debian 13, clang 19, `tools/windows.cmake` host, headless, software rendering), 2026-10-24. Each run: probe → audit → generate → emission check (`--player`) → build → `saturn --headless`, 4500 vblanks with a scripted Start/A route.
+
+| Profile | Modules | Functions | Unresolved indirect sites | Review items | Boot |
+|---|---|---|---|---|---|
+| Sc1 USA unpatched (upstream, control) | 255 | 16572 | 935 | X004, X019, X3ELEM5 | title → Gabriel's opening scene |
+| Sc1 USA V25.1 | 255 | 16572 | 935 | X004, X019, X3ELEM5 | title ("Translation V25.1") → opening scene, translated text |
+| Sc2 V25.1 / V2.000 | 288 | 20953 | 1159 | X004, X019, X3ELEM5 | title → opening scene |
+| Sc2 V25.1 / V1.003 | 288 | 20961 | 1154 | X004, X019, X3ELEM5 | title → opening scene |
+| Sc3 V25.1 Redump | 274 | 25227 | 1299 | X004 | title → opening scene |
+
+There were no crashes, hangs, or fatal or unresolved-call messages in the run logs. The audit's remaining "undefined" discovery findings in configured modules (X021/X022/X032, and X019 `060A0000` on Sc3) are the same as on the upstream baseline. This is a **boot check only**. Battles, saves, scene coverage and the routes in [testing-plan.md](testing-plan.md) are not validated yet.
+
+**Why there are no `--addons` profiles.** Every patch selection gives a new `content_sha256`, so the set of possible identities is combinatorial. The V25+ add-ons also change code: Mod Essentials and the icon mods change `X014`/`X017`, and Music Resume Fix changes `1ST.BIN`. Each one would need its own seed revalidation and its own audit. The policy stays as above: one canonical profile per scenario and base, using the wizard's default selection. An add-on profile can be added later, using the same steps, for a selection the Translation Project recommends. The `--addons` images were made and pass EDC/ECC and extraction, but they are not registered.
+
+**Premium Disc (6106979 V1.000).** Not done. The patched content id is `a5976aa8…0ac2`. It needs:
+- a fourth launcher slot and data folder, in both launchers and in `prepare*.py --scenario`;
+- a base profile from scratch: its load bases, `model_bases`, BOOT seeds and stack-return sites (there is no existing profile to copy);
+- a full module audit with `--require-complete`;
+- save-format handling, if it uses one.
+
 ## Prioritized roadmap
 
-1. **Profiles for the latest-translation-patched Sc1, Sc2, Sc3, then the Premium Disc.**
+1. **Profiles for the latest-translation-patched Sc1, Sc2, Sc3, then the Premium Disc.** Sc1/Sc2/Sc3 default V25.1 profiles are in (boot-checked on Linux); the Premium Disc and gameplay routes remain.
    - Sc1 USA (MK-81383) plus SF3TRANS latest, alongside the existing unpatched V1.001.
    - Sc2 latest on **both** bases (V1.003 and V2.000), replacing v24 as the default.
    - Sc3 V25.1 plus post-release updates. Recheck BOOT `stack_return_calls` because of the 1ST.BIN music-resume fix.
