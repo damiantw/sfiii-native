@@ -39,7 +39,8 @@ def main():
         sys.exit(f'no SFORCE3{mm["scenario"]}_{a.record} record in {a.save}')
     out = diff.run(a.saturn, a.cue, a.profile, a.core, recs[0]['record'], a.out, a.vblanks, a.seed,
                    a.every, a.tick)
-    print(json.dumps(dict(out['summary'], loaded_at=out['loaded_at'], core_frames=out['core_frames'])))
+    print(json.dumps(dict(out['summary'], unreached=out['unreached'], our_load=out['our_load_vblank'],
+                     core_load=out['core_load_frame'], core_frames=out['core_frames'])))
 
 
 if __name__ == '__main__':

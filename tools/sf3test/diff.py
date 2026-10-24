@@ -69,8 +69,84 @@ def summarize(points, loaded_from=None):
                 first_divergence=first['vblank'] if first else None)
 
 
+LOAD_JUMP = 600       # the tick (play time) jumps by more than this when a save is loaded
+C_EVERY = 158         # menu/dialogue confirm interval (each side on its own clock)
+
+
+class OurSide:
+    def __init__(self, run):
+        self.r, self.frames = run, 1
+
+    def step(self):
+        self.r.step()
+        self.frames += 1
+
+    def pad(self, buttons):
+        self.r.pad('+'.join(sorted(buttons)))
+
+    def read(self, addr, n):
+        return self.r.read(addr, n)
+
+    def frame(self):
+        return self.r.frame()
+
+
+class CoreSide:
+    def __init__(self, core):
+        self.c, self.frames = core, 0
+
+    def step(self):
+        self.c.run()
+        self.frames += 1
+
+    def pad(self, buttons):
+        self.c.pads[0] = set(buttons)
+
+    def read(self, addr, n):
+        return self.c.read(addr, n)
+
+    def frame(self):
+        return self.c.frame
+
+
+def tick_of(side, tick):
+    return int.from_bytes(side.read(tick, 4), 'big')
+
+
+def drive_to_load(side, tick, start_ticks, limit, start_frames=None):
+    """Title and Continue menu on one side: START when the boot tick reaches each of `start_ticks`
+    (or at `start_frames`, appending the ticks there to `start_ticks`), then C every C_EVERY frames
+    until the tick jumps (the save's play time is restored). Returns the frame of the load, or None."""
+    pending = list(start_frames if start_frames else start_ticks)
+    release, last_c, prev = None, None, tick_of(side, tick)
+    while side.frames < limit:
+        now = tick_of(side, tick)
+        if start_frames and pending and side.frames >= pending[0]:
+            start_ticks.append(now)
+        if prev is not None and now - prev > LOAD_JUMP:
+            side.pad(())
+            return side.frames
+        prev = now
+        if release is not None and side.frames >= release:
+            side.pad(())
+            release = None
+        if pending and (side.frames >= pending[0] if start_frames else now >= pending[0]):
+            pending.pop(0)
+            side.pad(('START',))
+            release, last_c = side.frames + 8, side.frames
+        elif not pending and release is None and (last_c is None or side.frames - last_c >= C_EVERY):
+            side.pad(('C',))
+            release, last_c = side.frames + 8, side.frames
+        side.step()
+    return None
+
+
 def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, tick=None, tol=24):
-    """Play one save on both and compare; writes work/diff.json and side-by-side pictures."""
+    """Play one save on both and compare; writes work/diff.json and side-by-side pictures.
+
+    Each side drives the title and Continue menu on its own (dialogue speed differs with CD timing),
+    until the save's play-time tick is restored; from there the same seeded inputs and the sync
+    points are placed by that tick, which both sides count identically while the game runs."""
     from saturnrecomp import agent, reference as R
 
     mm = memory_map.lookup(profile)
@@ -86,57 +162,71 @@ def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, t
         (work / 'backup.bin.cartridge').unlink()
     (work / 'core-save' / (Path(cue).stem + '.srm')).write_bytes(saves.build_bram([rec]))
 
-    steps = sweep.menu_inputs() + sweep.explore_inputs(sweep.LOAD_END + 60, vblanks - 30, seed)
-    script = sweep.input_script(steps)
-    (work / 'input.txt').write_text(script + '\n')
-    presses = R.presses(script)
-    checks = list(range(every, vblanks + 1, every))
-
-    ticks, ours = {}, {}
+    # ours: the boot ticks at our START presses, the load, then seeded inputs and sync points by tick
     with agent.start(str(saturn), ['--headless', '--cue', str(cue), '--save', str(work / 'backup.bin'),
                                    '--settings', '-'], str(work / 'ours')) as r:
-        for v in range(1, vblanks + 1):
-            for port, buttons in presses.get(v, []):
-                r.pad('+'.join(sorted(buttons)), pad=port + 1)
-            ticks[v] = r.read32(tick)
-            if v in checks:
-                ours[v] = dict(block=r.read(base, size), frame=r.frame())
-            if v < vblanks:
-                r.step()
+        ours = OurSide(r)
+        start_ticks = []
+        our_load = drive_to_load(ours, tick, start_ticks, vblanks, start_frames=(1100, 1308))
+        steps = sweep.explore_inputs(1, max(vblanks - (our_load or vblanks), 2), seed)
+        presses = R.presses(sweep.input_script(steps))
+        place, events, ours_at = R.Place(), [], {}
+        for k in range(1, (vblanks - our_load + 1) if our_load else 0):
+            for _, buttons in presses.get(k, []):
+                ours.pad(buttons)
+            at = place.step(tick_of(ours, tick))
+            if k in presses:
+                events.append((at, 'pad', presses[k][0][1]))
+            if k % every == 0:
+                events.append((at, 'check', k))
+                ours_at[k] = dict(block=ours.read(base, size), frame=ours.frame(), at=at,
+                                  wram=ours.read(0x06000000, 0x100000))
+            ours.step()
+        our_end = tick_of(ours, tick)
 
     R.WORK_RAM = YABAUSE_WORK_RAM
     core = R.Core(core_so, str(work / 'core-system'), str(cue), options=YABAUSE_OPTIONS,
                   save_dir=str(work / 'core-save'))
-    theirs = {}
-
-    def on_shot(v, n):
-        theirs[v] = dict(block=core.read(base, size), frame=core.frame, frame_no=n)
-
-    core_presses = {v: [(p, set(b)) for p, b in what] for v, what in presses.items()}
-    done = R.play_synced(core, tick, ticks, core_presses, checks, vblanks * 3, on_shot)
-    if done is None and core.frame is not None:     # the reference never reached our later points
-        core.frame.save_png(str(work / 'core-last.png'))
-    core_tick_end = core.read32(tick)
+    theirs = CoreSide(core)
+    core_load = drive_to_load(theirs, tick, start_ticks, vblanks * 3)
+    theirs_at, j, place = {}, 0, R.Place()
+    events.sort(key=lambda e: (e[0], e[1] != 'pad'))
+    while core_load is not None and j < len(events) and theirs.frames < vblanks * 4:
+        now = place.step(tick_of(theirs, tick))
+        while j < len(events) and events[j][0] <= now:
+            _, kind, what = events[j]
+            if kind == 'pad':
+                theirs.pad(what)
+            else:
+                theirs_at[what] = dict(block=theirs.read(base, size), frame=theirs.frame(),
+                                       frame_no=theirs.frames, wram=theirs.read(0x06000000, 0x100000))
+            j += 1
+        theirs.step()
+    core_end = tick_of(theirs, tick)
+    if j < len(events) and theirs.frame() is not None:
+        theirs.frame().save_png(str(work / 'core-last.png'))
 
     points = []
-    for v in checks:
-        if v not in theirs:
-            points.append(dict(vblank=v, core_frame=None, unreached=True, state_match=False,
-                               map=[ours[v]['block'][memory_map.MAP_ID], None]))
+    for k in sorted(ours_at):
+        if k not in theirs_at:
+            points.append(dict(vblank=k, core_frame=None, unreached=True, state_match=False,
+                               map=[ours_at[k]['block'][memory_map.MAP_ID], None]))
             continue
-        p = compare_point(v, ours[v], theirs[v])
-        if ours[v]['frame'] is not None and theirs[v]['frame'] is not None:
-            n, worst, pic = R.difference(ours[v]['frame'], theirs[v]['frame'])
-            p.update(dots_differing=n, worst=worst,
-                     dots_over_tol=dots_over(ours[v]['frame'], theirs[v]['frame'], tol))
-            pic.save_png(str(work / f'side-{v}.png'))
+        p = compare_point(k, ours_at[k], theirs_at[k])
+        p['wram_bytes_differing'] = sum(a != b for a, b in zip(ours_at[k]['wram'], theirs_at[k]['wram']))
+        p['block_changed_since_load'] = ours_at[k]['block'] != ours_at[min(ours_at)]['block']
+        a, b = ours_at[k]['frame'], theirs_at[k]['frame']
+        if a is not None and b is not None:
+            n, worst, pic = R.difference(a, b)
+            p.update(dots_differing=n, worst=worst, dots_over_tol=dots_over(a, b, tol))
+            pic.save_png(str(work / f'side-{k}.png'))
         points.append(p)
-    expect = (record['data'][memory_map.MAP_ID], record['data'][memory_map.BATTLE_ID])
-    loaded = next((p['vblank'] for p in points if not p.get('unreached') and tuple(p['map']) == (expect[0], expect[0])
-                   ), None)
-    out = dict(profile=profile, vblanks=vblanks, seed=seed, tick=f'{tick:08X}', core_frames=done or core.frames,
-               core_finished=done is not None, our_tick_end=ticks[vblanks], core_tick_end=core_tick_end,
-               expected_map=expect[0], loaded_at=loaded, summary=summarize(
-                   [p for p in points if not p.get('unreached')], loaded), points=points)
+    out = dict(profile=profile, vblanks=vblanks, seed=seed, tick=f'{tick:08X}',
+               our_load_vblank=our_load, core_load_frame=core_load, core_frames=theirs.frames,
+               our_tick_end=our_end, core_tick_end=core_end,
+               expected_map=record['data'][memory_map.MAP_ID],
+               note='vblank in points counts from our load',
+               summary=summarize([p for p in points if not p.get('unreached')]),
+               unreached=sum(1 for p in points if p.get('unreached')), points=points)
     (work / 'diff.json').write_text(json.dumps(out, indent=1) + '\n')
     return out
