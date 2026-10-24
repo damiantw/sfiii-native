@@ -167,6 +167,10 @@ def run_target(saturn, cue, backup, work, vblanks, mm, seed, expect=None, shots_
     result = analyze(log, progress, shot_stats, vblanks, expect)
     if rc == 'timeout' and result['status'] == 'ok':
         result['status'] = 'hang'
+    # Runs are reproducible from their inputs (repeated under load: same coverage, progress and shots);
+    # the input script's hash says whether two runs are comparable at all.
+    import hashlib
+    result.update(input_sha1=hashlib.sha1((work / 'input.txt').read_bytes()).hexdigest()[:12])
     result.update(rc=rc, seconds=round(time.time() - t0, 1), work=str(work),
                   last_shot=str(work / f'shot-{shot_stats[-1][0]}.png') if shot_stats else None,
                   progress=progress[:200])
