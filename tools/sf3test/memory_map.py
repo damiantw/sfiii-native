@@ -21,6 +21,11 @@ UNIT_STRIDE = 0xB0
 UNIT_COUNT = 60
 UNIT_X, UNIT_Y, UNIT_FLAGS, UNIT_HP = 0x7C, 0x7E, 0x80, 0x82
 UNIT_ON_FIELD = 0x40
+# Round 12 (sc1-usa b92d515b, black-box: Battle 1 records read against the status window and the
+# party's known classes): u16 max HP at +0x10, max MP byte +0x12; in-battle (current) values:
+# HP u16 +0x82, MP +0x84, attack +0x85, defence +0x86, agility +0x87, movement +0x89.
+UNIT_MAX_HP, UNIT_MAX_MP = 0x10, 0x12
+UNIT_MP, UNIT_ATK, UNIT_DEF, UNIT_AGI, UNIT_MOV = 0x84, 0x85, 0x86, 0x87, 0x89
 BATTLE_UNITS = {'scenario1-usa-v25_1': dict(enemies=0x0602F6F0, force=0x06032030)}
 
 # Map ids a map sweep must not edit into a save: checked on Beetle Saturn with a real BIOS (the game
@@ -81,6 +86,34 @@ def read_units(read, table):
         e = raw[k * UNIT_STRIDE:(k + 1) * UNIT_STRIDE]
         if e[UNIT_FLAGS] & UNIT_ON_FIELD:
             out.append((k, e[UNIT_X], e[UNIT_Y], e[UNIT_FLAGS], int.from_bytes(e[UNIT_HP:UNIT_HP + 2], 'big')))
+    return out
+
+
+def looks_like_force(rec):
+    """A force record starts with its name (printable ASCII, NUL-padded) and has flag 0x80; other
+    battles may put their tables elsewhere (round 12: Sc1 Battle 30 does), so check before a poke."""
+    name = rec[:12].rstrip(b'\0 ')
+    return bool(name) and all(32 <= c < 127 for c in name) and bool(rec[UNIT_FLAGS] & 0x80)
+
+
+def assist_writes(read, units, enemy_hp=None, hp=999, stat=99, move=12):
+    """Test-only assist (never on by default): [(addr, bytes)] that give every on-field force unit
+    `hp` HP and max HP, full MP and `stat` attack/defence/agility, `move` movement, and, with
+    `enemy_hp`, every on-field enemy with more HP than that `enemy_hp`. Nothing for an empty table."""
+    out = []
+    raw = read(units['force'], UNIT_STRIDE * UNIT_COUNT)
+    for k in range(UNIT_COUNT):
+        e = raw[k * UNIT_STRIDE:(k + 1) * UNIT_STRIDE]
+        if not e[UNIT_FLAGS] & UNIT_ON_FIELD or not looks_like_force(e):
+            continue
+        a = units['force'] + k * UNIT_STRIDE
+        out += [(a + UNIT_MAX_HP, hp.to_bytes(2, 'big')), (a + UNIT_HP, hp.to_bytes(2, 'big')),
+                (a + UNIT_MAX_MP, bytes([stat])), (a + UNIT_MP, bytes([stat])),
+                (a + UNIT_ATK, bytes([stat, stat, stat])), (a + UNIT_MOV, bytes([move]))]
+    if enemy_hp is not None:
+        for k, x, y, f, h in read_units(read, units['enemies']):
+            if h > enemy_hp and not f & 0x80 and x < 128 and y < 128:
+                out.append((units['enemies'] + k * UNIT_STRIDE + UNIT_HP, enemy_hp.to_bytes(2, 'big')))
     return out
 
 

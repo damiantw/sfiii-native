@@ -44,6 +44,7 @@ class Policy:
         self.heading = self.rng.choice(DIRS)
         self.idle = 0
         self.attacks = 0
+        self.cast, self.casts, self.tried = False, 0, {}
 
     def town(self):
         r = self.rng.random()
@@ -125,19 +126,24 @@ class Policy:
         return self.battle(state.get('turn', 0)) if state.get('battle') else self.town()
 
 
-def play(side, profile, frames, seed, log=None, reload=None, prelude=None):
+def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
-    over), `reload(side)` is called to load the save again, if given; each such reset is logged."""
+    over), `reload(side)` is called to load the save again, if given; each such reset is logged.
+    `assist` (test-only, off unless given): 'party' pokes the force's stats up each battle turn
+    (memory_map.assist_writes), 'party+enemy1' also sets every enemy's HP to 1."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
+    pol.cast = bool(assist)
     presses, events = [], []
     done, last_key, same, turn = 0, None, 0, 0
     prev = None
     held = None
     resets = []
     outcomes, last_outcome = [], None
+    seen_outcome, seen_at = None, 0
+    pokes = 0
     last_tick = None
 
     def state():
@@ -195,8 +201,18 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None):
             if prev and b and prev[1] != b:
                 turn = 0
             prev = (m, b)
+        if b and mm.get('units') and assist:
+            for addr, data in memory_map.assist_writes(side.read, mm['units'],
+                                                       enemy_hp=1 if assist == 'party+enemy1' else None):
+                side.write(addr, data)
+                pokes += 1
         if b and mm.get('units'):
-            oc = battle_outcome(side.read, mm['units'])
+            # debounced: the on-field flag clears for a while in attack scenes (round 11), so an
+            # outcome counts once it has read the same for OUTCOME_HOLD frames
+            raw_oc = battle_outcome(side.read, mm['units'])
+            if raw_oc != seen_outcome:
+                seen_outcome, seen_at = raw_oc, done
+            oc = seen_outcome if done - seen_at >= OUTCOME_HOLD or seen_outcome is None else last_outcome
             if oc != last_outcome:
                 outcomes.append((done, oc))
                 if log:
@@ -215,7 +231,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None):
             if done >= frames:
                 break
     script = script_text(presses)
-    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
+    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, casts=pol.casts, pokes=pokes, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
                 script=script)
 
 
@@ -244,6 +260,7 @@ STEP = {'RIGHT': (1, 0), 'LEFT': (-1, 0), 'UP': (0, 1), 'DOWN': (0, -1)}
 # without one (round 11: a boxed-in unit's C opened it and Attack hit); cursor starts on Hold;
 # UP = Attack, LEFT = Magic, RIGHT = Item, DOWN = Hold. Attack with no one in reach says
 # 'There is no target...'; with a target, the next C picks the highlighted enemy and the next C confirms.
+OUTCOME_HOLD = 600
 RING = {'attack': 'UP', 'magic': 'LEFT', 'item': 'RIGHT', 'hold': 'DOWN'}
 
 
@@ -294,6 +311,8 @@ def aimed_turn(side, units, pol, press):
         return tap(('C',), gap=30) * 4
     if panel_share(side.frame()) > 0.02:          # a menu or message is up: back out (B), or C
         pol.idle += 1
+        if pol.idle % 5 == 0:
+            return tap(('C',), gap=30) * 6
         return tap(('C',), gap=30) if pol.idle % 3 == 0 else tap(('B',), gap=20)
     before = pos()
     cx = sum(e[0] for e in live) / len(live)
@@ -312,6 +331,10 @@ def aimed_turn(side, units, pol, press):
         # every other idle turn tries Attack in place (C, UP, C, C); with no one in reach the
         # game says so and the trailing C closes it.
         pol.idle += 1
+        if pol.idle % 5 == 0:
+            # a prompt that wants a choice (round 12: 'What will you drop for the Medical Herb?'
+            # when a full inventory gets an item): C through it, nothing in between to back out
+            return tap(('C',), gap=30) * 6
         if pol.idle % 2 == 0 and any(next_to(p, live) for p in before.values()):
             pol.attacks += 1
             return [(('C',), 6), ((), 30), ((RING['attack'],), 6), ((), 14), (('C',), 6), ((), 30),
@@ -355,7 +378,20 @@ def aimed_turn(side, units, pol, press):
     adjacent = dist(pos()[me]) <= 1
     press(('C',), 6)
     press((), 30)                                  # command ring, cursor on Hold
-    if adjacent:
+    cast_now = adjacent and pol.cast and pol.tried.get(me, 0) % 2 == 0
+    if adjacent and pol.cast:
+        pol.tried[me] = pol.tried.get(me, 0) + 1
+    if cast_now:
+        # --assist runs: each unit's turns alternate Magic and Attack, Magic first (first spell, its first level, the
+        # highlighted target, confirm); a unit with no spells gets a message the trailing C closes
+        press((RING['magic'],), 6)
+        press((), 14)
+        for _ in range(4):
+            press(('C',), 6)
+            press((), 30)
+        pol.attacks += 1
+        pol.casts += 1
+    elif adjacent:
         press((RING['attack'],), 6)
         press((), 14)
         press(('C',), 6)
