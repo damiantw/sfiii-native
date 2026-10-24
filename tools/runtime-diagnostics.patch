@@ -60,7 +60,7 @@ index 566fcfd..d5bb5fc 100644
          else if (!std::strcmp(a, "--peek") && more) cfg.peek = argv[++i];
          else if (!std::strcmp(a, "--coverage") && more) cfg.coverage = argv[++i];
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..08eaa4b 100644
+index cb6af72..dc484d8 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,7 +3,9 @@
@@ -73,7 +73,54 @@ index cb6af72..08eaa4b 100644
  #include <cstring>
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
-@@ -113,42 +115,59 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -13,19 +15,23 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
+ // Areas by the top three bits: 0 cached, 1 cache-through (the same 27-bit
+ // external bus), 2 associative purge (writes drop a cache line: nothing to
+ // do), 3 the cache's address array, 6 its data array, 7 the on-chip
+-// registers. WRAM-H repeats every MiB up to 0x07FFFFFF.
++// registers. WRAM-H repeats every MiB up to 0x07FFFFFF; WRAM-L at
++// 0x00200000 repeats once, at 0x00300000 (the fast paths take only the first).
+ 
+-static uint32_t wram_h_read(uint32_t o, int size) {
++static uint32_t wram_read(const uint8_t* m, uint32_t o, int size) {
+     uint32_t v = 0;
+-    for (int i = 0; i < size; ++i) v = v << 8 | g_wram_h[(o + i) & 0xFFFFFu];
++    for (int i = 0; i < size; ++i) v = v << 8 | m[(o + i) & 0xFFFFFu];
+     return v;
+ }
++static uint32_t wram_h_read(uint32_t o, int size) { return wram_read(g_wram_h, o, size); }
++static bool wram_l_mirror(uint32_t p) { return p >= 0x00300000u && p < 0x00400000u; }
+ 
+ uint32_t sh2_io_read(uint32_t a, int size) {
+     uint32_t area = a >> 29;
+     if (area <= 1) {
+         uint32_t p = a & 0x07FFFFFFu;
+         if (p >= 0x06000000u) return wram_h_read(p, size);
++        if (wram_l_mirror(p)) return wram_read(g_wram_l, p, size);
+         return sh2_mmio_read(p, size);
+     }
+     if (area == 2) return 0;
+@@ -40,6 +46,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+             for (int i = size - 1; i >= 0; --i, v >>= 8) g_wram_h[(p + i) & 0xFFFFFu] = (uint8_t)v;
+             return;
+         }
++        if (wram_l_mirror(p)) {
++            for (int i = size - 1; i >= 0; --i, v >>= 8) g_wram_l[(p + i) & 0xFFFFFu] = (uint8_t)v;
++            return;
++        }
+         sh2_mmio_write(p, v, size);
+         return;
+     }
+@@ -50,7 +60,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+ static uint8_t* host(uint32_t a) {
+     a &= 0x1FFFFFFFu;
+     if (a >= 0x06000000u && a < 0x08000000u) return g_wram_h + (a & 0xFFFFFu);
+-    if (a >= 0x00200000u && a < 0x00300000u) return g_wram_l + (a & 0xFFFFFu);
++    if (a >= 0x00200000u && a < 0x00400000u) return g_wram_l + (a & 0xFFFFFu);
+     return nullptr;
+ }
+ 
+@@ -113,42 +123,59 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -146,7 +193,7 @@ index cb6af72..08eaa4b 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -185,10 +204,31 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -185,10 +212,31 @@ static bool inside_loaded_program(uint32_t addr) {
  
  void sh2_call(SH2Context& c, uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;
