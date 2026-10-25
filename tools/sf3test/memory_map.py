@@ -26,6 +26,36 @@ UNIT_ON_FIELD = 0x40
 # HP u16 +0x82, MP +0x84, attack +0x85, defence +0x86, agility +0x87, movement +0x89.
 UNIT_MAX_HP, UNIT_MAX_MP = 0x10, 0x12
 UNIT_MP, UNIT_ATK, UNIT_DEF, UNIT_AGI, UNIT_MOV = 0x84, 0x85, 0x86, 0x87, 0x89
+# Sc1 town scenes (round 15, sc1-usa b92d515b, read from our generated code for X002/X008 and
+# checked live over the agent socket on save 1:30). The scene loader (X002 06 02AD00, reached through
+# the X002 vector at 0602880C with r4 = mode) takes the scene index from the halfword at
+# state+0x10 (the harness's map id), indexes a table of 16-byte records (pointer at TABLE_PTR) and
+# loads record+2 (a file index = position in the disc's sorted root directory) to 0605F000 when it
+# differs from the overlay loaded (FID_LOADED). The town engine X008 looks the player's tile up in a
+# 64x64 byte map at 060B8000 (x and z 16.16 fixed >> 21, high nibble 1, 2 or 5 = an event kind,
+# low nibble its id, written to the event block that 0602886C points to: kind 2 -> +0, 1 -> +4, 5 -> +28).
+# Checked live (1:30, after the HQ talk): writing 1 to event+4 (the HQ exit tile's kind-1 id) takes the
+# game out of the door to scene 86 (X1OBCHUR, Quonus outside), the same as walking onto the tile.
+# Re-pointing state+0x10 to a scene on another map (41 Saraband, 56 shop) during that exit loads
+# the new overlay file but stays black, polling BOOT 060125E0 (a test-made state, not a port result).
+SC1_SCENES = dict(table_ptr=0x0602DA74, fid_loaded=0x0602E8E4, tile_map=0x060B8000, event_ptr=0x0602886C, exit_event=4,
+                  record=16, shops={56: 'X1S_SHOP', 66: 'X1BAR01', 159: 'X1SHOP_T', 164: 'X1SHOP_T'})
+
+
+def scene_records(raw, record=16):
+    """[(index, map, fid)] from the bytes of the scene table."""
+    out = []
+    for i in range(len(raw) // record):
+        e = raw[i * record:(i + 1) * record]
+        out.append((i, int.from_bytes(e[0:2], 'big'), int.from_bytes(e[2:4], 'big')))
+    return out
+
+
+def tile_events(tiles):
+    """{(x, z): (kind, id)} for the event tiles of a 64x64 tile map."""
+    return {(i % 64, i // 64): (b >> 4, b & 15) for i, b in enumerate(tiles) if b >> 4 in (1, 2, 5)}
+
+
 BATTLE_UNITS = {'scenario1-usa-v25_1': dict(enemies=0x0602F6F0, force=0x06032030)}
 # Round 13 (sc2-2.000 58271484, sc3 0e80231f; black-box, same method: scan work RAM for named
 # records at stride 0xB0 in a Ch1 battle, then read them against the status window: Sc2 Ch1 :01
