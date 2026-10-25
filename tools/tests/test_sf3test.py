@@ -343,6 +343,36 @@ class Autoplay(unittest.TestCase):
         self.assertTrue(set(autoplay.DIRS) <= pressed and {'A', 'C'} <= pressed)
         self.assertGreater(r['legs'], 4)
 
+    def test_battle_with_no_unit_moving_ends_idle(self):
+        P = 'scenario3-v25_1-redump'
+        units = memory_map.lookup(P)['units']
+
+        class Frozen(FakeSide):
+            """One force and one enemy record, both live, that never move (Sc2 free-walk after a win)."""
+            def read(self, addr, n):
+                for base, x in ((units['force'], 3), (units['enemies'], 9)):
+                    if base <= addr < base + 0xB0 * 60:
+                        rec = bytearray(0xB0 * 60)
+                        for k in range(1):
+                            o = k * 0xB0
+                            rec[o] = 0x41
+                            rec[o + memory_map.UNIT_X], rec[o + memory_map.UNIT_Y] = x, 5
+                            rec[o + memory_map.UNIT_HP:o + memory_map.UNIT_HP + 2] = (7).to_bytes(2, 'big')
+                            rec[o + memory_map.UNIT_MAX_HP:o + memory_map.UNIT_MAX_HP + 2] = (9).to_bytes(2, 'big')
+                            rec[o + memory_map.UNIT_FLAGS], rec[o + 0x98], rec[o + 0x99] = 0xC0, 1, 1
+                        off = addr - base
+                        return bytes(rec[off:off + n])
+                return super().read(addr, n)
+
+            def frame(self):
+                top = bytes([self.frames % 250, 0, 0]) * (320 * 100)
+                class F:
+                    width, height, rgb = 320, 224, top + bytes(320 * 124 * 3)
+                return F()
+        r = autoplay.play(Frozen(P, battle_at=0), P, 60000, 1, walker=True)
+        self.assertIn('idle', [o for f, o in r['outcomes']])
+        self.assertEqual([o for f, o in r['outcomes']].count('idle'), 1)
+
     def test_back_at_title_reloads(self):
         def reload(side):
             for _ in range(200):
