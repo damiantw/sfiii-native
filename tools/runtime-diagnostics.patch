@@ -2540,7 +2540,7 @@ index 33a2cdd..590690a 100644
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..4b0f1c8 100644
+index 6cbd98f..c2a7c84 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -2593,7 +2593,7 @@ index 6cbd98f..4b0f1c8 100644
  
  // ---- the BIOS (bios.cpp) -----------------------------------------------------------
  void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
-@@ -213,6 +230,8 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
+@@ -213,11 +230,15 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
  void video_init();
  void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
  void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
@@ -2602,6 +2602,13 @@ index 6cbd98f..4b0f1c8 100644
  uint32_t video_read(uint32_t a, int size);    // VDP1, VDP2, SCSP (canonical addresses)
  void video_write(uint32_t a, uint32_t v, int size);
  bool video_owns(uint32_t a);
+ uint64_t video_frame_changes();
+ uint64_t video_frame_ns();                      // one field, 263 lines
++uint64_t video_line_ns();                       // one raster line
++uint64_t video_vbout_ns();                      // the time of the last VBlank-OUT (line 0) done
+ uint64_t video_draws();
+ 
+ // ---- sound (sound.cpp, scsp.cpp through sound.h) ----------------------------------------------
 diff --git a/runtime/src/machine/scu.cpp b/runtime/src/machine/scu.cpp
 index 52ca0df..509f1a3 100644
 --- a/runtime/src/machine/scu.cpp
@@ -4214,10 +4221,24 @@ index 1786242..dfe275c 100644
  // ---- the 68000 and the pace (sound.cpp) ----------------------------------------------------
  void sound_irq_changed();                             // the SCSP's interrupt to the 68000 moved
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..1ad83e1 100644
+index 8589d33..00988da 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
-@@ -33,11 +33,13 @@
+@@ -29,15 +29,26 @@
+ // blanking. One-cycle mode (FCM 0) changes frame every field and erases the
+ // framebuffer it shows as it shows it; manual mode changes frame when FCT is
+ // 1 and erases in the next field when FCT is 0. The erase writes EWDR over EWLR-EWRR. The CPU sees
+-// the framebuffer being drawn.
++// the framebuffer being drawn. A manual change asked for in the line VBlank-OUT begins (the
++// VBlank-OUT handler's usual time), with VDP1 idle, is made at once, its draw starting then; a
++// later one waits for the next VBlank-OUT. Measured on Beetle Saturn as a black box (Shining Force
++// III's town loop: the handler's FBCR write at VBlank-OUT starts the draw within the same field, and
++// a late write leaves the change pending to the next VBlank-OUT).
++//
++// A draw takes time by its work: kDrawCmdNs a command and kDrawStepPs a pixel step (vdp1_steps.h's
++// steps, clipped ones included), fitted to Beetle's command position at the end of 180 town and
++// battle fields (Shining Force III Sc1). EDSR's CEF is set when that time has passed, read at the
++// CPU's own time.
  #include "saturn.h"
  #include "state.h"
  #include "video.h"
@@ -4231,10 +4252,12 @@ index 8589d33..1ad83e1 100644
  #include <unordered_map>
  
  uint8_t g_vdp1_vram[0x80000];
-@@ -54,15 +56,66 @@ static bool g_change_pending, g_erase_pending, g_erase_field;
+@@ -53,16 +64,68 @@ enum { TVMR, FBCR, PTMR, EWDR, EWLR, EWRR, ENDR, EDSR = 8, LOPR, COPR, MODR };
+ static bool g_change_pending, g_erase_pending, g_erase_field;
  static bool g_drawing;
  static uint64_t g_draw_end, g_frame_changes, g_draws;
- 
++static const uint64_t kDrawCmdNs = 4161, kDrawStepPs = 59710;
++
 +// Host-only companion planes. The native planes remain the CPU-visible truth.
 +static int g_render_scale=1;
 +static bool g_gpu_available;
@@ -4270,7 +4293,7 @@ index 8589d33..1ad83e1 100644
 +    const int scale=g_render_scale;g_gpu_available=enabled;
 +    vdp1_render_scale(1);vdp1_render_scale(scale);
 +}
-+
+ 
  // the drawing state that outlives a draw
  static int g_sys_x = 319, g_sys_y = 223;        // system clip: 0..x, 0..y
  static int g_ux0, g_uy0, g_ux1 = 319, g_uy1 = 223;
@@ -4298,7 +4321,7 @@ index 8589d33..1ad83e1 100644
      g_reg[MODR] = 0x1000;                       // version 1
      g_reg[EDSR] = 0x0002;                       // the last draw has ended
  }
-@@ -94,6 +147,7 @@ struct Cmd {
+@@ -94,6 +157,7 @@ struct Cmd {
      uint16_t lut[16];
      Rgb g[4];                                   // A B C D
  };
@@ -4306,7 +4329,7 @@ index 8589d33..1ad83e1 100644
  
  static Rgb rgb_of(uint16_t v) { return {v & 0x1F, v >> 5 & 0x1F, v >> 10 & 0x1F}; }
  
-@@ -135,13 +189,69 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+@@ -135,13 +199,69 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
  }
  
  static bool g_fb8;                              // 8 bits a pixel (TVMR 1) for this draw
@@ -4376,7 +4399,7 @@ index 8589d33..1ad83e1 100644
      if (g_hi_target) {
          uint16_t& h = g_hi_target[y * 1024 + x];
          if (g_fb8) { if (!c.mon) h = pix & 0xFF; }
-@@ -156,12 +266,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
+@@ -156,12 +276,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
          return;
      }
      put(g_target[y * 512 + x], c, pix, g);
@@ -4395,7 +4418,7 @@ index 8589d33..1ad83e1 100644
          if (in == c.outside) return;
      }
      plot_clipped(c, x, y, pix, g);
-@@ -192,8 +306,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
+@@ -192,8 +316,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
  }
  
  static Rgb mix(const Rgb& a, const Rgb& b, int k, int n) {
@@ -4405,7 +4428,7 @@ index 8589d33..1ad83e1 100644
  }
  
  // A line from p0 to p1; for a texture, row v, its columns spread along the line.
-@@ -211,6 +324,7 @@ static uint64_t g_draw_steps;
+@@ -211,6 +334,7 @@ static uint64_t g_draw_steps;
  #endif
  
  static void command(const uint8_t* cmd, uint32_t a) {
@@ -4413,7 +4436,7 @@ index 8589d33..1ad83e1 100644
      Cmd c{};
      c.ctrl = cw(cmd, 0);
      c.pmod = cw(cmd, 4);
-@@ -256,6 +370,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
+@@ -256,6 +380,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
      }
      for (Pt& q : p) { q.x += g_local_x; q.y += g_local_y; }
      draw_shape(c, cmd, comm, p);
@@ -4426,7 +4449,7 @@ index 8589d33..1ad83e1 100644
  }
  
  // ---- the frames in between (--interp) -------------------------------------------------------
-@@ -289,6 +409,27 @@ struct RecFrame {
+@@ -289,6 +419,27 @@ struct RecFrame {
  static RecFrame g_rec_cur, g_rec_last, g_rec_prev;
  static uint16_t g_ifb[512 * 256];               // the frame in between
  static bool g_show_ifb;
@@ -4454,7 +4477,7 @@ index 8589d33..1ad83e1 100644
  static uint64_t g_fields;
  static float g_alpha;
  static std::vector<uint64_t> g_next_keys;       // vdp1_next_draw_keys: by command address / 32
-@@ -312,6 +453,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
+@@ -312,6 +463,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
      return x & 1 ? w & 0xFF : w >> 8;
  }
  
@@ -4469,7 +4492,7 @@ index 8589d33..1ad83e1 100644
  static void draw() {
      g_reg[EDSR] = (uint16_t)(g_reg[EDSR] >> 1 & 1);   // BEF <- CEF, CEF <- 0
      if ((g_reg[TVMR] & 3) == 3) sat_fatal("VDP1: TVMR %04X (8-bit rotation) is not done", g_reg[TVMR]);
-@@ -320,6 +469,12 @@ static void draw() {
+@@ -320,6 +479,12 @@ static void draw() {
      g_hi_on[g_draw_fb] = g_reg[FBCR] & 8;
      g_hi_target = g_hi_on[g_draw_fb] ? g_hi[g_draw_fb] : nullptr;
      g_dil = g_reg[FBCR] >> 2 & 1;
@@ -4482,7 +4505,16 @@ index 8589d33..1ad83e1 100644
      RecDraw* rec = nullptr;
      if (g_cfg.interp) {
          g_rec_cur.draws.push_back({g_sys_x, g_sys_y, g_ux0, g_uy0, g_ux1, g_uy1, g_local_x, g_local_y, {}});
-@@ -606,7 +761,11 @@ static void erase(int which) {
+@@ -362,7 +527,7 @@ static void draw() {
+     g_reg[COPR] = (uint16_t)(last >> 3);
+     ++g_draws;
+     g_drawing = true;
+-    g_draw_end = sat_now() + 1000000;           // 1 ms
++    g_draw_end = sat_now_cpu() + kDrawCmdNs * (uint64_t)n + kDrawStepPs * g_draw_steps / 1000;
+     sat_trace("VDP1 draw %llu: %d commands", (unsigned long long)g_draws, n);
+ }
+ 
+@@ -606,7 +771,11 @@ static void erase(int which) {
      int x0 = (g_reg[EWLR] >> 9 & 0x7F) * 8, y0 = g_reg[EWLR] & 0x1FF;
      int x1 = (g_reg[EWRR] >> 9 & 0x7F) * 8, y1 = g_reg[EWRR] & 0x1FF;
      for (int y = y0; y <= y1 && y < 256; ++y)
@@ -4495,7 +4527,47 @@ index 8589d33..1ad83e1 100644
      if (!g_hi_on[which]) return;
      bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
      int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
-@@ -676,16 +835,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+@@ -615,12 +784,17 @@ static void erase(int which) {
+             g_hi[which][y * 1024 + x] = fb8 ? (x & 1 ? g_reg[EWDR] & 0xFF : g_reg[EWDR] >> 8) : g_reg[EWDR];
+ }
+ 
++static void frame_change(bool one_cycle);
+ void vdp1_vblank_out() {
+     // the field that has just been shown erased the framebuffer shown, if it had to
+     if (g_erase_field) { erase(g_draw_fb ^ 1); g_erase_field = false; }
+     bool one_cycle = !(g_reg[FBCR] & 2);
+     if (g_erase_pending) { g_erase_field = true; g_erase_pending = false; }
+-    if (one_cycle || g_change_pending) {
++    if (one_cycle || g_change_pending) frame_change(one_cycle);
++}
++
++static void frame_change(bool one_cycle) {
++    {
+         g_change_pending = false;
+         g_draw_fb ^= 1;
+         ++g_frame_changes;
+@@ -642,6 +816,7 @@ void vdp1_vblank_out() {
+ // ---- the bus ------------------------------------------------------------------------------
+ uint32_t vdp1_reg_read(uint32_t off, int size) {
+     if (size == 4) return vdp1_reg_read(off, 2) << 16 | vdp1_reg_read(off + 2, 2);
++    if (((off >> 1) & 0xF) == EDSR) vdp1_tick(sat_now_cpu());   // CEF at the CPU's time, not the last poll's
+     uint16_t v = g_reg[(off >> 1) & 0xF];
+     return size == 1 ? (off & 1 ? v & 0xFF : v >> 8) : v;
+ }
+@@ -653,7 +828,11 @@ static void reg_write(uint32_t off, uint16_t v) {
+     g_reg[r] = v;
+     switch (r) {
+     case FBCR:
+-        if ((v & 3) == 3) g_change_pending = true;
++        if ((v & 3) == 3) {
++            g_change_pending = true;
++            uint64_t now = sat_now_cpu(), vbout = video_vbout_ns();   // the last VBlank-OUT done
++            if (!g_drawing && now >= vbout && now < vbout + video_line_ns()) frame_change(false);
++        }
+         if ((v & 3) == 2) g_erase_pending = true;
+         break;
+     case PTMR:
+@@ -676,16 +855,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
  }
  
  void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
@@ -4525,7 +4597,7 @@ index 8589d33..1ad83e1 100644
      for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
  }
  
-@@ -707,4 +876,38 @@ void vdp1_state(State& s) {
+@@ -707,4 +896,38 @@ void vdp1_state(State& s) {
      s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
      s(g_draw_end), s(g_frame_changes), s(g_draws);
      s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
@@ -5792,7 +5864,7 @@ index 4c8bcb1..246c28b 100644
 -void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
-index 88d1642..0b705cc 100644
+index 88d1642..9e1dfb8 100644
 --- a/runtime/src/video/video.cpp
 +++ b/runtime/src/video/video.cpp
 @@ -21,6 +21,7 @@
@@ -5803,7 +5875,16 @@ index 88d1642..0b705cc 100644
  
  // A line is 1708 cycles of φ at the master clock over 65 (1820 over 61 in 352-dot mode, the same
  // time), as Mednafen counts it.
-@@ -40,6 +41,7 @@ static void set16(uint8_t* r, uint32_t o, uint16_t v) { r[o] = v >> 8; r[o + 1]
+@@ -33,6 +34,8 @@ static Frame g_frame;
+ uint64_t sat_vblanks() { return g_vblanks; }
+ uint64_t video_frame_changes() { return vdp1_frame_changes(); }
+ uint64_t video_frame_ns() { return kLineNs * kLines; }
++uint64_t video_line_ns() { return kLineNs; }
++uint64_t video_vbout_ns() { return g_line_abs / kLines * kLines * kLineNs; }
+ uint64_t video_draws() { return vdp1_draws(); }
+ 
+ static uint16_t reg16(const uint8_t* r, uint32_t o) { return (uint16_t)(r[o] << 8 | r[o + 1]); }
+@@ -40,6 +43,7 @@ static void set16(uint8_t* r, uint32_t o, uint16_t v) { r[o] = v >> 8; r[o + 1]
  
  void video_init() {
      vdp1_init();
@@ -5811,7 +5892,7 @@ index 88d1642..0b705cc 100644
      if (!host_open()) {                         // the host has said why
          std::fprintf(stderr, "saturn: no window could be opened; --headless runs without one\n");
          std::exit(3);
-@@ -58,16 +60,29 @@ static bool listed(const std::string& list, const std::string& item) {
+@@ -58,16 +62,29 @@ static bool listed(const std::string& list, const std::string& item) {
  }
  
  // --dump: VDP1 VRAM, its draw framebuffer, VDP1's registers, VDP2 VRAM, CRAM and VDP2's registers, one after the other
@@ -5846,7 +5927,7 @@ index 88d1642..0b705cc 100644
  }
  
  static void vblank_in(uint64_t now) {
-@@ -76,6 +91,7 @@ static void vblank_in(uint64_t now) {
+@@ -76,6 +93,7 @@ static void vblank_in(uint64_t now) {
      if (listed(g_cfg.dump, n)) dump("", g_vblanks);
      bool shot = listed(g_cfg.shots, n);
      bool compose = shot || host_wants_frame() || movie_on();
@@ -5854,7 +5935,7 @@ index 88d1642..0b705cc 100644
      if (vdp1_interp_field(compose) && compose) {
          uint8_t saved[0x30];
          std::copy(g_vdp2_regs + 0x70, g_vdp2_regs + 0xA0, saved);
-@@ -84,16 +100,20 @@ static void vblank_in(uint64_t now) {
+@@ -84,16 +102,20 @@ static void vblank_in(uint64_t now) {
          std::copy(saved, saved + 0x30, g_vdp2_regs + 0x70);
          if (shot) write_png(g_cfg.out + "/shot-" + n + ".png", g_frame);
          movie_frame(g_frame);
@@ -5878,7 +5959,7 @@ index 88d1642..0b705cc 100644
  }
  
  void video_tick(uint64_t now) {
-@@ -143,7 +163,20 @@ uint32_t video_read(uint32_t a, int size) {
+@@ -143,7 +165,20 @@ uint32_t video_read(uint32_t a, int size) {
  }
  
  void video_write(uint32_t a, uint32_t v, int size) {
@@ -5900,7 +5981,7 @@ index 88d1642..0b705cc 100644
      uint32_t off;
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
-@@ -152,3 +185,6 @@ void video_write(uint32_t a, uint32_t v, int size) {
+@@ -152,3 +187,6 @@ void video_write(uint32_t a, uint32_t v, int size) {
  }
  
  void video_state(State& s) { s(g_line_abs), s(g_vblanks); }
