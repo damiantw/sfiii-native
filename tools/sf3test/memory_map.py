@@ -62,6 +62,19 @@ def tile_events(tiles):
 # 16.16 fixed point; the lookup's tile is value >> 21 (32 units a tile). In HQ (scene 89) the slot is 0.
 SC1_PLAYER = dict(obj=0x06044844, x=12, z=20, tile_shift=21)
 
+# Kind-2 tile ids (event slot +0) in scene 51 X1SARA6 are door triggers that fire on a
+# walked tile change (poking the slot or warping onto the tile does not fire them).
+# Found by walking (sf3-town-bfs) and by assist warps next to each door, save record :03.
+# None means the door stays shut at that point of the story: 6 is the item shop, whose
+# keeper refuses to open ("I'm not going to open this place up...").
+SC1_SARA6_DOORS = {
+    2: 44,     # (36,38) church, X1DREAM
+    7: 43,     # north edge near (45-47,19): X1SARA5, then 52 X1SHIEF1
+    6: None,   # (44,31) shop, closed by story
+    5: None, 9: None, 12: None, 13: None,
+}
+SC1_SARA6_EXITS = {10: 7}  # kind-1 slot +4 id 10: leave town to scene 7 (fid 0x184)
+
 
 def player_tile(x_raw, z_raw, shift=21):
     """The tile (x, z) the town lookup 06056DF0 indexes for the player's 16.16 position."""
