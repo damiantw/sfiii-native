@@ -3249,7 +3249,7 @@ index b40fefc..e5b0419 100644
 +    s(g_samples), s(g_counter), s(g_key_execute), s(g_stack), s(g_stack_pos), s(g_dsp), s(g_noise), s(g_rbl), s(g_rbp), s(g_cpu_level);
  }
 diff --git a/runtime/src/sound/sound.cpp b/runtime/src/sound/sound.cpp
-index 319a3f3..dd1caaa 100644
+index 319a3f3..8e866c0 100644
 --- a/runtime/src/sound/sound.cpp
 +++ b/runtime/src/sound/sound.cpp
 @@ -66,16 +66,95 @@ static void bus_write(uint32_t a, uint32_t v, int size) {
@@ -3364,7 +3364,7 @@ index 319a3f3..dd1caaa 100644
      scsp_reset();
      std::string wav = movie_on() ? movie_wav() : g_cfg.wav;
      if (!wav.empty()) {
-@@ -119,6 +197,22 @@ void sound_power(bool on) {
+@@ -119,6 +197,24 @@ void sound_power(bool on) {
      if (on) m68k_set_irq((unsigned)scsp_cpu_level());
  }
  
@@ -3375,6 +3375,8 @@ index 319a3f3..dd1caaa 100644
 +    g_debt = 0;
 +    if (on) m68k_set_irq((unsigned)scsp_cpu_level());
 +}
++
++void sound_replay_first_slice(int cycles) { g_debt = cycles - 256; }
 +
 +void sound_replay_sample(int16_t ext_l, int16_t ext_r, int16_t out[2]) {
 +    if (g_on) {
@@ -3388,10 +3390,10 @@ index 319a3f3..dd1caaa 100644
      uint64_t due = sat_now() * 441 / 10000000;   // samples at 44 100 Hz
      while (g_samples < due) {
 diff --git a/runtime/src/sound/sound.h b/runtime/src/sound/sound.h
-index 1786242..834f17e 100644
+index 1786242..0f8d027 100644
 --- a/runtime/src/sound/sound.h
 +++ b/runtime/src/sound/sound.h
-@@ -12,6 +12,26 @@ void scsp_write(uint32_t off, uint32_t v, int size);
+@@ -12,6 +12,29 @@ void scsp_write(uint32_t off, uint32_t v, int size);
  void scsp_sample(int16_t exts_l, int16_t exts_r, int16_t out[2]);   // one sample at 44 100 Hz
  int  scsp_cpu_level();                                // the 68000's interrupt level (0: none)
  uint32_t scsp_active_slots();                         // a mask, for the log
@@ -3414,6 +3416,9 @@ index 1786242..834f17e 100644
 +// The 68000 run beside the SCSP outside the machine (tests): on = it runs 256 cycles before each
 +// sound_replay_sample, from the registers set with m68k_set_reg (no reset).
 +void sound_replay_cpu(bool on);
++// The 68000 runs CYCLES (1-256) before the next sample instead of a whole sample: the phase of a
++// snapshot taken mid-sample. Call after sound_replay_cpu(true).
++void sound_replay_first_slice(int cycles);
 +void sound_replay_sample(int16_t ext_l, int16_t ext_r, int16_t out[2]);
  
  // ---- the 68000 and the pace (sound.cpp) ----------------------------------------------------
@@ -5657,10 +5662,10 @@ index 0000000..0603a4f
 +}
 diff --git a/runtime/tests/scsp_replay.cpp b/runtime/tests/scsp_replay.cpp
 new file mode 100644
-index 0000000..9122236
+index 0000000..068aa64
 --- /dev/null
 +++ b/runtime/tests/scsp_replay.cpp
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,92 @@
 +// SCSP replay: the sound chip alone, outside any game, from a script, so the same registers and
 +// sound RAM given to a reference can be compared sample for sample (no 68000, no game timing).
 +//   scsp_replay SCRIPT.bin OUT.raw
@@ -5742,6 +5747,11 @@ index 0000000..9122236
 +                }
 +            }
 +        }
++        else if (op == 11) {    // disassemble N instructions from ADDR
++            uint32_t a = word(p), n = word(p);
++            for (uint32_t k = 0; k < n; ++k) { char s[128]; unsigned len = m68k_disassemble(s, a, M68K_CPU_TYPE_68000); printf("D %05X %s\n", a, s); a += len; }
++        }
++        else if (op == 12) sound_replay_first_slice((int)word(p));   // 68000 cycles before the next sample
 +        else if (op == 4) { uint32_t fl = word(p), i = word(p), v = word(p); scsp_set_internal((ScspField)fl, (int)i, v); }
 +        else { std::fprintf(stderr, "bad op %u\n", op); return 1; }
 +    }
@@ -5750,10 +5760,10 @@ index 0000000..9122236
 +}
 diff --git a/runtime/tests/scsp_test.cpp b/runtime/tests/scsp_test.cpp
 new file mode 100644
-index 0000000..33ad0e6
+index 0000000..6bd3feb
 --- /dev/null
 +++ b/runtime/tests/scsp_test.cpp
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,124 @@
 +// The SCSP and the sound 68000 against numbers measured on Beetle Saturn as a black box (its output
 +// and save states only).
 +#include <cstring>
@@ -5824,6 +5834,58 @@ index 0000000..33ad0e6
 +        hex[k] = 0;
 +        uint32_t it = loop_iterations(hex), want = 735 * 256 / c.cycles;
 +        if (it + 1 < want || it > want + 1) CHECK_EQ(it, want);
++    }
++}
++
++// Timer A polled the way the sound driver does: clear SCIRE bit 6, load TIMA, then count polls
++// of SCIPD bit 6 until the timer overflows; D7 per tick is stored at 0x70000. Beetle's counts fit
++// one rule (checked offline against 11 TIMA/prescale cases): the timer steps at each sample
++// boundary whose global sample number is a multiple of the prescale, a read sees the state at
++// the time of its access, and loading TIMA does not restart the prescaler.
++static void timer_a_polls(uint8_t tima, uint8_t ctl, uint16_t* counts, int n) {
++    scsp_reset();
++    sound_replay_cpu(false);
++    std::memset(g_sound_ram, 0, sizeof g_sound_ram);
++    const uint8_t code[] = {
++        0x4b, 0xf9, 0x00, 0x10, 0x00, 0x00,          // lea $100000,a5
++        0x41, 0xf9, 0x00, 0x07, 0x00, 0x00,          // lea $70000,a0
++        0x3b, 0x7c, 0x00, 0x40, 0x04, 0x22,          // move.w #$40,$422(a5)   SCIRE
++        0x3b, 0x7c, ctl, tima, 0x04, 0x18,           // move.w #ctl:tima,$418(a5)
++        0x7e, 0x00,                                  // moveq #0,d7
++        0x52, 0x87,                                  // addq.l #1,d7
++        0x30, 0x2d, 0x04, 0x20,                      // move.w $420(a5),d0    SCIPD
++        0x08, 0x00, 0x00, 0x06,                      // btst #6,d0
++        0x67, 0xf4,                                  // beq.s addq
++        0x30, 0xc7,                                  // move.w d7,(a0)+
++        0x60, 0xe2,                                  // bra.s SCIRE
++    };
++    std::memcpy(g_sound_ram + 0x7E000, code, sizeof code);
++    for (int r = M68K_REG_D0; r <= M68K_REG_A6; ++r) m68k_set_reg((m68k_register_t)r, 0);
++    m68k_set_reg(M68K_REG_SR, 0x2700);
++    m68k_set_reg(M68K_REG_A7, 0x7F000);
++    m68k_set_reg(M68K_REG_PC, 0x7E000);
++    sound_replay_cpu(true);
++    int16_t out[2];
++    for (int i = 0; i < 735; ++i) sound_replay_sample(0, 0, out);
++    sound_replay_cpu(false);
++    for (int i = 0; i < n; ++i) counts[i] = (uint16_t)(g_sound_ram[0x70000 + 2 * i] << 8 | g_sound_ram[0x70001 + 2 * i]);
++}
++
++// The counts below are what that rule gives for this start (program at the first cycle of sample
++// 0), so they pin the rule rather than our own output.
++TEST(timer_a_ticks_on_global_sample_boundaries_like_beetle) {
++    struct { uint8_t tima, ctl; int n; uint16_t want[8]; } cases[] = {
++        {0xFF, 0, 8, {4, 4, 3, 3, 4, 3, 3, 4}},
++        {0xFE, 0, 8, {9, 8, 8, 8, 8, 8, 9, 8}},
++        {0xF0, 0, 8, {75, 75, 74, 75, 74, 75, 74, 75}},
++        {0xFF, 1, 8, {4, 8, 9, 8, 8, 8, 8, 8}},
++        {0x80, 1, 2, {1209, 1212}},
++        {0xF0, 2, 8, {289, 302, 302, 302, 302, 302, 302, 302}},
++    };
++    for (auto& c : cases) {
++        uint16_t got[8];
++        timer_a_polls(c.tima, c.ctl, got, c.n);
++        for (int i = 0; i < c.n; ++i) CHECK_EQ(got[i], c.want[i]);
 +    }
 +}
 diff --git a/runtime/tests/vdp1_raster_test.cpp b/runtime/tests/vdp1_raster_test.cpp
