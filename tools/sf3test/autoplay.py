@@ -571,6 +571,14 @@ def aimed_turn(side, units, pol, press):
             q = pos()
             if me not in q or (q[me] != p and q[me] not in [v for k, v in q.items() if k != me]):
                 break
+    now = pos()
+    if me in now and now[me] in [v for k, v in now.items() if k != me]:
+        # still on a teammate's tile (round 4: Sc1 Battle 22 bridge, a unit probed onto a packed
+        # line wandered over teammates for 60k VBlanks; C does nothing there): B puts it back on
+        # its start tile, which is free, and the turn ends from there
+        press(('B',), 6)
+        press((), 20)
+        pol.returns = getattr(pol, 'returns', 0) + 1
     if me not in pos():
         return tap(('C',), gap=30)
     adjacent = dist(pos()[me]) <= 1
