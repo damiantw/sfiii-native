@@ -66,12 +66,22 @@ def metrics(units_now, root, leader):
 def score(m):
     if m.get('goal'):
         return 1e6
-    if m['leader_down'] or m.get('reset'):
+    if m['leader_down'] or m.get('reset') or m.get('left'):
         return -1e6
     if m['won']:
         return 1e5
     return (4 * (1 - m['enemy_left']) + 1.0 * m['kills'] + 1.5 * m['force_left'] - 1.0 * m['deaths']
             + 2 * m['leader'])
+
+
+def left_battle(read, job, reached):
+    """Back in a town without a goal: Egress or a defeat (the battle id is 0 outside battles).
+
+    A won battle can keep its id set through the after-battle scenes (Sc3 Flagship: map 9 battle 1),
+    and the unit tables keep their last values, so a win is not seen here; --stall catches it."""
+    if not job.get('root_battle') or reached:
+        return False
+    return read(memory_map.lookup(job['profile'])['battle_id'], 1)[0] == 0
 
 
 def save_state(r, path):
@@ -121,7 +131,7 @@ def candidate(job):
             s.step()
         reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
         m1 = metrics(unit_hp(s.read, units), job['root'], job['leader'])
-        m1.update(goal=bool(reached), reset=bool(p['resets']))
+        m1.update(goal=bool(reached), reset=bool(p['resets']), left=left_battle(s.read, job, reached))
         state = out / 'commit.state'
         if not save_state(r, state):
             raise RuntimeError('state not written')
@@ -132,7 +142,8 @@ def candidate(job):
         if job['L'] and not reached and score(m1) > -1e6:
             p2 = _play(s, job, job['L'], job['seed'] + 7919, 0.0)
             m2 = metrics(unit_hp(s.read, units), job['root'], job['leader'])
-            m2.update(goal=bool([e for e in s.events if e['kind'] in ('goal', 'map-goal')]), reset=bool(p2['resets']))
+            r2 = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
+            m2.update(goal=bool(r2), reset=bool(p2['resets']), left=left_battle(s.read, job, r2))
         else:
             m2 = m1
         res.update(m_look=m2, score=score(m1) if m1.get('goal') or score(m1) <= -1e6 else score(m2))
@@ -182,6 +193,7 @@ def search(a):
     for _ in range(30):
         rs.step()
     root = unit_hp(rs.read, units)
+    root_battle = rs.read(mm['battle_id'], 1)[0]
     leader = min(root['force'])
     st0 = out / 'states' / 'root.state'
     save_state(r, st0)
@@ -191,11 +203,11 @@ def search(a):
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
-                  profile=a.profile, goals=goals, root=root, leader=leader, state_id=state_id, W=a.window, L=a.look)
+                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, leader=leader, state_id=state_id, W=a.window, L=a.look)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
     levels = [dict(state=str(st0), v=v0, actions=base_actions, end=root_end, ranked=[], pick=0, score=0,
                    backup=str(out / 'states' / 'root.backup.bin'))]
-    log, backs, done_goal = [], 0, False
+    log, backs, done_goal, stalled = [], 0, False, False
     with ProcessPoolExecutor(a.jobs) as ex:
         while levels[-1]['v'] - v0 < a.frames and len(log) < a.max_levels:
             cur = levels[-1]
@@ -233,14 +245,25 @@ def search(a):
                                backup=best['backup']))
             (out / 'search.json').write_text(json.dumps(dict(levels=log, path=[l['v'] for l in levels]), indent=0, default=str))
             write_segment(a, out, start, load, h, levels[-1], S)
+            flat = 0
+            while flat + 2 < len(levels) and round(levels[-2 - flat]['score'], 3) == round(levels[-1]['score'], 3):
+                flat += 1
+            if a.stall and flat >= a.stall and not best.get('reached'):
+                # the score has not moved for --stall levels: the battle is over (a win the unit tables do
+                # not show) or the policy is stuck; keep the plateau's first level and stop
+                del levels[len(levels) - flat:]
+                stalled = True
+                print(f"search: stalled {flat} levels at {levels[-1]['score']:.2f}; segment cut at VBlank "
+                      f"{levels[-1]['v']} (continue with drive --continue)", flush=True)
+                break
             if best.get('reached') or best['m_commit'].get('won'):
                 done_goal = True
                 print(f"search: {'goal ' + ','.join(best['reached']) if best.get('reached') else 'battle won'} at VBlank {best['v']}", flush=True)
                 break
     write_segment(a, out, start, load, h, levels[-1], S)
-    if done_goal:
+    if done_goal or stalled:
         finalize(a, out)
-    return 0 if done_goal else 1
+    return 0 if done_goal else 2 if stalled else 1
 
 
 def finalize(a, out):
