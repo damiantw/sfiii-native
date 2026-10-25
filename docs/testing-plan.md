@@ -186,6 +186,14 @@ No full-game Shining Force III TAS, movie or input file exists publicly. TASVide
   build hash, end hashes, goals). `tools/tests/test_story.py` and `check-source-package.py`
   reject anything else. A segment is bound to its build (`binary`): a runtime change that alters
   timing needs the segment re-recorded (rerun `drive` with the same seed), which is the point.
+- `search` (TAS-style, `sf3test/search.py`) is for battles the greedy policy keeps losing. It
+  restores native save states (`--state-in`; agent `save`, needs `SF3_STATE_ID`), runs K candidate
+  windows of W VBlanks (candidate 0 greedy, the rest exploring with their own seeds), looks ahead L
+  VBlanks greedily, and scores them on the unit tables (enemy HP, kills, party HP, deaths, the
+  leader's HP; a fallen leader loses). The best window is committed, and a level where every
+  candidate loses backs up to the previous level's next best. Only pad presses are kept, so the
+  result is an ordinary segment that `replay` checks from the save. States stay in the run
+  directory.
 
 ### Pass condition per scenario
 

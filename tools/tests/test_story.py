@@ -218,6 +218,23 @@ class StoryTest(unittest.TestCase):
         self.assertGreaterEqual(p[1], 8)
         self.assertEqual(autoplay.retreat_path((5, 5), [(5, 2)], allies, {}, reach=0), [])
 
+    def test_search_metrics_and_score(self):
+        from sf3test import search
+        root = {'force': {0: (60, 60), 1: (40, 40)}, 'enemies': {5: (100, 100), 6: (50, 50)}}
+        same = search.metrics(root, root, 0)
+        hit = search.metrics({'force': {0: (60, 60), 1: (40, 40)}, 'enemies': {5: (40, 100)}}, root, 0)
+        hurt = search.metrics({'force': {0: (10, 60), 1: (40, 40)}, 'enemies': {5: (100, 100), 6: (50, 50)}}, root, 0)
+        down = search.metrics({'force': {1: (40, 40)}, 'enemies': {5: (1, 100)}}, root, 0)
+        won = search.metrics({'force': {0: (5, 60)}, 'enemies': {}}, root, 0)
+        self.assertEqual(hit['kills'], 1)
+        self.assertGreater(search.score(hit), search.score(same))
+        self.assertGreater(search.score(same), search.score(hurt))
+        self.assertTrue(down['leader_down'])
+        self.assertEqual(search.score(down), -1e6)
+        self.assertTrue(won['won'])
+        self.assertGreater(search.score(won), search.score(hit))
+        self.assertEqual(search.score(dict(same, goal=True)), 1e6)
+
     def test_is_hurt(self):
         from sf3test import autoplay, memory_map as M
         rec = bytearray(M.UNIT_STRIDE * 2)
