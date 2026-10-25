@@ -401,13 +401,14 @@ def step_of(p, d):
     return (p[0] + STEP[d][0], p[1] + STEP[d][1])
 
 
-def plan_step(p, live, occupied, blocked, size=64, limit=6000):
+def plan_step(p, live, occupied, blocked, size=64, limit=6000, passable=frozenset()):
     """First direction of a shortest path from `p` to a tile next to a live enemy, over a
     size x size grid where unseen tiles are taken as open (optimistic planning: a failed step marks
     its edge, `blocked` counts failures per edge; two failures close it, one makes it dear).
-    Tiles other units hold are closed. None when no tile is reachable."""
+    Tiles other units hold are closed, except `passable` ones (the unit's own force: a unit walks
+    through its allies but cannot stop on one). None when no tile is reachable."""
     import heapq
-    goals = {(x + dx, y + dy) for x, y in live for dx, dy in STEP.values()} - occupied
+    goals = {(x + dx, y + dy) for x, y in live for dx, dy in STEP.values()} - occupied - set(passable)
     if not goals:
         return None
     h = lambda q: min(abs(q[0] - g[0]) + abs(q[1] - g[1]) for g in goals)
@@ -421,7 +422,7 @@ def plan_step(p, live, occupied, blocked, size=64, limit=6000):
             continue
         for d in STEP:
             r = step_of(q, d)
-            if not (0 <= r[0] < size and 0 <= r[1] < size) or r in occupied:
+            if not (0 <= r[0] < size and 0 <= r[1] < size) or (r in occupied and r not in passable):
                 continue
             fails = blocked.get((q, r), 0)
             if fails >= 2:
@@ -503,8 +504,10 @@ def aimed_turn(side, units, pol, press):
             p = now[me]
             if dist(p) <= 1 or fails >= 8:
                 break
-            occupied = {v for k, v in now.items() if k != me} | set(live)
-            d = plan_step(p, live, occupied, pol.blocked)
+            allies = {v for k, v in now.items() if k != me}
+            # allies are walked through (round 2: a force packed on the Battle 22 bridge or in the
+            # Sc3 final room had no path with allies as walls, so every unit held for 120k VBlanks)
+            d = plan_step(p, live, allies | set(live), pol.blocked, passable=allies)
             if d is None:
                 break
             press((d,), 8)

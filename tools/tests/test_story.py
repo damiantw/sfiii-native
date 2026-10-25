@@ -58,6 +58,11 @@ class StoryTest(unittest.TestCase):
         self.assertEqual(plan_step((0, 0), [(3, 0)], set(), {}), 'RIGHT')
         # a wall east of the start (two failed steps) sends the unit round it
         self.assertEqual(plan_step((0, 0), [(3, 0)], set(), {((0, 0), (1, 0)): 2}), 'UP')
+        # a corridor one tile wide, an ally in it: walk through the ally (passable), never stop on it
+        wall = {(x, y) for x in range(0, 8) for y in (1, -1)}
+        self.assertIsNone(plan_step((0, 0), [(5, 0)], wall | {(2, 0)}, {}))
+        self.assertEqual(plan_step((0, 0), [(5, 0)], wall | {(2, 0)}, {}, passable={(2, 0)}), 'RIGHT')
+        self.assertIsNone(plan_step((0, 0), [(3, 0)], wall | {(2, 0), (3, 0)}, {}, passable={(2, 0)}))
         # boxed in by other units: no step
         self.assertIsNone(plan_step((1, 1), [(5, 5)], {(0, 1), (2, 1), (1, 0), (1, 2)}, {}))
 
