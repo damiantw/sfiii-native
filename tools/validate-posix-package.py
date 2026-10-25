@@ -174,7 +174,8 @@ target_link_libraries(relocation PRIVATE SDL3::SDL3 Threads::Threads)
     changed.extend('added: '+name for name in sorted(added))
     results.append(dict(name='package-files-unchanged',passed=not changed,changed_files=changed))
     if changed:raise RuntimeError('Validation changed packaged resources: '+', '.join(changed[:10]))
-    report=dict(synthetic_passed=all(r['passed'] for r in results if r['name']!='gpu-shader-cases'),
+    # GPU checks raise on a real failure above; an unavailable GPU (no display on the runner) is not a synthetic failure.
+    report=dict(synthetic_passed=all(r['passed'] for r in results if r['name'] not in ('gpu-shader-cases','gpu-cpu-parity')),
                 gameplay_validated=False,transition_fixtures='unavailable: game data is never uploaded to CI',
                 physical_controller_audio_validation='unavailable',results=results)
     (out/'report.json').write_text(json.dumps(report,indent=2)+'\n')
