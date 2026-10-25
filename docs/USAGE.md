@@ -31,6 +31,8 @@ saturn --headless --cue game.cue --save copy.bin --settings - --input @route.txt
 
 `--clock` pins the SMPC clock; without it the game reads the host's time, and a few bytes of work RAM differ between runs. A command-line `--state-out` needs no `SF3_STATE_ID`: the state is then tied to the build's recompiled modules and the disc's file name. Compare state files by their parts (everything after the identity header).
 
+The software compositor (the `software` renderer, screenshots and headless runs) composes each field in bands of rows on up to four threads; every row depends only on the field's VRAM, colour RAM, registers and sprite framebuffer, so the picture is the same as from one thread, and the game sees no difference in timing. `SF3_SERIAL_COMPOSITION=1` composes on one thread, for comparison. Disc-free timings of these paths on Linux and macOS (Apple Silicon and Intel) come from the "Runtime hot-path benchmark" workflow (`runtime/tests/runtime_bench.cpp`, run by hand or after each push to `main`).
+
 ## Display
 
 Use **1× / 2× / 4× / 5×** for supported geometry resolution. 5× renders 56% more pixels than 4×, so it needs more GPU headroom. Source texture detail remains original. Vulkan is preferred; Direct3D 12 is another supported backend. `SF3_GPU_BACKEND=vulkan` or `direct3d12` can force one for troubleshooting. Unsupported GPU/video paths retain a native fallback, with different performance and enhancement coverage.

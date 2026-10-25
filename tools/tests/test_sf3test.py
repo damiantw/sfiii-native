@@ -361,7 +361,15 @@ class FakeSide:
 
 
 class Autoplay(unittest.TestCase):
-    P = 'scenario2-v25_1-v1_003'   # a profile without a unit table: the probing policy
+    P = 'scenario2-v25_1-v1_003'
+
+    def setUp(self):
+        # Run the probing policy: hide this profile's unit table for the test.
+        self._units = memory_map.BATTLE_UNITS.pop(self.P, None)
+
+    def tearDown(self):
+        if self._units is not None:
+            memory_map.BATTLE_UNITS[self.P] = self._units
 
     def test_same_seed_same_script(self):
         a = autoplay.play(FakeSide(self.P), self.P, 3000, 5)
