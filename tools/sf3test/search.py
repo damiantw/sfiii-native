@@ -294,6 +294,7 @@ def resync(a, S, start, mm, units, out, lv, common, n):
         S.apply_actions(s, lv['actions'], until=lv['v'])
         while r.vblank < lv['v']:
             s.step()
+        here, hv = S.end_hashes(s, a.profile), r.vblank  # hash at lv['v'], before save_state steps on
         reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
         m = metrics(unit_hp(s.read, units), common['root'], common['leader'])
         m.update(goal=bool(reached), reset=False, left=left_battle(s.read, common, reached))
@@ -302,8 +303,8 @@ def resync(a, S, start, mm, units, out, lv, common, n):
             raise RuntimeError('sync state not written')
         e0 = (lv.get('end') or {}).get('ram_sha1')
         lv.update(state=str(st), v=r.vblank, end=S.end_hashes(s, a.profile), reached=reached or lv.get('reached'))
-        print(f"  ram @{r.vblank}: searched {e0} straight {lv['end'].get('ram_sha1')} "
-              f"{'equal' if e0 == lv['end'].get('ram_sha1') else 'DIFFER'}", flush=True)
+        print(f"  ram @{hv}: searched {e0} straight {here.get('ram_sha1')} "
+              f"{'equal' if e0 == here.get('ram_sha1') else 'DIFFER'}", flush=True)
     finally:
         r.close()
     bk = out / 'states' / f'sync-{n:04d}.backup.bin'
