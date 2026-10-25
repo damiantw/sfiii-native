@@ -97,6 +97,14 @@ SC1_SCENE51_DOORS = {
     5: None, 9: None, 13: None,
 }
 SC1_SCENE51_EXITS = {10: 7}  # kind-1 slot +4 id 10: leave town to scene 7 (fid 0x184, X1BTL102)
+# Saraband story gate (round 20 bisection, binary d3887ed2): record byte 0x3E2 bit 0
+# (RAM SC1 save mirror + 0x3E2).  Set (live value 0x07) while the opening Saraband
+# sequence runs, and the town loads as scene 51 (X1SARA4: bar keeper blocks door 6,
+# shop door 12 shut).  Clear it inside the church (scene 44) and walk out: the town
+# reloads as scene 41 (X1SARA2) and tile (26,37) UP enters scene 47 (X1S_SHOP).
+# Copying record bytes 0x3C0-0x3D0 from a later save instead sends the story back to
+# scene 6 (X1BTL101).  Labelled assist only; never a route for the regular playtests.
+SC1_SARABAND_INTRO_FLAG = (0x3E2, 0x01)
 
 
 def player_tile(x_raw, z_raw, shift=21):
