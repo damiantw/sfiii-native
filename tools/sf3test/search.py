@@ -300,7 +300,10 @@ def resync(a, S, start, mm, units, out, lv, common, n):
         st = out / 'states' / f'sync-{n:04d}.state'
         if not save_state(r, st):
             raise RuntimeError('sync state not written')
+        e0 = (lv.get('end') or {}).get('ram_sha1')
         lv.update(state=str(st), v=r.vblank, end=S.end_hashes(s, a.profile), reached=reached or lv.get('reached'))
+        print(f"  ram @{r.vblank}: searched {e0} straight {lv['end'].get('ram_sha1')} "
+              f"{'equal' if e0 == lv['end'].get('ram_sha1') else 'DIFFER'}", flush=True)
     finally:
         r.close()
     bk = out / 'states' / f'sync-{n:04d}.backup.bin'
