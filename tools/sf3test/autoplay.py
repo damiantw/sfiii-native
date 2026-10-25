@@ -380,6 +380,31 @@ def flat_blue_rows(w, h, rgb, run_min=48):
     return rows
 
 
+def hud_up(frame, run_min=48):
+    """The unit panel at the top of the picture (name, class, level, HP/MP bars) is up: a battle
+    unit is under control. In the free cursor mode (round 5: Sc1 Battle 22, entered by B on the
+    unit's start tile) it is gone and the D-pad moves the cursor, not the unit. Rows of the top band
+    with a flat window-blue run of `run_min` pixels (textured water has none)."""
+    if frame is None:                  # no picture (unit tests): take it as unit control
+        return True
+    w, h, rgb = frame.width, frame.height, frame.rgb
+    rows = 0
+    for y in range(h * 3 // 100, h // 5, 2):
+        row, run, prev = y * w * 3, 0, None
+        for x in range(w // 4, w * 3 // 4):
+            r, g, b = rgb[row + x * 3], rgb[row + x * 3 + 1], rgb[row + x * 3 + 2]
+            ok = b >= 60 and b > r + 35 and b > g + 20 and r < 70
+            if ok and prev and abs(b - prev[1]) <= 2 and abs(g - prev[0]) <= 2:
+                run += 1
+                if run >= run_min:
+                    rows += 1
+                    break
+            else:
+                run = 0
+            prev = (g, b) if ok else None
+    return rows >= 3
+
+
 def battle_outcome(rd, units):
     """'won' when no enemy on the field has HP left, 'lost' when no force unit has, else None."""
     enemies = memory_map.read_units(rd, units['enemies'], units.get('live'))
@@ -508,6 +533,15 @@ def aimed_turn(side, units, pol, press):
         moved = [k for k in before if k in now and now[k] != before[k]]   # a unit that left the table did not move
         if moved:
             break
+    if not moved and not hud_up(side.frame()) and getattr(pol, 'cursor_b', 0) < 2:
+        # round 5 (Sc1 Battle 22 search): nothing moved and no unit panel: the free cursor (B on
+        # the start tile enters it; C there opens the field menu or a member's status, which the
+        # menu branch above backed out of by B into the cursor again), so the turn sat for 6k
+        # VBlanks with the leader next to an enemy. B puts the cursor back on the unit
+        pol.cursor_b = getattr(pol, 'cursor_b', 0) + 1
+        pol.recentred = getattr(pol, 'recentred', 0) + 1
+        return tap(('B',), gap=60)
+    pol.cursor_b = 0
     if not moved:
         # Nothing moved: a message (C), a menu left open (B), or (round 11) a unit that cannot
         # step (enemies, teammates or terrain all round). The ring opens on C without a step too, so

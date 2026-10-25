@@ -263,9 +263,13 @@ class BattleTurns(unittest.TestCase):
                 src = raw if a == 0 else en
                 return bytes(src[:n]) + bytes(max(0, n - len(src)))
 
+            hud = True
+
             def frame(self):
+                band = bytes((0, 0, 128)) * 200 * 10 if self.hud else bytes(200 * 10 * 3)
+
                 class F:
-                    width, height, rgb = 4, 8, bytes(4 * 8 * 3)
+                    width, height, rgb = 200, 40, band + bytes(200 * 30 * 3)
                 return F()
 
         pol = autoplay.Policy(1)
@@ -275,6 +279,14 @@ class BattleTurns(unittest.TestCase):
         self.assertNotIn(('UP',), [b for b, _ in first])
         self.assertIn((autoplay.RING['attack'],), [b for b, _ in second])
         self.assertEqual(pol.attacks, 1)
+        # no unit panel up: the free cursor; B (twice at most) puts it back on the unit
+        free = Side()
+        free.hud = False
+        pol = autoplay.Policy(1)
+        self.assertEqual([b for b, _ in autoplay.aimed_turn(free, units, pol, lambda b, n: None)], [('B',), ()])
+        self.assertEqual([b for b, _ in autoplay.aimed_turn(free, units, pol, lambda b, n: None)], [('B',), ()])
+        self.assertNotEqual([b for b, _ in autoplay.aimed_turn(free, units, pol, lambda b, n: None)], [('B',), ()])
+        self.assertEqual(pol.recentred, 2)
 
 
     def test_assist_writes(self):

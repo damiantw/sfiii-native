@@ -219,7 +219,7 @@ def search(a):
                 continue
             cur['ranked'] = res
             levels.append(dict(state=best['state'], v=best['v'], actions=cur['actions'] + best['actions'],
-                               end=best['end'], ranked=[], pick=0, score=best['score']))
+                               end=best['end'], ranked=[], pick=0, score=best['score'], reached=best.get('reached')))
             (out / 'search.json').write_text(json.dumps(dict(levels=log, path=[l['v'] for l in levels]), indent=0, default=str))
             write_segment(a, out, start, load, h, levels[-1], S)
             if best.get('reached') or best['m_commit'].get('won'):
@@ -238,5 +238,5 @@ def write_segment(a, out, start, load, h, lv, S):
     header = dict(profile=a.profile, save=Path(S.start_save(a.saves, start)).name, record=start['id'], seed=seed,
                   assist='none', clock=a.clock, record_sha1=hashlib.sha1(start['record']['data']).hexdigest()[:16],
                   load=load, binary=S.sha_bin(a.saturn), end_vblank=lv['v'], end_ram_sha1=lv['end']['ram_sha1'],
-                  end_flags_sha1=lv['end']['flags_sha1'], reached='-')
+                  end_flags_sha1=lv['end']['flags_sha1'], reached=','.join(lv.get('reached') or []) or '-')
     (out / 'segment.txt').write_text(story.segment_text(header, lv['actions']))
