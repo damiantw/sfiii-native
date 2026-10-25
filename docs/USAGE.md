@@ -2,6 +2,8 @@
 
 In the desktop package, click **Play** after preparation. Source builds can launch with **Launch Native SFIII.cmd** from the external work directory. Use **Controller Setup.cmd** to bind a generic or Saturn USB pad; **Controller Test.cmd** checks its controls. SDL mappings cover PS5, Xbox and other controllers. The Saturn USB pad has been physically tested locally; PS5/Xbox support has not received equivalent physical-device validation.
 
+On Linux and macOS the launcher works the same way ([portable platform setup](POSIX.md)): choose the game, **Browse** to its CUE or CHD and a data folder, **Prepare game** (this generates and builds the game locally, about 8–11 minutes on two cores), then **Play**; **Play** stays disabled until preparation for that disc and package succeeded, and a prepared folder is playable straight away on the next start. Each scenario and disc revision needs its own data folder. Closing the game window returns the launcher to **Ready**.
+
 Keyboard defaults: arrows for movement, Enter for Start, Z/X/C for A/B/C, A/S/D for X/Y/Z, Q/W for L/R. Escape opens the menu. F11 or Alt+Enter toggles fullscreen.
 
 ## Controls
