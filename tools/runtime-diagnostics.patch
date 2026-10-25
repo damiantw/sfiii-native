@@ -2613,7 +2613,7 @@ index 33a2cdd..cb37688 100644
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..a7f3e58 100644
+index 6cbd98f..5895f33 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -2680,7 +2680,7 @@ index 6cbd98f..a7f3e58 100644
  void video_init();
  void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
  void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
-+int video_raster_line();              // the line the raster is on, 0 at VBlank-OUT
++int video_raster_line();              // the line the raster is on, 0 the first after VBLANK
 +int video_display_lines();            // the display's lines: VBlank-IN is the line after them
  uint32_t video_read(uint32_t a, int size);    // VDP1, VDP2, SCSP (canonical addresses)
  void video_write(uint32_t a, uint32_t v, int size);
@@ -2695,7 +2695,7 @@ index 6cbd98f..a7f3e58 100644
  
  // ---- sound (sound.cpp, scsp.cpp through sound.h) ----------------------------------------------
 diff --git a/runtime/src/machine/scu.cpp b/runtime/src/machine/scu.cpp
-index 52ca0df..509f1a3 100644
+index 52ca0df..39b24e4 100644
 --- a/runtime/src/machine/scu.cpp
 +++ b/runtime/src/machine/scu.cpp
 @@ -76,6 +76,7 @@ static bool bbus(uint32_t a) {
@@ -2714,6 +2714,15 @@ index 52ca0df..509f1a3 100644
      Dma& d = g_dma[lvl];
      uint32_t radd = (d.ad >> 8 & 1) ? 4 : 0;
      uint32_t wadd = (d.ad & 7) ? 1u << (d.ad & 7) : 0;
+@@ -135,7 +137,7 @@ void scu_frame_event(int what) {
+         if ((g_dma[l].en >> 8 & 1) && (int)(g_dma[l].md & 7) == what) dma_run(l);
+ }
+ 
+-// Timer 0 fires on the line T0C names; timer 1, T1S clocks into a line, on
++// Timer 0 fires on the T0C-th line counted from VBlank-OUT (video passes that count); timer 1, T1S clocks into a line, on
+ // every line (T1MD bit 8 clear) or only on timer 0's line (bit 8 set). An
+ // interrupt raised again before it is taken is one interrupt, so at the
+ // runtime's poll rate timer 1 comes about once a poll.
 diff --git a/runtime/src/machine/scudsp.cpp b/runtime/src/machine/scudsp.cpp
 index ef4f660..13864ed 100644
 --- a/runtime/src/machine/scudsp.cpp
@@ -6009,10 +6018,20 @@ index 4c8bcb1..246c28b 100644
 -void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
-index 88d1642..c0efeab 100644
+index 88d1642..d58960b 100644
 --- a/runtime/src/video/video.cpp
 +++ b/runtime/src/video/video.cpp
-@@ -21,6 +21,7 @@
+@@ -3,7 +3,8 @@
+ //
+ // Timing is NTSC: 263 lines at 59.826 Hz, whatever the disc's area (TVSTAT's
+ // PAL bit reads 0). Each line reached runs the SCU's timer 0 compare and
+-// raises HBlank-IN; line 0 raises VBlank-OUT, the first line after the
++// raises HBlank-IN; line 262 raises VBlank-OUT (a line before VBLANK clears at line 0, as Beetle
++// Saturn's black box has it: VBlank-IN to -OUT is 22 lines in 240-line mode, the flag 23), the first line after the
+ // display (224, or 240 with TVMD's VRESO 1; 224 too for VRESO 2, PAL's 256
+ // lines, which a 60 Hz raster has no room for) VBlank-IN. At VBlank-IN the
+ // field that has ended is composed (vdp2.cpp) when a window or a picture
+@@ -21,6 +22,7 @@
  #include <cstring>
  #include <string>
  #include <vector>
@@ -6020,7 +6039,7 @@ index 88d1642..c0efeab 100644
  
  // A line is 1708 cycles of φ at the master clock over 65 (1820 over 61 in 352-dot mode, the same
  // time), as Mednafen counts it.
-@@ -33,6 +34,16 @@ static Frame g_frame;
+@@ -33,6 +35,22 @@ static Frame g_frame;
  uint64_t sat_vblanks() { return g_vblanks; }
  uint64_t video_frame_changes() { return vdp1_frame_changes(); }
  uint64_t video_frame_ns() { return kLineNs * kLines; }
@@ -6031,13 +6050,19 @@ index 88d1642..c0efeab 100644
 +
 +uint64_t video_line_ns() { return kLineNs; }
 +uint64_t video_tick_ns() { return g_tick_ns; }
++// The line VBlank-OUT is raised on: the last line of the field (SF3_VBOUT_LINE0=1: line 0, the old timing).
++static int vbout_line() {
++    static const int l = std::getenv("SF3_VBOUT_LINE0") && std::atoi(std::getenv("SF3_VBOUT_LINE0")) ? 0 : kLines - 1;
++    return l;
++}
++static uint64_t lines_since_vbout(uint64_t line) { return (line + kLines - vbout_line()) % kLines; }
 +uint64_t video_vbout_raised_ns() {
-+    return g_vbout_raised_ns != UINT64_MAX ? g_vbout_raised_ns : g_line_abs / kLines * kLines * kLineNs;
++    return g_vbout_raised_ns != UINT64_MAX ? g_vbout_raised_ns : (g_line_abs - lines_since_vbout(g_line_abs % kLines)) * kLineNs;
 +}
  uint64_t video_draws() { return vdp1_draws(); }
  
  static uint16_t reg16(const uint8_t* r, uint32_t o) { return (uint16_t)(r[o] << 8 | r[o + 1]); }
-@@ -40,6 +51,7 @@ static void set16(uint8_t* r, uint32_t o, uint16_t v) { r[o] = v >> 8; r[o + 1]
+@@ -40,6 +58,7 @@ static void set16(uint8_t* r, uint32_t o, uint16_t v) { r[o] = v >> 8; r[o + 1]
  
  void video_init() {
      vdp1_init();
@@ -6045,7 +6070,7 @@ index 88d1642..c0efeab 100644
      if (!host_open()) {                         // the host has said why
          std::fprintf(stderr, "saturn: no window could be opened; --headless runs without one\n");
          std::exit(3);
-@@ -58,16 +70,29 @@ static bool listed(const std::string& list, const std::string& item) {
+@@ -58,16 +77,29 @@ static bool listed(const std::string& list, const std::string& item) {
  }
  
  // --dump: VDP1 VRAM, its draw framebuffer, VDP1's registers, VDP2 VRAM, CRAM and VDP2's registers, one after the other
@@ -6080,7 +6105,7 @@ index 88d1642..c0efeab 100644
  }
  
  static void vblank_in(uint64_t now) {
-@@ -76,6 +101,7 @@ static void vblank_in(uint64_t now) {
+@@ -76,6 +108,7 @@ static void vblank_in(uint64_t now) {
      if (listed(g_cfg.dump, n)) dump("", g_vblanks);
      bool shot = listed(g_cfg.shots, n);
      bool compose = shot || host_wants_frame() || movie_on();
@@ -6088,7 +6113,7 @@ index 88d1642..c0efeab 100644
      if (vdp1_interp_field(compose) && compose) {
          uint8_t saved[0x30];
          std::copy(g_vdp2_regs + 0x70, g_vdp2_regs + 0xA0, saved);
-@@ -84,24 +110,38 @@ static void vblank_in(uint64_t now) {
+@@ -84,27 +117,44 @@ static void vblank_in(uint64_t now) {
          std::copy(saved, saved + 0x30, g_vdp2_regs + 0x70);
          if (shot) write_png(g_cfg.out + "/shot-" + n + ".png", g_frame);
          movie_frame(g_frame);
@@ -6111,12 +6136,15 @@ index 88d1642..c0efeab 100644
 -    host_pace(now);
 +}
 +
-+// When the next VBlank edge can come: line 0 (VBlank-OUT) or a line VBlank-IN starts at in any
++// When the next VBlank edge can come: VBlank-OUT's line or a line VBlank-IN starts at in any
 +// mode (224, 240, 256). The master's slices end there, so the interrupt is taken when it is raised,
 +// not up to a slice later. Only the time matters, not the mode, so that a state's slice comes back.
 +uint64_t video_next_vblank_edge_ns(uint64_t now) {
 +    const uint64_t la = now / kLineNs, base = la - la % kLines, line = la % kLines;
-+    const uint64_t next = line < 224 ? 224 : line < 240 ? 240 : line < 256 ? 256 : kLines;
++    const uint64_t vb = (uint64_t)vbout_line(), first = vb ? 224 : 0;
++    uint64_t next = line < 224 ? 224 : line < 240 ? 240 : line < 256 ? 256 : kLines;
++    if (vb && line < vb && vb < next) next = vb;
++    if (vb && line >= vb) next = kLines + first;
 +    return (base + next) * kLineNs;
  }
  
@@ -6127,11 +6155,29 @@ index 88d1642..c0efeab 100644
          ++g_line_abs;
          int line = (int)(g_line_abs % kLines);
 -        if (line == 0) { vdp1_vblank_out(); scu_raise(IRQ_VBLANK_OUT); scu_frame_event(1); }
-+        if (line == 0) { g_vbout_raised_ns = now; vdp1_vblank_out(); scu_raise(IRQ_VBLANK_OUT); scu_frame_event(1); }
++        if (line == vbout_line()) { g_vbout_raised_ns = now; vdp1_vblank_out(); scu_raise(IRQ_VBLANK_OUT); scu_frame_event(1); }
          if (line == display_lines()) vblank_in(g_line_abs * kLineNs);
          scu_raise(IRQ_HBLANK_IN);
-         scu_line(line);
-@@ -143,7 +183,20 @@ uint32_t video_read(uint32_t a, int size) {
+-        scu_line(line);
++        scu_line((int)lines_since_vbout((uint64_t)line));   // timer 0 counts HBlank-INs from VBlank-OUT
+     }
+     vdp1_tick(now);
+ }
+@@ -132,9 +182,11 @@ uint32_t video_read(uint32_t a, int size) {
+     off = a & 0x1FF;
+     if (off == 0x04 || off == 0x08 || off == 0x0A) {   // TVSTAT, HCNT, VCNT: from the raster
+         int line = (int)(g_line_abs % kLines);
+-        // HBLANK: the last sixth of every line (about 10.9 of NTSC's 63.6 us)
++        // HBLANK: from the line's HBlank-IN, the dots past the display's (107 of 427 at 320 or 640
++        // dots, 103 of 455 at 352 or 704), as Beetle Saturn's black box reads it
+         const uint64_t line_ns = kLineNs;
+-        bool hblank = sat_now() % line_ns >= line_ns - line_ns / 6;
++        const bool wide = reg16(g_vdp2_regs, 0x00) & 1;
++        bool hblank = sat_now() % line_ns < line_ns * (wide ? 103 : 107) / (wide ? 455 : 427);
+         uint16_t tvstat = (uint16_t)((line >= display_lines() ? 8 : 0) | (hblank ? 4 : 0) | ((g_vblanks & 1) ? 2 : 0));
+         set16(g_vdp2_regs, 0x04, tvstat);
+         set16(g_vdp2_regs, 0x0A, (uint16_t)line);
+@@ -143,7 +195,20 @@ uint32_t video_read(uint32_t a, int size) {
  }
  
  void video_write(uint32_t a, uint32_t v, int size) {
@@ -6153,7 +6199,7 @@ index 88d1642..c0efeab 100644
      uint32_t off;
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
-@@ -151,4 +204,10 @@ void video_write(uint32_t a, uint32_t v, int size) {
+@@ -151,4 +216,10 @@ void video_write(uint32_t a, uint32_t v, int size) {
      mem_wr(g_vdp2_regs, a & 0x1FF, v, size);
  }
  
@@ -6338,10 +6384,20 @@ index 0000000..1efd736
 +    g_sh2_frames = saved;
 +}
 diff --git a/runtime/tests/frame_change_test.cpp b/runtime/tests/frame_change_test.cpp
-index ab9b24b..50ea0ac 100644
+index ab9b24b..dad2387 100644
 --- a/runtime/tests/frame_change_test.cpp
 +++ b/runtime/tests/frame_change_test.cpp
-@@ -24,26 +24,45 @@ struct Restore { ~Restore() { vdp1_reg_write(kFBCR, 0, 2); } };
+@@ -11,6 +11,9 @@ const int kFBCR = 2;
+ // Machine time at a line of a frame, counted from power-on.
+ uint64_t at(uint64_t frame, int line) { return (frame * 263 + line) * kLineNs; }
+ 
++// VBlank-OUT is raised on the field's last line, 262, a line before the VBLANK flag clears.
++uint64_t vbout(uint64_t frame) { return at(frame, 262); }
++
+ void run_to(uint64_t now) { video_tick(now); }
+ 
+ // Time only goes forward, so each test starts at a frame no test has reached.
+@@ -24,33 +27,78 @@ struct Restore { ~Restore() { vdp1_reg_write(kFBCR, 0, 2); } };
  
  }  // namespace
  
@@ -6357,14 +6413,15 @@ index ab9b24b..50ea0ac 100644
      vdp1_reg_write(kFBCR, 3, 2);
      run_to(at(f, 5));
      uint64_t changes = vdp1_frame_changes();
-     run_to(at(f + 1, 0));
+-    run_to(at(f + 1, 0));
 -    vdp1_reg_write(kFBCR, 3, 2);
 -    run_to(at(f + 1, 2));
++    run_to(vbout(f));
      CHECK_EQ(vdp1_frame_changes(), changes);
 -    run_to(at(f + 2, 0));
 +    vdp1_reg_write(kFBCR, 3, 2);
 +    CHECK_EQ(vdp1_frame_changes(), changes + 1);
-+    run_to(at(f + 2, 2));
++    run_to(vbout(f + 1) + 2 * kLineNs);
 +    CHECK_EQ(vdp1_frame_changes(), changes + 1);
 +}
 +
@@ -6375,13 +6432,13 @@ index ab9b24b..50ea0ac 100644
 +    vdp1_reg_write(kFBCR, 2, 2);
 +    run_to(at(f, 5));
 +    uint64_t changes = vdp1_frame_changes();
-+    run_to(at(f + 1, 1) + kLineNs / 2);                       // a late poll: lines 0 and 1 at once
++    run_to(vbout(f) + kLineNs + kLineNs / 2);                // a late poll: lines 262 and 0 at once
 +    vdp1_reg_write(kFBCR, 3, 2);
      CHECK_EQ(vdp1_frame_changes(), changes + 1);
-+    run_to(at(f + 1, 3));
++    run_to(vbout(f) + 3 * kLineNs);
 +    vdp1_reg_write(kFBCR, 3, 2);                              // two lines on: waits for the next blanking
 +    CHECK_EQ(vdp1_frame_changes(), changes + 1);
-+    run_to(at(f + 2, 0));
++    run_to(vbout(f + 1));
 +    CHECK_EQ(vdp1_frame_changes(), changes + 2);
  }
  
@@ -6393,6 +6450,42 @@ index ab9b24b..50ea0ac 100644
      run_to(at(f, 5));
      uint64_t changes = vdp1_frame_changes();
      vdp1_reg_write(kFBCR, 3, 2);
+-    run_to(at(f + 1, 0) - 1);
++    run_to(vbout(f) - 1);
+     CHECK_EQ(vdp1_frame_changes(), changes);
+-    run_to(at(f + 1, 2));
++    run_to(vbout(f) + 2 * kLineNs);
+     CHECK_EQ(vdp1_frame_changes(), changes + 1);
+-    run_to(at(f + 2, 2));
++    run_to(vbout(f + 1) + 2 * kLineNs);
+     CHECK_EQ(vdp1_frame_changes(), changes + 1);
+ }
++
++// Beetle Saturn, as a black box (SCU IST polled with interrupts masked, 240- and 224-line modes): VBlank-IN
++// is raised with the VBLANK flag; VBlank-OUT comes a line before the flag clears (22 lines after VBlank-IN
++// at 240 lines), and timer 0 counts HBlank-INs from VBlank-OUT.
++TEST(vblank_out_comes_on_the_last_line_and_timer_0_counts_from_it) {
++    const uint32_t kIst = 0xA4, kT0c = 0x90, kT1md = 0x98, kVbin = 1, kVbout = 2, kTimer0 = 8;
++    uint64_t f = fresh_frame();
++    run_to(at(f, 100));
++    scu_write(kT0c, 10, 4);
++    scu_write(kT1md, 1, 4);
++    scu_write(kIst, 0, 4);
++    run_to(at(f, 224));
++    CHECK_EQ(scu_read(kIst, 4) & (kVbin | kVbout), kVbin);
++    run_to(at(f, 261));
++    CHECK_EQ(scu_read(kIst, 4) & kVbout, 0u);
++    run_to(at(f, 262));
++    CHECK_EQ(scu_read(kIst, 4) & kVbout, kVbout);
++    CHECK_EQ(video_vbout_raised_ns(), at(f, 262));
++    CHECK_EQ(scu_read(kIst, 4) & kTimer0, 0u);
++    run_to(at(f + 1, 8));                                     // 9 lines from VBlank-OUT
++    CHECK_EQ(scu_read(kIst, 4) & kTimer0, 0u);
++    run_to(at(f + 1, 9));                                     // the 10th
++    CHECK_EQ(scu_read(kIst, 4) & kTimer0, kTimer0);
++    scu_write(kT1md, 0, 4);
++    scu_write(kIst, 0, 4);
++}
 diff --git a/runtime/tests/memmap_test.cpp b/runtime/tests/memmap_test.cpp
 new file mode 100644
 index 0000000..6b71f96
