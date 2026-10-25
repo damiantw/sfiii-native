@@ -2540,7 +2540,7 @@ index 33a2cdd..590690a 100644
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..c2a7c84 100644
+index 6cbd98f..4048df4 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -2605,7 +2605,7 @@ index 6cbd98f..c2a7c84 100644
  uint64_t video_frame_changes();
  uint64_t video_frame_ns();                      // one field, 263 lines
 +uint64_t video_line_ns();                       // one raster line
-+uint64_t video_vbout_ns();                      // the time of the last VBlank-OUT (line 0) done
++uint64_t video_vbout_ns();                      // when the last VBlank-OUT (line 0) began
  uint64_t video_draws();
  
  // ---- sound (sound.cpp, scsp.cpp through sound.h) ----------------------------------------------
@@ -4221,7 +4221,7 @@ index 1786242..dfe275c 100644
  // ---- the 68000 and the pace (sound.cpp) ----------------------------------------------------
  void sound_irq_changed();                             // the SCSP's interrupt to the 68000 moved
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..00988da 100644
+index 8589d33..d605c4b 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
 @@ -29,15 +29,26 @@
@@ -4229,7 +4229,7 @@ index 8589d33..00988da 100644
  // framebuffer it shows as it shows it; manual mode changes frame when FCT is
  // 1 and erases in the next field when FCT is 0. The erase writes EWDR over EWLR-EWRR. The CPU sees
 -// the framebuffer being drawn.
-+// the framebuffer being drawn. A manual change asked for in the line VBlank-OUT begins (the
++// the framebuffer being drawn. A manual change asked for within a line of VBlank-OUT being raised (the
 +// VBlank-OUT handler's usual time), with VDP1 idle, is made at once, its draw starting then; a
 +// later one waits for the next VBlank-OUT. Measured on Beetle Saturn as a black box (Shining Force
 +// III's town loop: the handler's FBCR write at VBlank-OUT starts the draw within the same field, and
@@ -4527,12 +4527,16 @@ index 8589d33..00988da 100644
      if (!g_hi_on[which]) return;
      bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
      int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
-@@ -615,12 +784,17 @@ static void erase(int which) {
+@@ -615,12 +784,21 @@ static void erase(int which) {
              g_hi[which][y * 1024 + x] = fb8 ? (x & 1 ? g_reg[EWDR] & 0xFF : g_reg[EWDR] >> 8) : g_reg[EWDR];
  }
  
 +static void frame_change(bool one_cycle);
++// When the last VBlank-OUT was raised, CPU time. Not in a state: after a load it is unknown
++// (UINT64_MAX) until the next VBlank-OUT, and the line's start stands in for it.
++static uint64_t g_vbout_seen = UINT64_MAX;
  void vdp1_vblank_out() {
++    g_vbout_seen = sat_now_cpu();
      // the field that has just been shown erased the framebuffer shown, if it had to
      if (g_erase_field) { erase(g_draw_fb ^ 1); g_erase_field = false; }
      bool one_cycle = !(g_reg[FBCR] & 2);
@@ -4546,7 +4550,7 @@ index 8589d33..00988da 100644
          g_change_pending = false;
          g_draw_fb ^= 1;
          ++g_frame_changes;
-@@ -642,6 +816,7 @@ void vdp1_vblank_out() {
+@@ -642,6 +820,7 @@ void vdp1_vblank_out() {
  // ---- the bus ------------------------------------------------------------------------------
  uint32_t vdp1_reg_read(uint32_t off, int size) {
      if (size == 4) return vdp1_reg_read(off, 2) << 16 | vdp1_reg_read(off + 2, 2);
@@ -4554,20 +4558,21 @@ index 8589d33..00988da 100644
      uint16_t v = g_reg[(off >> 1) & 0xF];
      return size == 1 ? (off & 1 ? v & 0xFF : v >> 8) : v;
  }
-@@ -653,7 +828,11 @@ static void reg_write(uint32_t off, uint16_t v) {
+@@ -653,7 +832,12 @@ static void reg_write(uint32_t off, uint16_t v) {
      g_reg[r] = v;
      switch (r) {
      case FBCR:
 -        if ((v & 3) == 3) g_change_pending = true;
 +        if ((v & 3) == 3) {
 +            g_change_pending = true;
-+            uint64_t now = sat_now_cpu(), vbout = video_vbout_ns();   // the last VBlank-OUT done
++            // within a line of VBlank-OUT as the CPU saw it raised (a poll can raise it up to a slice late)
++            uint64_t now = sat_now_cpu(), vbout = g_vbout_seen != UINT64_MAX ? g_vbout_seen : video_vbout_ns();
 +            if (!g_drawing && now >= vbout && now < vbout + video_line_ns()) frame_change(false);
 +        }
          if ((v & 3) == 2) g_erase_pending = true;
          break;
      case PTMR:
-@@ -676,16 +855,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+@@ -676,22 +860,33 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
  }
  
  void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
@@ -4597,7 +4602,14 @@ index 8589d33..00988da 100644
      for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
  }
  
-@@ -707,4 +896,38 @@ void vdp1_state(State& s) {
+ // A full-height framebuffer goes in only while it is drawn so. The frames recorded for --interp are
+ // for the picture alone and start again empty.
+ void vdp1_state(State& s) {
++    if (s.loading) g_vbout_seen = UINT64_MAX;
+     s(g_vdp1_vram), s(g_fb), s(g_hi_on);
+     for (int i = 0; i < 2; ++i)
+         if (g_hi_on[i]) s(g_hi[i]);
+@@ -707,4 +902,38 @@ void vdp1_state(State& s) {
      s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
      s(g_draw_end), s(g_frame_changes), s(g_draws);
      s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
