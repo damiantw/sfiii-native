@@ -70,5 +70,33 @@ class StoryTest(unittest.TestCase):
             rough[i + 2] = 200           # every other pixel a different blue: textured water
         self.assertEqual(flat_blue_rows(w, h, bytes(rough)), 0)
 
+    def test_aimed_turn_unit_leaves_table(self):
+        # invented roster: unit 22 drops out of the force table during the probe (it fell on the
+        # previous enemy turn); it must not be taken as the unit under control (KeyError before)
+        from unittest import mock
+        from sf3test import autoplay
+        presses = []
+        force = {1: (5, 5), 22: (6, 5)}
+
+        def read_units(rd, base, live=None):
+            if base == 'E':
+                return [(0, 9, 5, 0, 10)]
+            return [(k, x, y, 0, 10) for k, (x, y) in force.items()]
+
+        def press(btn, n):
+            presses.append(btn)
+            force.pop(22, None)
+
+        class Side:
+            read = None
+            def frame(self):
+                return None
+        pol = autoplay.Policy(1)
+        pol.pathing = True
+        with mock.patch.object(autoplay.memory_map, 'read_units', read_units), \
+                mock.patch.object(autoplay, 'panel_share', lambda f: 0.0):
+            autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, press)
+        self.assertTrue(presses)
+
 if __name__ == '__main__':
     unittest.main()
