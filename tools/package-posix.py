@@ -198,7 +198,7 @@ def main():
         executable.parent.mkdir()
         script+='BASE="$HERE/../Resources"\n'
         plist=dict(CFBundleExecutable='SFIII Native',CFBundleIdentifier='org.sfiii.native.preview',CFBundleName='SFIII Native',
-                   CFBundleVersion='0.4.0',CFBundleShortVersionString='0.4.0',CFBundlePackageType='APPL',LSMinimumSystemVersion='13.0',NSHighResolutionCapable=True)
+                   CFBundleVersion=lock['version'].split('-')[0],CFBundleShortVersionString=lock['version'].split('-')[0],CFBundlePackageType='APPL',LSMinimumSystemVersion='13.0',NSHighResolutionCapable=True)
         with (package/'Contents/Info.plist').open('wb') as f:plistlib.dump(plist,f)
     else:
         executable=package/'SFIII Native.sh'
@@ -209,7 +209,7 @@ def main():
     bootstrap_exe=executable if sys.platform=='darwin' else package/'SFIII Native'
     minimum_os=['-mmacosx-version-min=13.0'] if sys.platform=='darwin' else []
     run([payload/'compiler/bin/cc',ROOT/'native/launcher-bootstrap.c',*minimum_os,'-O2','-o',bootstrap_exe])
-    (resources/'START HERE.txt').write_text('Shining Force III Native '+lock['version']+'\n\nOpen the SFIII Native application/launcher. Choose your supported Scenario 1 USA or Scenario 2 translated-v24 CUE/CHD and an external data folder. Click Prepare game, then Play.\n\nThe compiler, Python, SDL, CMake, Ninja and CHD converter are bundled. No game data or BIOS is included. Preparation stays local.\n\nExperimental platform candidate: native unit/build checks are separate from gameplay validation. Real-disc gameplay and hardware GPU/controller/audio checks on this OS remain unvalidated unless specifically documented. Keep backups of saves; native states are build-specific.\n',encoding='utf-8')
+    (resources/'START HERE.txt').write_text('Shining Force III Native '+lock['version']+'\n\nOpen the SFIII Native application/launcher. Choose the game: Scenario 1 USA (V1.001 or Translation Project V25.1), Scenario 2 (Translation Project V25.1 on V1.003 or V2.000, or v24) or Scenario 3 (Translation Project V25.1). Select its CUE/CHD and an external data folder, one per scenario. Click Prepare game, then Play.\n\nThe compiler, Python, SDL, CMake, Ninja and CHD converter are bundled. No game data or BIOS is included. Preparation stays local.\n\nExperimental platform candidate: native unit/build checks are separate from gameplay validation. Real-disc gameplay and hardware GPU/controller/audio checks on this OS remain unvalidated unless specifically documented. Keep backups of saves; native states are build-specific.\n',encoding='utf-8')
     inventory={f.relative_to(resources).as_posix():sha(f) for f in resources.rglob('*') if f.is_file()}
     (resources/'PACKAGE-FILES.json').write_text(json.dumps(inventory,indent=2)+'\n')
     (out/'package-path.txt').write_text(str(package))
