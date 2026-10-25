@@ -139,6 +139,72 @@ class StoryTest(unittest.TestCase):
         self.assertEqual(log[first_c - 1], (('B',), start))
         self.assertEqual(pol.returns, 1)
 
+    def test_aimed_turn_phantom_enemy(self):
+        # invented roster: the mover's step lands on a live enemy record's tile (a record that is
+        # not on the field); B returns it and the record stops being a target for this battle
+        from unittest import mock
+        from sf3test import autoplay
+        start = (5, 7)
+        force = {1: (1, 1), 2: start}
+        log = []
+
+        def read_units(rd, base, live=None):
+            if base == 'E':
+                return [(8, 5, 6, 0, 10), (9, 5, 0, 0, 10)]
+            return [(k, x, y, 0, 10) for k, (x, y) in force.items()]
+
+        def press(btn, n):
+            if btn == ('B',):
+                force[2] = start
+            elif btn and btn[0] in autoplay.DIRS and force[2] == start:
+                force[2] = (5, 6)
+            if btn:
+                log.append(btn)
+
+        class Side:
+            read = None
+            def frame(self):
+                return None
+        pol = autoplay.Policy(1)
+        pol.pathing = True
+        with mock.patch.object(autoplay.memory_map, 'read_units', read_units), \
+                mock.patch.object(autoplay, 'panel_share', lambda f: 0.0), \
+                mock.patch.object(autoplay, 'is_hurt', lambda *a: False):
+            autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, press)
+        self.assertEqual(pol.phantoms, {8})
+        self.assertIn(('B',), log)
+        self.assertEqual(force[2], start)
+
+    def test_hurt_leader_retreats(self):
+        # invented roster: the leader (lowest slot) is hurt with an enemy two tiles away; its turn
+        # walks it away from the enemy instead of holding still
+        from unittest import mock
+        from sf3test import autoplay
+        force = {1: (5, 5), 4: (9, 9)}
+
+        def read_units(rd, base, live=None):
+            if base == 'E':
+                return [(0, 5, 7, 0, 10)]
+            return [(k, x, y, 0, 10) for k, (x, y) in force.items()]
+
+        def press(btn, n):
+            if btn and btn[0] in autoplay.DIRS:
+                force[1] = autoplay.step_of(force[1], btn[0])
+
+        class Side:
+            read = None
+            def frame(self):
+                return None
+        pol = autoplay.Policy(1)
+        pol.pathing = True
+        with mock.patch.object(autoplay.memory_map, 'read_units', read_units), \
+                mock.patch.object(autoplay, 'panel_share', lambda f: 0.0), \
+                mock.patch.object(autoplay, 'is_hurt', lambda *a: True):
+            autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, press)
+        x, y = force[1]
+        self.assertGreater(abs(x - 5) + abs(y - 7), 4)
+        self.assertGreater(pol.retreats, 2)
+
     def test_is_hurt(self):
         from sf3test import autoplay, memory_map as M
         rec = bytearray(M.UNIT_STRIDE * 2)
