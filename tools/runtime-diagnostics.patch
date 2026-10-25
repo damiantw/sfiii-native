@@ -3115,7 +3115,7 @@ index c37141d..6517551 100644
      if (mco_uninit(t->co) != MCO_SUCCESS || mco_init(t->co, &desc) != MCO_SUCCESS)
          sat_fatal("tasks: the fiber cannot start over at %08X", pc);
 diff --git a/runtime/src/sound/scsp.cpp b/runtime/src/sound/scsp.cpp
-index b40fefc..16ec480 100644
+index b40fefc..8369242 100644
 --- a/runtime/src/sound/scsp.cpp
 +++ b/runtime/src/sound/scsp.cpp
 @@ -34,8 +34,7 @@
@@ -3531,14 +3531,10 @@ index b40fefc..16ec480 100644
 +    if (s.addr >= s.lsa()) {
 +        s.in_loop = true;
 +        if (s.lpctl() == 2) s.reverse = true;
-     }
--    if (s.sdir()) return v;                     // direct: no envelope, no LFO
--    if (s.alfos()) v = v * s.alfo.scale[lfo_next(s.alfo, s.lfore())] / 256;
--    return (int32_t)(v * eg_step(s));
++    }
 +    return v;
- }
- 
--// ---- the DSP (after MAME's scspdsp.cpp) -----------------------------------------------------
++}
++
 +// The slot after its envelope, the level LFO and TL (unless SDIR).
 +int32_t slot_sample(Slot& s) {
 +    int32_t v = slot_wave(s);
@@ -3556,10 +3552,14 @@ index b40fefc..16ec480 100644
 +    if ((ch == 0) == (pan < 16)) {
 +        if ((pan & 15) == 15) return 0;
 +        a += (uint32_t)(pan & 15) * 32;
-+    }
+     }
+-    if (s.sdir()) return v;                     // direct: no envelope, no LFO
+-    if (s.alfos()) v = v * s.alfo.scale[lfo_next(s.alfo, s.lfore())] / 256;
+-    return (int32_t)(v * eg_step(s));
 +    return attenuate(v, a, 128);
-+}
-+
+ }
+ 
+-// ---- the DSP (after MAME's scspdsp.cpp) -----------------------------------------------------
 +// ---- the DSP ------------------------------------------------------------------------------
 +// One sample runs all 128 steps. Fitted step by step to the reference's output (black box):
 +//  - INPUTS is read at the start of a step (MEMS, MIXS << 4, EXTS << 8; 24 bits); an IWT in the
@@ -3696,13 +3696,12 @@ index b40fefc..16ec480 100644
      return (uint16_t)((g_com[4] & 0xF800) | ca << 7 | sgc << 5 | eg);
  }
  
-@@ -514,24 +544,10 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
+@@ -514,24 +544,11 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
          int w = off >> 1 & 15;
          if (w >= 12) return;
          s.r[w] = (uint16_t)((s.r[w] & ~mask) | (v & mask));
 -        if (w == 0 && (s.r[0] & 0x1000)) {      // KYONEX: every slot takes its KYONB
-+        if (w == 0 && (s.r[0] & 0x1000)) {      // KYONEX: every slot takes its KYONB at the next sample
-             s.r[0] &= ~0x1000;
+-            s.r[0] &= ~0x1000;
 -            for (Slot& t : g_slot) {
 -                bool kb = t.r[0] & 0x0800;
 -                if (kb && !t.keyed) {
@@ -3716,14 +3715,18 @@ index b40fefc..16ec480 100644
 -                else if (!kb && t.keyed) key_off(t);
 -                t.keyed = kb;
 -            }
-+            g_key_execute = true;
-         }
+-        }
 -        if (w == 8 || w == 4 || w == 5) compute_eg(s);   // pitch moves key scaling; rates
 -        if (w == 9) compute_lfo(s);
++        if (w == 0 && (s.r[0] & 0x1000)) g_key_execute = true;  // KYONEX: every slot takes its KYONB at the next sample
++        // unused bits read back as 0 (black box): word 0 keeps 11-0, word 6 11-0, word 10 7-0
++        static const uint16_t kept[12] = {0x0FFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
++                                          0x0FFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x00FF, 0xFFFF};
++        s.r[w] &= kept[w];
          return;
      }
      if (off < 0x430) {
-@@ -590,13 +606,17 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
+@@ -590,13 +607,17 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
  void scsp_reset() {
      static bool tables;
      if (!tables) { init_tables(); tables = true; }
@@ -3742,7 +3745,7 @@ index b40fefc..16ec480 100644
      g_dsp = Dsp{};
      g_rbl = 8192;
      g_rbp = 0;
-@@ -622,10 +642,84 @@ void scsp_write(uint32_t off, uint32_t v, int size) {
+@@ -622,10 +643,84 @@ void scsp_write(uint32_t off, uint32_t v, int size) {
  
  int scsp_cpu_level() { return g_cpu_level; }
  
@@ -3828,7 +3831,7 @@ index b40fefc..16ec480 100644
      return m;
  }
  
-@@ -641,62 +735,75 @@ void scsp_sample(int16_t exts_l, int16_t exts_r, int16_t out[2]) {
+@@ -641,62 +736,75 @@ void scsp_sample(int16_t exts_l, int16_t exts_r, int16_t out[2]) {
      irq_update();
      ++g_samples;
  
@@ -6565,10 +6568,10 @@ index 0000000..64371d5
 +}
 diff --git a/runtime/tests/scsp_test.cpp b/runtime/tests/scsp_test.cpp
 new file mode 100644
-index 0000000..9e0fb4f
+index 0000000..e6d1210
 --- /dev/null
 +++ b/runtime/tests/scsp_test.cpp
-@@ -0,0 +1,223 @@
+@@ -0,0 +1,232 @@
 +// The SCSP and the sound 68000 against numbers measured on Beetle Saturn as a black box (its output
 +// and save states only).
 +#include <cstring>
@@ -6774,6 +6777,15 @@ index 0000000..9e0fb4f
 +    scsp_write(0x00, 0x1800, 2);
 +    for (int i = 0; i < 4; i++) scsp_sample(0, 0, out);
 +    CHECK_EQ(scsp_get_internal(SCSP_ENV_PHASE, 0), 2u);
++}
++
++// Unused slot register bits are not kept (black box): word 0 keeps bits 11-0, word 6 11-0, word 10 7-0.
++TEST(unused_slot_register_bits_read_back_as_0) {
++    scsp_reset();
++    scsp_write(0x00, 0xE7FF, 2); scsp_write(0x0C, 0xFFFF, 2); scsp_write(0x14, 0xFFFF, 2);
++    CHECK_EQ(scsp_read(0x00, 2), 0x07FFu);
++    CHECK_EQ(scsp_read(0x0C, 2), 0x0FFFu);
++    CHECK_EQ(scsp_read(0x14, 2), 0x00FFu);
 +}
 +
 +// Backwards in a reverse loop, a step that ends past the wave's start (more than LSA samples past
