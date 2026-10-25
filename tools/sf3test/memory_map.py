@@ -33,8 +33,12 @@ UNIT_MP, UNIT_ATK, UNIT_DEF, UNIT_AGI, UNIT_MOV = 0x84, 0x85, 0x86, 0x87, 0x89
 # loads record+2 (a file index = position in the disc's sorted root directory) to 0605F000 when it
 # differs from the overlay loaded (FID_LOADED). The town engine X008 looks the player's tile up in a
 # 64x64 byte map at 060B8000 (x and z 16.16 fixed >> 21, high nibble 1, 2 or 5 = an event kind,
-# low nibble its id, written to the event block that 0602886C points to).
-SC1_SCENES = dict(table_ptr=0x0602DA74, fid_loaded=0x0602E8E4, tile_map=0x060B8000, event_ptr=0x0602886C,
+# low nibble its id, written to the event block that 0602886C points to: kind 2 -> +0, 1 -> +4, 5 -> +28).
+# Checked live (1:30, after the HQ talk): writing 1 to event+4 (the HQ exit tile's kind-1 id) takes the
+# game out of the door to scene 86 (X1OBCHUR, Quonus outside), the same as walking onto the tile.
+# Re-pointing state+0x10 to a scene on another map (41 Saraband, 56 shop) during that exit loads
+# the new overlay file but stays black, polling BOOT 060125E0 (a test-made state, not a port result).
+SC1_SCENES = dict(table_ptr=0x0602DA74, fid_loaded=0x0602E8E4, tile_map=0x060B8000, event_ptr=0x0602886C, exit_event=4,
                   record=16, shops={56: 'X1S_SHOP', 66: 'X1BAR01', 159: 'X1SHOP_T', 164: 'X1SHOP_T'})
 
 
