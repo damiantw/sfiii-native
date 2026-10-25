@@ -243,6 +243,21 @@ def search(a):
             levels.append(dict(state=best['state'], v=best['v'], actions=cur['actions'] + best['actions'],
                                end=best['end'], ranked=[], pick=0, score=best['score'], reached=best.get('reached'),
                                backup=best['backup']))
+            if getattr(a, 'resync', False):
+                # restored save states do not carry every byte a straight run has, and the difference can
+                # change a battle's damage rolls: replay the committed pads from the save in a fresh run and
+                # continue from that run's state, so the search follows what the segment will replay
+                sm = resync(a, S, start, mm, units, out, levels[-1], common, len(log))
+                print(f"  sync @{levels[-1]['v']}: straight {score(sm):.2f} ({sm}) vs searched {score(best['m_commit']):.2f}", flush=True)
+                best = dict(best, m_commit=sm, reached=levels[-1].get('reached'))
+                if score(sm) <= -1e6:
+                    levels.pop()
+                    cur['ranked'], cur['pick'] = [], 0
+                    backs += 1
+                    if backs > a.max_backs:
+                        print('search: out of branches', flush=True)
+                        break
+                    continue
             (out / 'search.json').write_text(json.dumps(dict(levels=log, path=[l['v'] for l in levels]), indent=0, default=str))
             write_segment(a, out, start, load, h, levels[-1], S)
             flat = 0
@@ -264,6 +279,33 @@ def search(a):
     if done_goal or stalled:
         finalize(a, out)
     return 0 if done_goal else 2 if stalled else 1
+
+
+def resync(a, S, start, mm, units, out, lv, common, n):
+    """Straight replay of lv['actions'] to lv['v'] from the save; lv takes that run's state, backup, end
+    hashes and goals. Returns the straight run's metrics."""
+    work = out / 'sync' / f'{n:04d}'
+    r = S.start_run(a.saturn, a.cue, start, mm['scenario'], work, coverage=False, clock=a.clock)
+    try:
+        s = S.Recorder(r, a.profile, copy.deepcopy(common['goals']), work)
+        s.loaded = True
+        S.apply_actions(s, lv['actions'], until=lv['v'])
+        while r.vblank < lv['v']:
+            s.step()
+        reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
+        m = metrics(unit_hp(s.read, units), common['root'], common['leader'])
+        m.update(goal=bool(reached), reset=False, left=left_battle(s.read, common, reached))
+        st = out / 'states' / f'sync-{n:04d}.state'
+        if not save_state(r, st):
+            raise RuntimeError('sync state not written')
+        lv.update(state=str(st), v=r.vblank, end=S.end_hashes(s, a.profile), reached=reached or lv.get('reached'))
+    finally:
+        r.close()
+    bk = out / 'states' / f'sync-{n:04d}.backup.bin'
+    shutil.copyfile(work / 'backup.bin', bk)
+    lv['backup'] = str(bk)
+    shutil.rmtree(work, ignore_errors=True)
+    return m
 
 
 def finalize(a, out):
