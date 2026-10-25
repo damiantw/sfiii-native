@@ -167,9 +167,14 @@ SC1_SCENE_TABLE, SC1_SCENE_COUNT = 0x0602CFA4, 0xAD
 INVALID_MAPS = {1: {0x70: 'black after the load on Beetle with a real BIOS',
                     **{m: 'past the end of the scene table (0xAD records); black or CD READ ERROR on Beetle '
                           'with a real BIOS' for m in range(SC1_SCENE_COUNT, 0x100)}},
-                2: {m: 'black or CD READ ERROR after the load on Beetle with a real BIOS (V2.000)'
-                    for m in _SC2_HIGH_INVALID},
+                2: {**{m: 'black or CD READ ERROR after the load on Beetle with a real BIOS (V2.000)'
+                       for m in _SC2_HIGH_INVALID},
+                    # Round 22: black field with only the player sprite, the same on Beetle with a real BIOS
+                    # (V1.003 and V2.000 for 0x76; V2.000 for 0x86 and 0x95, where 0x95 was a sweep stall).
+                    **{m: 'black field with only the player sprite, the same on Beetle with a real BIOS'
+                       for m in (0x76, 0x86, 0x95)}},
                 3: {0x4D: 'black after the load on Beetle with a real BIOS, then map id 0',
+                    0x3E: 'black field with only the player sprite, the same on Beetle with a real BIOS',
                     **{m: 'black or CD READ ERROR after the load on Beetle with a real BIOS'
                        for m in _SC3_HIGH_INVALID}}}
 
