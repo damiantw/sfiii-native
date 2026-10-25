@@ -3115,10 +3115,20 @@ index c37141d..6517551 100644
      if (mco_uninit(t->co) != MCO_SUCCESS || mco_init(t->co, &desc) != MCO_SUCCESS)
          sat_fatal("tasks: the fiber cannot start over at %08X", pc);
 diff --git a/runtime/src/sound/scsp.cpp b/runtime/src/sound/scsp.cpp
-index b40fefc..e5b0419 100644
+index b40fefc..1185839 100644
 --- a/runtime/src/sound/scsp.cpp
 +++ b/runtime/src/sound/scsp.cpp
-@@ -53,9 +53,6 @@ uint8_t g_sound_ram[0x80000];
+@@ -34,8 +34,7 @@
+ // enabled (bits 8-10 take bit 7's level).
+ //
+ // The envelope, LFO and DSP follow MAME's scsp.cpp and scspdsp.cpp: the
+-// envelope times in milliseconds, the key-rate scaling, the LFO tables and
+-// scales, the FM scaling, and the DSP step with its floating-point
++// envelope times in milliseconds, the key-rate scaling, and the DSP step with its floating-point
+ // PACK/UNPACK of the ring buffer. Those parts are derived from MAME's code:
+ //   Copyright (c) ElSemi, R. Belmont (thanks-to kingshriek), BSD-3-Clause;
+ //   the licence's text is in THIRD_PARTY.md at the root of saturn-recomp.
+@@ -53,26 +52,22 @@ uint8_t g_sound_ram[0x80000];
  
  namespace {
  
@@ -3127,11 +3137,12 @@ index b40fefc..e5b0419 100644
 -
  enum { EG_ATTACK, EG_DECAY1, EG_DECAY2, EG_RELEASE };
  
- struct Lfo {
-@@ -64,14 +61,16 @@ struct Lfo {
-     const int* scale;
- };
- 
+-struct Lfo {
+-    uint32_t phase, step;
+-    const int* table;
+-    const int* scale;
+-};
+-
 +// A slot. Its sample position is a 16-bit sample count (addr) and a 14-bit fraction; its envelope
 +// an attenuation, 0 loudest, 0x3FF silent, in steps of 3/32 dB.
  struct Slot {
@@ -3142,16 +3153,21 @@ index b40fefc..e5b0419 100644
 -    int32_t eg_vol;                             // 0..0x3FF << kEgShift, 0x3FF loudest
 -    int32_t ar, d1r, d2r, rr;                   // per-sample steps
 -    int dl;
+-    Lfo plfo, alfo;
 +    bool playing;                               // reading its waveform (a loop-less one stops at LEA)
 +    bool in_loop, reverse;                      // past LSA; reading backwards (reverse and alternating loops)
++    bool lost;                                  // went backwards past the wave's start: reads on down, unturned, until a key-on
 +    uint16_t addr;
 +    uint32_t frac;                              // 14 bits
 +    int env_phase;
 +    uint32_t env;                               // 0..0x3FF
-     Lfo plfo, alfo;
++    uint8_t lfo;                                // the LFO's position: 0-255, a step each lfo_time samples
++    uint16_t lfo_time;                          // samples to its next step (counts down; 0 wraps)
++    uint8_t lfo_was;                            // the position before this sample's step (the pitch LFO reads it)
      // register fields
      bool pcm8() const { return r[0] & 0x10; }
-@@ -120,7 +119,10 @@ struct Dsp {
+     int sbctl() const { return r[0] >> 9 & 3; }
+@@ -120,7 +115,10 @@ struct Dsp {
      int32_t temp[128], mems[32], mixs[16];
      int16_t exts[2], efreg[16];
      uint32_t dec;
@@ -3163,7 +3179,7 @@ index b40fefc..e5b0419 100644
  };
  
  Slot g_slot[32];
-@@ -129,26 +131,19 @@ Timer g_timer[3];
+@@ -129,161 +127,155 @@ Timer g_timer[3];
  uint32_t g_scieb, g_scipd, g_scilv[3], g_mcieb, g_mcipd;
  bool g_main_line;
  uint32_t g_samples;                             // since reset
@@ -3171,17 +3187,18 @@ index b40fefc..e5b0419 100644
 +bool g_key_execute;                             // KYONEX written: keys move at the next sample
  int32_t g_stack[64];                            // the sound stack (0x600): the slots' last outputs
  unsigned g_stack_pos;
++// A slot's output reaches the stack four slots later (slot k's lands after slot k + 4 has read the
++// stack): the outputs on their way, by slot & 3, and which of them STWINH keeps out.
++int32_t g_stack_delay[4];
++uint8_t g_stack_delay_skip;
  Dsp g_dsp;
  uint32_t g_noise = 1;
  
  // ---- tables ------------------------------------------------------------------------------
 -float g_eg_gain[1024], g_tl_gain[256], g_sdl_gain[8], g_pan_l[32], g_pan_r[32], g_mvol[16];
 -int32_t g_ar_step[64], g_dr_step[64];
-+// The master volume: MVOL 0-15 to a gain in 256ths, 3 dB a step.
-+const int32_t kMasterVolume[16] = {0, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256};
-+float g_sdl_gain[8];
- int g_alfo[4][256], g_plfo[4][256], g_ascale[8][256], g_pscale[8][256];
- 
+-int g_alfo[4][256], g_plfo[4][256], g_ascale[8][256], g_pscale[8][256];
+-
 -const double kArMs[64] = {
 -    1e5, 1e5, 8100.0, 6900.0, 6000.0, 4800.0, 4000.0, 3400.0, 3000.0, 2400.0, 2000.0, 1700.0, 1500.0,
 -    1200.0, 1000.0, 860.0, 760.0, 600.0, 500.0, 430.0, 380.0, 300.0, 250.0, 220.0, 190.0, 150.0, 130.0, 110.0, 95.0,
@@ -3192,10 +3209,18 @@ index b40fefc..e5b0419 100644
 -    17700.0, 14800.0, 12700.0, 11100.0, 8900.0, 7400.0, 6300.0, 5500.0, 4400.0, 3700.0, 3200.0, 2800.0, 2200.0, 1800.0,
 -    1600.0, 1400.0, 1100.0, 920.0, 790.0, 690.0, 550.0, 460.0, 390.0, 340.0, 270.0, 230.0, 200.0, 170.0, 140.0, 110.0,
 -    98.0, 85.0, 68.0, 57.0, 49.0, 43.0, 34.0, 28.0, 25.0, 22.0, 18.0, 14.0, 12.0, 11.0, 8.5, 7.1, 6.1, 5.4, 4.3, 3.6, 3.1};
- const float kLfoHz[32] = {0.17f, 0.19f, 0.23f, 0.27f, 0.34f, 0.39f, 0.45f, 0.55f, 0.68f, 0.78f, 0.92f,
-                           1.10f, 1.39f, 1.60f, 1.87f, 2.27f, 2.87f, 3.31f, 3.92f, 4.79f, 6.15f, 7.18f,
-                           8.60f, 10.8f, 14.4f, 17.2f, 21.5f, 28.7f, 43.1f, 57.4f, 86.1f, 172.3f};
-@@ -158,29 +153,8 @@ const float kPScaleCents[8] = {0.0f, 7.0f, 13.5f, 27.0f, 55.0f, 112.0f, 230.0f,
+-const float kLfoHz[32] = {0.17f, 0.19f, 0.23f, 0.27f, 0.34f, 0.39f, 0.45f, 0.55f, 0.68f, 0.78f, 0.92f,
+-                          1.10f, 1.39f, 1.60f, 1.87f, 2.27f, 2.87f, 3.31f, 3.92f, 4.79f, 6.15f, 7.18f,
+-                          8.60f, 10.8f, 14.4f, 17.2f, 21.5f, 28.7f, 43.1f, 57.4f, 86.1f, 172.3f};
+-const float kAScaleDb[8] = {0.0f, 0.4f, 0.8f, 1.5f, 3.0f, 6.0f, 12.0f, 24.0f};
+-const float kPScaleCents[8] = {0.0f, 7.0f, 13.5f, 27.0f, 55.0f, 112.0f, 230.0f, 494.0f};
++// The master volume: MVOL 0-15 to a gain in 256ths, 3 dB a step.
++const int32_t kMasterVolume[16] = {0, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256};
++float g_sdl_gain[8];
++// The LFO's period in samples per step, by LFOF (measured on the reference, black box).
++const uint16_t kLfoPeriod[32] = {1020, 892, 764, 636, 508, 444, 380, 316, 252, 220, 188, 156, 124, 108, 92, 76,
++                                 60, 52, 44, 36, 28, 24, 20, 16, 12, 10, 8, 6, 4, 3, 2, 1};
+ 
  float db(float d) { return std::pow(10.0f, d / 20.0f); }
  
  void init_tables() {
@@ -3222,24 +3247,46 @@ index b40fefc..e5b0419 100644
 -                                                   : (int32_t)(1023 * 1000.0 / (44100.0 * kArMs[i]) * (1 << kEgShift));
 -        g_dr_step[i] = i < 2 ? 0 : (int32_t)(1023 * 1000.0 / (44100.0 * kDrMs[i]) * (1 << kEgShift));
 -    }
-     uint32_t rnd = 0x12345678;
-     for (int i = 0; i < 256; ++i) {
-         g_alfo[0][i] = 255 - i;                 // saw
-@@ -201,21 +175,20 @@ void init_tables() {
-         }
- }
- 
--// ---- a slot ------------------------------------------------------------------------------
--uint32_t step_of(const Slot& s) {
--    uint32_t fn = (uint32_t)s.fns() + 1024;
--    int sh = s.oct() + kShift - 10;
--    return sh >= 0 ? fn << sh : fn >> -sh;
+-    uint32_t rnd = 0x12345678;
+-    for (int i = 0; i < 256; ++i) {
+-        g_alfo[0][i] = 255 - i;                 // saw
+-        g_plfo[0][i] = i < 128 ? i : i - 256;
+-        g_alfo[1][i] = i < 128 ? 255 : 0;       // square
+-        g_plfo[1][i] = i < 128 ? 127 : -128;
+-        g_alfo[2][i] = i < 128 ? 255 - i * 2 : i * 2 - 256;   // triangle
+-        g_plfo[2][i] = i < 64 ? i * 2 : i < 128 ? 255 - i * 2 : i < 192 ? 256 - i * 2 : i * 2 - 511;
+-        rnd = rnd * 1103515245u + 12345u;       // noise
+-        int a = (int)(rnd >> 16 & 0xFF);
+-        g_alfo[3][i] = a;
+-        g_plfo[3][i] = 128 - a;
+-    }
+-    for (int s = 0; s < 8; ++s)
+-        for (int i = 0; i < 256; ++i) {
+-            g_pscale[s][i] = (int)(256.0f * std::pow(2.0f, kPScaleCents[s] * (i - 128) / 128.0f / 1200.0f));
+-            g_ascale[s][i] = (int)(256.0f * db(-kAScaleDb[s] * i / 256.0f));
+-        }
++}
++
 +// ---- levels ------------------------------------------------------------------------------
 +// An attenuation in steps of 3/32 dB: 64 steps make 6 dB (a shift), the 64 within it 127/128
 +// down to 64/128. Past 31 shifts a negative value stays -1.
 +int32_t attenuate(int32_t v, uint32_t a, int top) {
 +    uint32_t sh = 7 + (a >> 6);
 +    return (v * (top - (int32_t)(a & 63))) >> (sh > 31 ? 31 : sh);
+ }
+ 
+ // ---- a slot ------------------------------------------------------------------------------
++int plfo_value(const Slot& s);
++
++// The phase step: 1024 + FNS, 14 fraction bits, times 2^OCT.
+ uint32_t step_of(const Slot& s) {
+     uint32_t fn = (uint32_t)s.fns() + 1024;
+-    int sh = s.oct() + kShift - 10;
+-    return sh >= 0 ? fn << sh : fn >> -sh;
++    if (s.plfos()) fn = fn * (uint32_t)(1024 + ((plfo_value(s) >> 1 << s.plfos()) >> 6)) >> 10;
++    fn <<= 4;
++    int o = s.oct();
++    return o >= 0 ? fn << o : fn >> -o;
  }
  
 -void compute_eg(Slot& s) {
@@ -3250,33 +3297,66 @@ index b40fefc..e5b0419 100644
 -    s.d2r = rate(s.d2r_r(), g_dr_step);
 -    s.rr = rate(s.rr_r(), g_dr_step);
 -    s.dl = 0x1F - s.dl_r();
-+// ---- a slot ------------------------------------------------------------------------------
-+// The phase step: 1024 + FNS, 14 fraction bits, times 2^OCT.
-+uint32_t step_of(const Slot& s) {
-+    uint32_t fn = ((uint32_t)s.fns() + 1024) << 4;
-+    int o = s.oct();
-+    return o >= 0 ? fn << o : fn >> -o;
++// The LFO (fitted to the reference, black box): an 8-bit position c steps every kLfoPeriod[LFOF]
++// samples and is not reset by a key-on (LFORE holds it at 0). The amplitude LFO's value (0-255:
++// saw c, square 0/255, triangle 2c up then down, noise) and the pitch LFO's (signed: saw c,
++// square 127/-128, triangle 0 up to 127, down to -128 and back) are halved, then scaled by 2^S/64
++// (ALFOS/PLFOS = S): the ALFO adds that much attenuation, the PLFO moves the pitch's 1024 + FNS by
++// that many 1024ths.
++void lfo_tick(Slot& s) {
++    s.lfo_was = s.lfo;
++    if (s.lfore()) { s.lfo = 0; return; }
++    if (--s.lfo_time == 0) { s.lfo_time = kLfoPeriod[s.lfof()]; ++s.lfo; }
++}
++
++uint32_t lfo_noise() { return g_noise >> 16 & 0xFF; }  // not fitted: the reference's noise generator
++
++int alfo_value(const Slot& s) {
++    int c = s.lfo;
++    switch (s.alfows()) {
++    case 0: return c;
++    case 1: return c < 128 ? 0 : 255;
++    case 2: return c < 128 ? 2 * c : 2 * (255 - c);
++    default: return (int)lfo_noise();
++    }
  }
  
- void compute_lfo(Slot& s) {
-@@ -228,44 +201,53 @@ void compute_lfo(Slot& s) {
+-void compute_lfo(Slot& s) {
+-    uint32_t step = (uint32_t)(kLfoHz[s.lfof()] * 256.0f / 44100.0f * 256.0f);
+-    s.plfo.step = s.alfo.step = step;
+-    s.plfo.table = g_plfo[s.plfows()];
+-    s.plfo.scale = g_pscale[s.plfos()];
+-    s.alfo.table = g_alfo[s.alfows()];
+-    s.alfo.scale = g_ascale[s.alfos()];
++int plfo_value(const Slot& s) {
++    int c = s.lfo_was;
++    switch (s.plfows()) {
++    case 0: return (int8_t)c;
++    case 1: return c < 128 ? 127 : -128;
++    case 2: return c < 64 ? 2 * c : c < 192 ? 254 - 2 * c : 2 * c - 512;
++    default: return (int8_t)lfo_noise();
++    }
  }
  
++int eg_rate(const Slot& s, int r);
++
  void key_on(Slot& s) {
 -    s.active = true;
 -    s.pos = 0;
 -    s.backwards = false;
 -    compute_eg(s);
+-    compute_lfo(s);
+-    s.plfo.phase = s.alfo.phase = 0;
+-    s.eg_state = EG_ATTACK;
+-    s.eg_vol = 0x17F << kEgShift;               // MAME's starting point for the attack
 +    s.playing = true;
 +    s.addr = 0;
 +    s.frac = 0;
-+    s.in_loop = s.reverse = false;
-     compute_lfo(s);
-     s.plfo.phase = s.alfo.phase = 0;
--    s.eg_state = EG_ATTACK;
--    s.eg_vol = 0x17F << kEgShift;               // MAME's starting point for the attack
++    s.in_loop = s.reverse = s.lost = false;
++    if (!s.lsa()) s.in_loop = true, s.reverse = s.lpctl() == 2;   // a reverse loop from 0 reads backwards at once
 +    s.env_phase = EG_ATTACK;
 +    s.env = 0x280;                              // where an attack starts
++    if (eg_rate(s, s.ar_r()) >= 64) s.env = 0;   // at once (the attack phase ends at its next step)
  }
  
 -void key_off(Slot& s) {
@@ -3286,7 +3366,7 @@ index b40fefc..e5b0419 100644
 +    if (!r) return 0;
 +    r *= 2;
 +    if (s.krs() != 15) r += std::max(0, 2 * (s.krs() + s.oct()));
-+    return std::min(r, 62);
++    return r;                                   // past 62: 64 and up (KRS) attack at once
  }
  
 -// The envelope, one sample on: the gain to apply
@@ -3307,6 +3387,12 @@ index b40fefc..e5b0419 100644
 +          : s.env_phase == EG_DECAY2 ? s.d2r_r() : s.rr_r();
 +    int r = eg_rate(s, R);
 +    if (!r) return;
++    if (s.env_phase == EG_ATTACK && r >= 64) {
++        s.env = 0;
++        s.env_phase = EG_DECAY1;
++        return;
++    }
++    r = std::min(r, 62);
 +    int L = 0;
 +    if (r < 48) {
 +        uint32_t h = 1u << (11 - r / 4);
@@ -3342,10 +3428,11 @@ index b40fefc..e5b0419 100644
 +    if (s.env_phase == EG_DECAY1 && (int)(s.env >> 5) == s.dl_r()) s.env_phase = EG_DECAY2;
  }
  
- int lfo_next(Lfo& l, bool reset) {
-@@ -274,16 +256,16 @@ int lfo_next(Lfo& l, bool reset) {
-     return l.table[l.phase >> 8 & 0xFF];
- }
+-int lfo_next(Lfo& l, bool reset) {
+-    if (reset) l.phase = 0;
+-    else l.phase += l.step;
+-    return l.table[l.phase >> 8 & 0xFF];
+-}
  
 -int32_t read_sample(const Slot& s, int64_t idx) {
 +int32_t read_sample(const Slot& s, uint32_t idx) {
@@ -3363,7 +3450,7 @@ index b40fefc..e5b0419 100644
          v = (int16_t)(g_sound_ram[a] << 8 | g_sound_ram[a + 1]);
      }
      if (s.sbctl() & 1) v ^= 0x7FFF;
-@@ -291,44 +273,69 @@ int32_t read_sample(const Slot& s, int64_t idx) {
+@@ -291,44 +283,85 @@ int32_t read_sample(const Slot& s, int64_t idx) {
      return v;
  }
  
@@ -3380,25 +3467,37 @@ index b40fefc..e5b0419 100644
 +int32_t slot_wave(Slot& s) {
 +    uint32_t idx = s.addr, f = s.frac >> 8;
 +    if (s.reverse) { idx = (s.lea() + s.lsa() - 1 - s.addr) & 0xFFFF; f = (~s.frac >> 8) & 63; }
-+    int32_t a = read_sample(s, idx), b = read_sample(s, (idx + 1) & 0xFFFF);
++    uint32_t next = (idx + 1) & 0xFFFF;
++    // FM (MDL 5-15): the stack words MDXSL and MDYSL ahead of this slot's place, summed, move the
++    // read by (X + Y) * 2^(MDL - 2) / 2^14 samples. The fraction then added to the slot's own can
++    // pass a whole sample: the read then is the next sample itself (the weight stops at 64/64).
++    // The moved fraction counts in 32nds; a move below the wave's start reads the bytes before it.
++    // Fitted to the reference's output (black box) with a ramp read under a constant modulator.
++    if (s.mdl() >= 5) {
++        int32_t x = g_stack[(g_stack_pos + s.mdxsl()) & 63], y = g_stack[(g_stack_pos + s.mdysl()) & 63];
++        int32_t m = (x + y) * (1 << (s.mdl() - 2));
++        idx += (uint32_t)(m >> 14);
++        next = idx + 1;
++        f = std::min<uint32_t>(f + ((uint32_t)m >> 9 & 31) * 2, 64);
++    }
++    int32_t a = read_sample(s, idx), b = read_sample(s, next);
 +    int32_t v = a + (((b - a) * (int32_t)f) >> 6);
 +
 +    uint32_t step = step_of(s);
-+    if (s.plfos()) step = (uint32_t)((int64_t)step * s.plfo.scale[lfo_next(s.plfo, s.lfore()) + 128] / 256);
 +    s.frac += step;
 +    s.addr = (uint16_t)(s.addr + (s.frac >> 14));
 +    s.frac &= 0x3FFF;
 +    // the loop: once past LSA, at LEA back by LEA - LSA (a loop-less slot stops there)
-+    if (s.in_loop && s.addr >= s.lea()) {
++    if (s.in_loop && !s.lost && s.addr >= s.lea()) {
 +        if (s.lpctl() == 0) s.playing = false;
++        // backwards, a step that ends more than LSA samples past LEA (before the wave's start) is
++        // not turned: the reference reads on backwards below the wave, the address wrapping at 16
++        // bits, until a key-on (black box)
++        else if (s.reverse && s.addr - s.lea() > s.lsa()) s.lost = true;
 +        else {
 +            s.addr = (uint16_t)(s.addr - (s.lea() - s.lsa()));
 +            if (s.lpctl() == 3) s.reverse = !s.reverse;
 +        }
-+    }
-+    if (s.addr >= s.lsa()) {
-+        s.in_loop = true;
-+        if (s.lpctl() == 2) s.reverse = true;
      }
 -    int32_t frac = (int32_t)(s.pos & ((1 << kShift) - 1));
 -    int32_t a = read_sample(s, idx), b = read_sample(s, idx + (s.backwards ? -1 : 1));
@@ -3423,15 +3522,23 @@ index b40fefc..e5b0419 100644
 -        if (!s.backwards && s.pos >= lea) { s.pos = 2 * lea - s.pos; s.backwards = true; }
 -        else if (s.backwards && s.pos < lsa) { s.pos = 2 * lsa - s.pos; s.backwards = false; }
 -        break;
++    if (s.addr >= s.lsa()) {
++        s.in_loop = true;
++        if (s.lpctl() == 2) s.reverse = true;
+     }
+-    if (s.sdir()) return v;                     // direct: no envelope, no LFO
+-    if (s.alfos()) v = v * s.alfo.scale[lfo_next(s.alfo, s.lfore())] / 256;
+-    return (int32_t)(v * eg_step(s));
 +    return v;
-+}
-+
+ }
+ 
+-// ---- the DSP (after MAME's scspdsp.cpp) -----------------------------------------------------
 +// The slot after its envelope, the level LFO and TL (unless SDIR).
 +int32_t slot_sample(Slot& s) {
 +    int32_t v = slot_wave(s);
 +    if (s.sdir()) return v;
 +    uint32_t a = (s.eghold() && s.env_phase == EG_ATTACK ? 0 : s.env) + ((uint32_t)s.tl() << 2);
-+    if (s.alfos()) a += (uint32_t)(255 - s.alfo.scale[lfo_next(s.alfo, s.lfore())]) >> 2;
++    if (s.alfos()) a += (uint32_t)((alfo_value(s) >> 1 << s.alfos()) >> 6);
 +    return attenuate(v, a, 127);
 +}
 +
@@ -3443,14 +3550,10 @@ index b40fefc..e5b0419 100644
 +    if ((ch == 0) == (pan < 16)) {
 +        if ((pan & 15) == 15) return 0;
 +        a += (uint32_t)(pan & 15) * 32;
-     }
--    if (s.sdir()) return v;                     // direct: no envelope, no LFO
--    if (s.alfos()) v = v * s.alfo.scale[lfo_next(s.alfo, s.lfore())] / 256;
--    return (int32_t)(v * eg_step(s));
++    }
 +    return attenuate(v, a, 128);
- }
- 
--// ---- the DSP (after MAME's scspdsp.cpp) -----------------------------------------------------
++}
++
 +// ---- the DSP ------------------------------------------------------------------------------
 +// One sample runs all 128 steps. Fitted step by step to the reference's output (black box):
 +//  - INPUTS is read at the start of a step (MEMS, MIXS << 4, EXTS << 8; 24 bits); an IWT in the
@@ -3467,7 +3570,7 @@ index b40fefc..e5b0419 100644
  int32_t sext(int32_t v, int bits) { return (int32_t)((uint32_t)v << (32 - bits)) >> (32 - bits); }
  
  uint16_t dsp_pack(int32_t val) {
-@@ -350,15 +357,12 @@ int32_t dsp_unpack(uint16_t v) {
+@@ -350,15 +383,12 @@ int32_t dsp_unpack(uint16_t v) {
      return sext(u, 24) >> e;
  }
  
@@ -3486,7 +3589,7 @@ index b40fefc..e5b0419 100644
          const uint16_t* ip = d.mpro + st * 4;
          uint32_t tra = ip[0] >> 8 & 0x7F, twt = ip[0] >> 7 & 1, twa = ip[0] & 0x7F;
          uint32_t xsel = ip[1] >> 15 & 1, ysel = ip[1] >> 13 & 3, ira = ip[1] >> 6 & 0x3F, iwt = ip[1] >> 5 & 1,
-@@ -366,61 +370,54 @@ void dsp_step() {
+@@ -366,61 +396,54 @@ void dsp_step() {
          uint32_t table = ip[2] >> 15 & 1, mwt = ip[2] >> 14 & 1, mrd = ip[2] >> 13 & 1, ewt = ip[2] >> 12 & 1,
                   ewa = ip[2] >> 8 & 15, adrl = ip[2] >> 7 & 1, frcl = ip[2] >> 6 & 1, shift = ip[2] >> 4 & 3,
                   yrl = ip[2] >> 3 & 1, negb = ip[2] >> 2 & 1, zero = ip[2] >> 1 & 1, bsel = ip[2] & 1;
@@ -3574,7 +3677,7 @@ index b40fefc..e5b0419 100644
  
  // ---- interrupts ---------------------------------------------------------------------------
  int g_cpu_level;
-@@ -449,9 +446,9 @@ void pend(uint32_t bits) {
+@@ -449,9 +472,9 @@ void pend(uint32_t bits) {
  // ---- registers ------------------------------------------------------------------------------
  uint16_t monitor() {                            // 0x408: the slot MSLC names, CA, SGC, EG
      const Slot& s = g_slot[g_com[4] >> 11 & 31];
@@ -3587,7 +3690,7 @@ index b40fefc..e5b0419 100644
      return (uint16_t)((g_com[4] & 0xF800) | ca << 7 | sgc << 5 | eg);
  }
  
-@@ -514,23 +511,10 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
+@@ -514,24 +537,10 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
          int w = off >> 1 & 15;
          if (w >= 12) return;
          s.r[w] = (uint16_t)((s.r[w] & ~mask) | (v & mask));
@@ -3610,21 +3713,30 @@ index b40fefc..e5b0419 100644
 +            g_key_execute = true;
          }
 -        if (w == 8 || w == 4 || w == 5) compute_eg(s);   // pitch moves key scaling; rates
-         if (w == 9) compute_lfo(s);
+-        if (w == 9) compute_lfo(s);
          return;
      }
-@@ -590,7 +574,9 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
+     if (off < 0x430) {
+@@ -590,13 +599,17 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
  void scsp_reset() {
      static bool tables;
      if (!tables) { init_tables(); tables = true; }
 -    for (Slot& s : g_slot) { s = Slot{}; compute_lfo(s); }
-+    for (Slot& s : g_slot) { s = Slot{}; s.env_phase = EG_RELEASE; s.env = 0x3FF; compute_lfo(s); }
++    for (Slot& s : g_slot) { s = Slot{}; s.env_phase = EG_RELEASE; s.env = 0x3FF; s.lfo_time = 1; }
 +    g_counter = 0;
 +    g_key_execute = false;
      std::memset(g_com, 0, sizeof g_com);
      for (Timer& t : g_timer) t = Timer{0, 0, -1};
      g_scieb = g_scipd = g_mcieb = g_mcipd = 0;
-@@ -622,10 +608,78 @@ void scsp_write(uint32_t off, uint32_t v, int size) {
+     g_scilv[0] = g_scilv[1] = g_scilv[2] = 0;
+     g_samples = 0;
+     std::memset(g_stack, 0, sizeof g_stack);
++    std::memset(g_stack_delay, 0, sizeof g_stack_delay);
++    g_stack_delay_skip = 0;
+     g_dsp = Dsp{};
+     g_rbl = 8192;
+     g_rbp = 0;
+@@ -622,10 +635,84 @@ void scsp_write(uint32_t off, uint32_t v, int size) {
  
  int scsp_cpu_level() { return g_cpu_level; }
  
@@ -3642,12 +3754,15 @@ index b40fefc..e5b0419 100644
 +    case SCSP_KEY_EXECUTE: return g_key_execute;
 +    case SCSP_STACK: return (uint32_t)g_stack[i & 63];
 +    case SCSP_STACK_POS: return g_stack_pos;
++    case SCSP_STACK_DELAY: return (uint32_t)g_stack_delay[i & 3];
 +    case SCSP_DSP_TEMP: return (uint32_t)g_dsp.temp[i & 127];
 +    case SCSP_DSP_MEMS: return (uint32_t)g_dsp.mems[i & 31];
 +    case SCSP_DSP_MIXS: return (uint32_t)g_dsp.mixs[i & 15];
 +    case SCSP_DSP_EFREG: return (uint32_t)(int32_t)g_dsp.efreg[i & 15];
 +    case SCSP_DSP_DEC: return g_dsp.dec;
-+    case SCSP_LFO_PHASE: return s.plfo.phase;
++    case SCSP_LFO_PHASE: return s.lfo;
++    case SCSP_LFO_TIME: return s.lfo_time;
++    case SCSP_LOST: return s.lost;
 +    case SCSP_DSP_ACC: return (uint32_t)g_dsp.acc;
 +    case SCSP_DSP_FRC: return (uint32_t)g_dsp.frc;
 +    case SCSP_DSP_YREG: return (uint32_t)g_dsp.yreg;
@@ -3676,12 +3791,15 @@ index b40fefc..e5b0419 100644
 +    case SCSP_KEY_EXECUTE: g_key_execute = v; break;
 +    case SCSP_STACK: g_stack[i & 63] = (int32_t)v; break;
 +    case SCSP_STACK_POS: g_stack_pos = v & 63; break;
++    case SCSP_STACK_DELAY: g_stack_delay[i & 3] = (int32_t)v; g_stack_delay_skip &= (uint8_t)~(1u << (i & 3)); break;
 +    case SCSP_DSP_TEMP: g_dsp.temp[i & 127] = (int32_t)v; break;
 +    case SCSP_DSP_MEMS: g_dsp.mems[i & 31] = (int32_t)v; break;
 +    case SCSP_DSP_MIXS: g_dsp.mixs[i & 15] = (int32_t)v; break;
 +    case SCSP_DSP_EFREG: g_dsp.efreg[i & 15] = (int16_t)v; break;
 +    case SCSP_DSP_DEC: g_dsp.dec = v; break;
-+    case SCSP_LFO_PHASE: s.plfo.phase = s.alfo.phase = v; break;
++    case SCSP_LFO_PHASE: s.lfo = (uint8_t)v; break;
++    case SCSP_LFO_TIME: s.lfo_time = (uint16_t)v; break;
++    case SCSP_LOST: s.lost = v; break;
 +    case SCSP_DSP_ACC: g_dsp.acc = sext((int32_t)v, 26); break;
 +    case SCSP_DSP_FRC: g_dsp.frc = (int32_t)(v & 0x1FFF); break;
 +    case SCSP_DSP_YREG: g_dsp.yreg = sext((int32_t)v, 24); break;
@@ -3704,14 +3822,23 @@ index b40fefc..e5b0419 100644
      return m;
  }
  
-@@ -641,41 +695,63 @@ void scsp_sample(int16_t exts_l, int16_t exts_r, int16_t out[2]) {
+@@ -641,62 +728,75 @@ void scsp_sample(int16_t exts_l, int16_t exts_r, int16_t out[2]) {
      irq_update();
      ++g_samples;
  
 -    float l = 0, r = 0;
 +    // the envelopes move every other sample; then the keys written since the last sample
 +    bool eg_tick = !(g_counter & 32);
-+    for (Slot& s : g_slot) {
+     for (Slot& s : g_slot) {
+-        int32_t stacked = 0;
+-        if (s.active) {
+-            int32_t v = slot_sample(s);
+-            float tl = g_tl_gain[s.tl()];
+-            float lv = (float)v * tl;
+-            l += lv * g_sdl_gain[s.disdl()] * g_pan_l[s.dipan()];
+-            r += lv * g_sdl_gain[s.disdl()] * g_pan_r[s.dipan()];
+-            if (s.imxl()) g_dsp.mixs[s.isel()] += (int32_t)(lv * g_sdl_gain[s.imxl()] * 16.0f);   // 20 bits
+-            stacked = (int32_t)(2.0f * (s.sdir() ? (float)v : lv));   // MAME's scale for FM
 +        if (eg_tick) eg_step(s, g_counter >> 6);
 +        if (s.lpslnk() && s.env_phase == EG_ATTACK && s.in_loop) s.env_phase = EG_DECAY1;
 +    }
@@ -3727,40 +3854,36 @@ index b40fefc..e5b0419 100644
 +                          t.dipan(), t.imxl(), t.isel(), t.efsdl(), t.efpan(), t.ar_r(), t.d1r_r(), t.d2r_r(), t.rr_r(),
 +                          t.dl_r(), t.mdl());
 +            } else if (!kb) t.env_phase = EG_RELEASE;
-+        }
-+    }
+         }
+-        if (!s.stwinh()) g_stack[g_stack_pos] = stacked;
+-        g_stack_pos = (g_stack_pos + 1) & 63;
+     }
 +    g_counter += 32;
++    for (Slot& s : g_slot) lfo_tick(s);         // the level LFO reads the new position, the pitch LFO the old
 +
 +    // the DSP runs on the inputs the slots left in MIXS at the last sample, which then clears
-+    g_dsp.exts[0] = exts_l;
-+    g_dsp.exts[1] = exts_r;
-+    dsp_step();
+     g_dsp.exts[0] = exts_l;
+     g_dsp.exts[1] = exts_r;
+     dsp_step();
 +    std::memset(g_dsp.mixs, 0, sizeof g_dsp.mixs);
 +    int32_t l = 0, r = 0;
-     for (Slot& s : g_slot) {
-         int32_t stacked = 0;
--        if (s.active) {
++    for (Slot& s : g_slot) {
++        int32_t stacked = 0;
 +        if (s.playing) {
-             int32_t v = slot_sample(s);
--            float tl = g_tl_gain[s.tl()];
--            float lv = (float)v * tl;
--            l += lv * g_sdl_gain[s.disdl()] * g_pan_l[s.dipan()];
--            r += lv * g_sdl_gain[s.disdl()] * g_pan_r[s.dipan()];
--            if (s.imxl()) g_dsp.mixs[s.isel()] += (int32_t)(lv * g_sdl_gain[s.imxl()] * 16.0f);   // 20 bits
--            stacked = (int32_t)(2.0f * (s.sdir() ? (float)v : lv));   // MAME's scale for FM
++            int32_t v = slot_sample(s);
 +            l += send(v, s.disdl(), s.dipan(), 0);
 +            r += send(v, s.disdl(), s.dipan(), 1);
 +            if (s.imxl()) g_dsp.mixs[s.isel()] = (g_dsp.mixs[s.isel()] + ((v * (1 << s.imxl())) >> 3)) & 0xFFFFF;   // 20 bits
 +            stacked = v;
 +            // a released slot sounds out the sample its envelope reaches 0x3C0, then stops
 +            if (s.env_phase == EG_RELEASE && s.env >= 0x3C0) { s.env = 0x3FF; s.playing = false; }
-         }
-         if (!s.stwinh()) g_stack[g_stack_pos] = stacked;
-         g_stack_pos = (g_stack_pos + 1) & 63;
-     }
--    g_dsp.exts[0] = exts_l;
--    g_dsp.exts[1] = exts_r;
--    dsp_step();
++        }
++        int k = (int)(&s - g_slot) & 3;
++        if (!(g_stack_delay_skip >> k & 1)) g_stack[(g_stack_pos - 4) & 63] = g_stack_delay[k];
++        g_stack_delay[k] = stacked;
++        g_stack_delay_skip = (uint8_t)((g_stack_delay_skip & ~(1u << k)) | (s.stwinh() ? 1u << k : 0));
++        g_stack_pos = (g_stack_pos + 1) & 63;
++    }
      for (int i = 0; i < 16; ++i) {
          const Slot& s = g_slot[i];
 -        if (!s.efsdl()) continue;
@@ -3782,6 +3905,16 @@ index b40fefc..e5b0419 100644
 -    auto dac = [](float v) { return (int16_t)((std::clamp((int32_t)v, -32768, 32767) * 27 + 16) >> 5); };
 -    out[0] = dac(l * mv);
 -    out[1] = dac(r * mv);
+-}
+-
+-// An LFO's tables by their number among the tables of their kind.
+-template <size_t N>
+-static void lfo_table(State& s, const int*& p, int (&tables)[N][256]) {
+-    int8_t k = -1;
+-    for (size_t i = 0; i < N; ++i)
+-        if (p == tables[i]) k = (int8_t)i;
+-    s(k);
+-    if (s.loading) p = k < 0 ? nullptr : tables[k];
 +    // the master volume, then 27/32 of it, as Mednafen scales the SCSP's output
 +    int32_t mv = kMasterVolume[g_com[0] & 15];
 +    auto dac = [&](int32_t v) { return (int16_t)((std::clamp((v * mv) >> 8, -32768, 32767) * 27 + 16) >> 5); };
@@ -3789,21 +3922,20 @@ index b40fefc..e5b0419 100644
 +    out[1] = dac(r);
  }
  
- // An LFO's tables by their number among the tables of their kind.
-@@ -691,12 +767,11 @@ static void lfo_table(State& s, const int*& p, int (&tables)[N][256]) {
  void scsp_state(State& s) {
      s(g_sound_ram);
      for (Slot& sl : g_slot) {
 -        s(sl.r), s(sl.active), s(sl.keyed), s(sl.backwards), s(sl.pos), s(sl.eg_state), s(sl.eg_vol);
 -        s(sl.ar), s(sl.d1r), s(sl.d2r), s(sl.rr), s(sl.dl);
-+        s(sl.r), s(sl.playing), s(sl.in_loop), s(sl.reverse), s(sl.addr), s(sl.frac), s(sl.env_phase), s(sl.env);
-         for (Lfo* l : {&sl.plfo, &sl.alfo}) s(l->phase), s(l->step);
-         lfo_table(s, sl.plfo.table, g_plfo), lfo_table(s, sl.plfo.scale, g_pscale);
-         lfo_table(s, sl.alfo.table, g_alfo), lfo_table(s, sl.alfo.scale, g_ascale);
+-        for (Lfo* l : {&sl.plfo, &sl.alfo}) s(l->phase), s(l->step);
+-        lfo_table(s, sl.plfo.table, g_plfo), lfo_table(s, sl.plfo.scale, g_pscale);
+-        lfo_table(s, sl.alfo.table, g_alfo), lfo_table(s, sl.alfo.scale, g_ascale);
++        s(sl.r), s(sl.playing), s(sl.in_loop), s(sl.reverse), s(sl.lost), s(sl.addr), s(sl.frac), s(sl.env_phase), s(sl.env);
++        s(sl.lfo), s(sl.lfo_time);
      }
      s(g_com), s(g_timer), s(g_scieb), s(g_scipd), s(g_scilv), s(g_mcieb), s(g_mcipd), s(g_main_line);
 -    s(g_samples), s(g_stack), s(g_stack_pos), s(g_dsp), s(g_noise), s(g_rbl), s(g_rbp), s(g_cpu_level);
-+    s(g_samples), s(g_counter), s(g_key_execute), s(g_stack), s(g_stack_pos), s(g_dsp), s(g_noise), s(g_rbl), s(g_rbp), s(g_cpu_level);
++    s(g_samples), s(g_counter), s(g_key_execute), s(g_stack), s(g_stack_pos), s(g_stack_delay), s(g_stack_delay_skip), s(g_dsp), s(g_noise), s(g_rbl), s(g_rbp), s(g_cpu_level);
  }
 diff --git a/runtime/src/sound/sound.cpp b/runtime/src/sound/sound.cpp
 index 319a3f3..5d13f11 100644
@@ -4036,10 +4168,10 @@ index 319a3f3..5d13f11 100644
      m68k_state_get(cpu.data());
      s.vec(cpu);
 diff --git a/runtime/src/sound/sound.h b/runtime/src/sound/sound.h
-index 1786242..0f8d027 100644
+index 1786242..dfe275c 100644
 --- a/runtime/src/sound/sound.h
 +++ b/runtime/src/sound/sound.h
-@@ -12,6 +12,29 @@ void scsp_write(uint32_t off, uint32_t v, int size);
+@@ -12,6 +12,32 @@ void scsp_write(uint32_t off, uint32_t v, int size);
  void scsp_sample(int16_t exts_l, int16_t exts_r, int16_t out[2]);   // one sample at 44 100 Hz
  int  scsp_cpu_level();                                // the 68000's interrupt level (0: none)
  uint32_t scsp_active_slots();                         // a mask, for the log
@@ -4056,6 +4188,9 @@ index 1786242..0f8d027 100644
 +    SCSP_DSP_ACC, SCSP_DSP_FRC, SCSP_DSP_YREG, SCSP_DSP_ADRS, SCSP_DSP_MEMVAL,   // the DSP's registers
 +    SCSP_SAMPLES, SCSP_TIMER_CTL, SCSP_TIMER_COUNTER, SCSP_TIMER_RELOAD,        // the timers (index 0-2; reload -1 = none)
 +    SCSP_SCIPD, SCSP_MCIPD,                                                     // pending interrupts
++    SCSP_STACK_DELAY,                                 // the outputs of the last four slots on their way to the stack (index slot & 3)
++    SCSP_LFO_TIME,                                    // samples to the LFO's next step (SCSP_LFO_PHASE: its 8-bit position)
++    SCSP_LOST,                                        // went backwards past the wave's start, unturned
 +};
 +void scsp_set_internal(ScspField f, int index, uint32_t v);
 +uint32_t scsp_get_internal(ScspField f, int index);
@@ -6406,10 +6541,10 @@ index 0000000..068aa64
 +}
 diff --git a/runtime/tests/scsp_test.cpp b/runtime/tests/scsp_test.cpp
 new file mode 100644
-index 0000000..6c0d3f1
+index 0000000..3e068b4
 --- /dev/null
 +++ b/runtime/tests/scsp_test.cpp
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,203 @@
 +// The SCSP and the sound 68000 against numbers measured on Beetle Saturn as a black box (its output
 +// and save states only).
 +#include <cstring>
@@ -6564,6 +6699,54 @@ index 0000000..6c0d3f1
 +    g_master.budget = budget;
 +    g_cpu = was;
 +    sound_power(false);
++}
++
++// The LFO steps its 8-bit position once every kLfoPeriod[LFOF] samples (1 at LFOF 31, 1020 at 0);
++// LFORE holds it at 0.
++TEST(the_lfo_steps_every_period_samples_and_lfore_holds_it) {
++    scsp_reset();
++    int16_t out[2];
++    scsp_write(0 * 0x20 + 0x12, 31 << 10, 2);
++    scsp_write(1 * 0x20 + 0x12, 0 << 10, 2);
++    scsp_write(2 * 0x20 + 0x12, 0x8000 | 31 << 10, 2);
++    for (int i = 0; i < 5; i++) scsp_sample(0, 0, out);
++    CHECK_EQ(scsp_get_internal(SCSP_LFO_PHASE, 0), 5u);
++    CHECK_EQ(scsp_get_internal(SCSP_LFO_PHASE, 1), 1u);             // its first step, then 1020 to go
++    CHECK_EQ(scsp_get_internal(SCSP_LFO_TIME, 1), 1020u - 4);
++    CHECK_EQ(scsp_get_internal(SCSP_LFO_PHASE, 2), 0u);
++}
++
++// An attack rate of 64 or more (AR 31 with key-rate scaling) attacks at once: level 0 at key-on.
++TEST(an_attack_rate_past_62_attacks_at_once) {
++    scsp_reset();
++    int16_t out[2];
++    scsp_write(0x08, 31, 2);                                         // AR 31
++    scsp_write(0x0A, 1 << 10, 2);                                    // KRS 1: rate 64
++    scsp_write(0x00, 0x1800, 2);                                     // KYONB, KYONEX
++    scsp_sample(0, 0, out);
++    CHECK_EQ(scsp_get_internal(SCSP_ENV, 0), 0u);
++    scsp_reset();
++    scsp_write(0x08, 31, 2);                                         // KRS 0: rate 62, from 0x280
++    scsp_write(0x00, 0x1800, 2);
++    scsp_sample(0, 0, out);
++    CHECK_EQ(scsp_get_internal(SCSP_ENV, 0) > 0u, true);
++}
++
++// Backwards in a reverse loop, a step that ends past the wave's start (more than LSA samples past
++// LEA in the mirrored count) is not turned: the slot reads on below the wave until a key-on.
++TEST(a_reverse_step_past_the_waves_start_is_not_turned) {
++    for (int from = 8; from <= 9; from++) {
++        scsp_reset();
++        int16_t out[2];
++        scsp_write(0x00, 2 << 5, 2);                                 // LPCTL 2 (reverse)
++        scsp_write(0x04, 0, 2); scsp_write(0x06, 10, 2);             // LSA 0, LEA 10
++        scsp_write(0x10, 1 << 11, 2);                                // OCT 1: 2 samples a step
++        scsp_set_internal(SCSP_PLAYING, 0, 1); scsp_set_internal(SCSP_IN_LOOP, 0, 1);
++        scsp_set_internal(SCSP_REVERSE, 0, 1); scsp_set_internal(SCSP_ADDR, 0, from);
++        scsp_sample(0, 0, out);
++        CHECK_EQ(scsp_get_internal(SCSP_LOST, 0), from == 9 ? 1u : 0u);
++        CHECK_EQ(scsp_get_internal(SCSP_ADDR, 0), from == 9 ? 11u : 0u);
++    }
 +}
 diff --git a/runtime/tests/vdp1_raster_test.cpp b/runtime/tests/vdp1_raster_test.cpp
 new file mode 100644
