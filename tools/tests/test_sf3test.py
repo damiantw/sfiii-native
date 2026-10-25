@@ -267,6 +267,11 @@ class BattleTurns(unittest.TestCase):
         w = dict(memory_map.assist_writes(rd, dict(force=0, enemies=0x1000), enemy_hp=1))
         self.assertEqual(w[0x1000 + mm.UNIT_HP], b'\x00\x01')
 
+    def test_player_tile(self):
+        mm = memory_map
+        self.assertEqual(mm.player_tile(0x04900000, 0x01B00000), (36, 13))
+        self.assertEqual(mm.SC1_PLAYER['obj'] + mm.SC1_PLAYER['x'], 0x06044850)
+
     def test_scene_records_and_tile_events(self):
         raw = bytes.fromhex('0026020000000000000000000000000000270179000000000000000000000000')
         mm = memory_map
