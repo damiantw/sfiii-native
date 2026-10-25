@@ -46,6 +46,7 @@ class Policy:
         self.attacks = 0
         self.cast, self.casts, self.tried = False, 0, {}
         self.pathing, self.blocked, self.blocked_key = False, {}, None
+        self.explore = 0.0
 
     def town(self):
         r = self.rng.random()
@@ -128,7 +129,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False):
+         idle_over_turns=None, pathing=False, explore=0.0):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -142,11 +143,13 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     legs try one aimed turn again while live enemies remain; a force unit that moves ends the
     hand-over (long battle openings and boss dialogue used to end battles as 'idle' for good).
     `idle_over_turns` overrides IDLE_OVER. `pathing` (round 26) walks battle units along a planned
-    path (see plan_step) instead of greedily."""
+    path (see plan_step) instead of greedily. `explore` (round 5, search candidates): the share of
+    battle turns that aim at a random enemy, hold back or cast instead of the greedy choice."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     pol.pathing = pathing
     pol.cast = bool(assist)
+    pol.explore = explore
     presses, events = [], []
     done, last_key, same, turn = 0, None, 0, 0
     prev = None
@@ -528,6 +531,17 @@ def aimed_turn(side, units, pol, press):
     pol.idle = 0
     me = moved[0]
     steps = 1
+    # search candidates (round 5): some turns aim at a random enemy, hold back, or cast
+    goal, hold_back, cast_pick = live, False, False
+    if pol.explore and pol.rng.random() < pol.explore:
+        r = pol.rng.random()
+        if r < 0.5:
+            goal = [pol.rng.choice(live)]
+        elif r < 0.75:
+            hold_back = True
+        else:
+            cast_pick = True
+        pol.explored = getattr(pol, 'explored', 0) + 1
 
     def dist(p):
         return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)
@@ -558,19 +572,22 @@ def aimed_turn(side, units, pol, press):
                         pol.blocked[(q, step_of(q, d))] = 1
                     break
                 pol.retreats = getattr(pol, 'retreats', 0) + 1
-    if pol.pathing and not cautious:
+    if hold_back and not cautious:
+        press(('B',), 6)
+        press((), 20)
+    if pol.pathing and not cautious and not hold_back:
         fails = 0
         for _ in range(16):
             now = pos()
             if me not in now:                      # the mover left the roster mid-turn (fell, withdrew)
                 break
             p = now[me]
-            if dist(p) <= 1 or fails >= 8:
+            if dist(p) <= 1 or fails >= 8 or (goal is not live and min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in goal) <= 1):
                 break
             allies = {v for k, v in now.items() if k != me}
             # allies are walked through (round 2: a force packed on the Battle 22 bridge or in the
             # Sc3 final room had no path with allies as walls, so every unit held for 120k VBlanks)
-            d = plan_step(p, live, allies | set(live), pol.blocked, passable=allies)
+            d = plan_step(p, goal, allies | set(live), pol.blocked, passable=allies)
             if d is None:
                 break
             press((d,), 8)
@@ -582,7 +599,7 @@ def aimed_turn(side, units, pol, press):
                 q = step_of(p, d)                  # early in the move it is not the range's end
                 pol.blocked[(p, q)] = pol.blocked.get((p, q), 0) + (2 if steps <= 2 else 1)
                 fails += 1
-    for _ in range(0 if pol.pathing or cautious else 10):
+    for _ in range(0 if pol.pathing or cautious or hold_back else 10):
         p = pos().get(me)
         if p is None or dist(p) <= 1:
             break
@@ -638,7 +655,7 @@ def aimed_turn(side, units, pol, press):
     press(('C',), 6)
     press((), 30)                                  # command ring, cursor on Hold
     near = me in pos() and dist(pos()[me]) <= 2                    # first-level spells reach 2 tiles (Blaze, Heal)
-    cast_now = near and pol.cast and pol.tried.get(me, 0) % 2 == 0
+    cast_now = (near and pol.cast and pol.tried.get(me, 0) % 2 == 0) or (near and cast_pick)
     if near and pol.cast:
         pol.tried[me] = pol.tried.get(me, 0) + 1
     if cast_now:

@@ -427,6 +427,22 @@ def main():
     r.add_argument('--out', required=True)
     r.add_argument('--coverage', action='store_true')
     r.add_argument('segment')
+    q = sub.add_parser('search', help='TAS-style battle search over save states (sf3test/search.py)')
+    for n in ('--saturn', '--cue', '--profile', '--record', '--out'):
+        q.add_argument(n, required=True)
+    q.add_argument('--saves', nargs='+', required=True)
+    q.add_argument('--continue', dest='cont', help='replay this segment first')
+    q.add_argument('--clock', default=CLOCK)
+    q.add_argument('--goals', type=int, default=1)
+    q.add_argument('-k', type=int, default=8, help='candidates per level')
+    q.add_argument('--window', type=int, default=1500, help='VBlanks committed per level')
+    q.add_argument('--look', type=int, default=1500, help='greedy look-ahead VBlanks for the score')
+    q.add_argument('--explore', type=float, default=0.35)
+    q.add_argument('--seed', type=int, default=1)
+    q.add_argument('--frames', type=int, default=150000)
+    q.add_argument('--max-levels', type=int, default=400)
+    q.add_argument('--max-backs', type=int, default=40)
+    q.add_argument('-j', '--jobs', type=int, default=4)
     o = sub.add_parser('order')
     o.add_argument('--profile', required=True)
     o.add_argument('--saves', nargs='+', required=True)
@@ -439,7 +455,8 @@ def main():
     for p in [getattr(a, 'cue', None), getattr(a, 'out', None), *getattr(a, 'saves', [])]:
         if p:
             sweep.external(p, ROOT)
-    return {'drive': lambda: drive(a) and 0, 'replay': lambda: replay(a), 'order': lambda: order(a), 'suite': lambda: suite(a)}[a.cmd]()
+    return {'drive': lambda: drive(a) and 0, 'replay': lambda: replay(a), 'order': lambda: order(a),
+            'search': lambda: __import__('sf3test.search', fromlist=['search']).search(a), 'suite': lambda: suite(a)}[a.cmd]()
 
 
 if __name__ == '__main__':

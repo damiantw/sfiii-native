@@ -1,0 +1,242 @@
+"""TAS-style battle search over native save states (round 5 of the story driver).
+
+From a committed state, K candidates each restore it (a fresh process with --state-in), play W
+VBlanks with the battle policy (candidate 0 greedy, the others with exploration and their own
+seed), let go of the pad, save a state, then look ahead L VBlanks with the greedy policy and are
+scored on the unit tables (enemy HP taken, kills, party HP, deaths, the leader's HP; a won battle
+or a reached goal is best, a fallen leader worst). The best candidate's W VBlanks are committed;
+when every candidate at a level loses, the search backs up one level and takes that level's next
+best. Only pad presses are kept, so the result is an ordinary pad-only segment that `replay`
+checks from the save; states stay in the work directory (never in the repository).
+"""
+import copy
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+
+from . import autoplay, memory_map
+
+_ST = None
+
+
+def st():
+    """The sf3-story.py module (Recorder, start_run, end_hashes ...)."""
+    global _ST
+    if _ST is None:
+        p = Path(__file__).resolve().parents[1] / 'sf3-story.py'
+        spec = importlib.util.spec_from_file_location('sf3_story', p)
+        _ST = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_ST)
+    return _ST
+
+
+def unit_hp(read, units):
+    """{side: {slot: (hp, max hp)}} for the live records of both unit tables."""
+    out = {}
+    for side in ('force', 'enemies'):
+        base = units[side]
+        got = {}
+        for k, x, y, f, hp in memory_map.read_units(read, base, units.get('live')):
+            e = read(base + k * memory_map.UNIT_STRIDE + memory_map.UNIT_MAX_HP, 2)
+            got[k] = (hp, int.from_bytes(e, 'big'))
+        out[side] = got
+    return out
+
+
+def metrics(units_now, root, leader):
+    """Battle standing against the root roster (`root` a unit_hp result at the search start)."""
+    f, e = units_now['force'], units_now['enemies']
+    e_top = sum(max(m, h, 1) for h, m in root['enemies'].values()) or 1
+    e_left = sum(e.get(k, (0, 0))[0] for k in root['enemies'])
+    kills = sum(1 for k in root['enemies'] if e.get(k, (0, 0))[0] <= 0)
+    f_top = sum(max(m, h, 1) for h, m in root['force'].values()) or 1
+    f_left = sum(f.get(k, (0, 0))[0] for k in root['force'])
+    deaths = sum(1 for k in root['force'] if f.get(k, (0, 0))[0] <= 0)
+    lh, lm = f.get(leader, (0, 1))
+    lroot = max(root['force'].get(leader, (1, 1)))
+    return dict(enemy_left=e_left / e_top, kills=kills, force_left=f_left / f_top, deaths=deaths,
+                leader=lh / max(lm, lroot, 1), leader_down=lh <= 0,
+                won=bool(root['enemies']) and kills == len(root['enemies']))
+
+
+def score(m):
+    if m.get('goal'):
+        return 1e6
+    if m['leader_down'] or m.get('reset'):
+        return -1e6
+    if m['won']:
+        return 1e5
+    return (4 * (1 - m['enemy_left']) + 1.0 * m['kills'] + 1.5 * m['force_left'] - 1.0 * m['deaths']
+            + 2 * m['leader'])
+
+
+def save_state(r, path):
+    r._ask('save ' + str(path))
+    for _ in range(600):
+        r.step()
+        if not r._ask('saved').startswith('saved busy'):
+            break
+    return Path(path).exists()
+
+
+def run_args(job, state=None):
+    args = ['--headless', '--cue', job['cue'], '--save', job['backup'], '--settings', '-', '--clock', job['clock']]
+    if state:
+        args += ['--state-in', str(state)]
+    return args
+
+
+def _play(s, job, frames, seed, explore):
+    return autoplay.play(s, job['profile'], frames, seed, walker=True, rearm=20, idle_over_turns=60,
+                         pathing=True, explore=explore)
+
+
+def candidate(job):
+    """One branch: restore job['state'], play W (+ lookahead L). Runs in a worker process."""
+    from saturnrecomp import agent
+    S = st()
+    out = Path(job['out'])
+    out.mkdir(parents=True, exist_ok=True)
+    os.environ['SF3_STATE_ID'] = job['state_id']
+    res = dict(seed=job['seed'], explore=job['explore'], out=str(out))
+    r = agent.start(job['saturn'], run_args(job, job['state']), str(out / 'o'))
+    r._sock.settimeout(120)
+    try:
+        s = S.Recorder(r, job['profile'], copy.deepcopy(job['goals']), out)
+        s.loaded, s.g, s.held = True, 0, ''
+        while r.vblank < job['v']:
+            s.step()
+        units = memory_map.lookup(job['profile'])['units']
+        p = _play(s, job, job['W'], job['seed'], job['explore'])
+        s.pad(())
+        for _ in range(30):
+            s.step()
+        reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
+        m1 = metrics(unit_hp(s.read, units), job['root'], job['leader'])
+        m1.update(goal=bool(reached), reset=bool(p['resets']))
+        state = out / 'commit.state'
+        if not save_state(r, state):
+            raise RuntimeError('state not written')
+        end = S.end_hashes(s, job['profile'])
+        res.update(actions=[a for a in s.actions if a[0] >= job['v']], v=r.vblank, end=end, state=str(state),
+                   m_commit=m1, reached=reached)
+        if job['L'] and not reached and score(m1) > -1e6:
+            p2 = _play(s, job, job['L'], job['seed'] + 7919, 0.0)
+            m2 = metrics(unit_hp(s.read, units), job['root'], job['leader'])
+            m2.update(goal=bool([e for e in s.events if e['kind'] in ('goal', 'map-goal')]), reset=bool(p2['resets']))
+        else:
+            m2 = m1
+        res.update(m_look=m2, score=score(m1) if m1.get('goal') or score(m1) <= -1e6 else score(m2))
+    except Exception as e:
+        res.update(error=repr(e)[:300], score=-2e6)
+    finally:
+        try:
+            r.close()
+        except Exception:
+            r._proc.kill()
+    return res
+
+
+def search(a):
+    """`sf3-story.py search`: see the module doc. Writes OUT/segment.txt (start record, pads only),
+    OUT/search.json (per level: the candidates' scores) and keeps the states in OUT/states."""
+    from concurrent.futures import ProcessPoolExecutor
+    from saturnrecomp import agent
+    from . import diff, story
+    S = st()
+    os.environ['SF3_STATE_ID'] = state_id = f'search-{S.sha_bin(a.saturn)}'
+    mm = memory_map.lookup(a.profile)
+    units = mm['units']
+    ts = S.scenario_targets(a.profile, a.saves)
+    start = S.find(ts, a.record)
+    goals = S.goal_list(ts, start)[:a.goals or None]
+    out = Path(a.out)
+    (out / 'states').mkdir(parents=True, exist_ok=True)
+    # root: the record's load (+ a --continue prefix), then the greedy policy until enemies are live
+    r = S.start_run(a.saturn, a.cue, start, mm['scenario'], out / 'root', coverage=False, clock=a.clock)
+    rs = S.Recorder(r, a.profile, copy.deepcopy(goals), out / 'root')
+    h = {}
+    if a.cont:
+        h, prefix = story.parse_segment(Path(a.cont).read_text())
+        rs.loaded = True
+        S.apply_actions(rs, prefix, until=int(h['end_vblank']))
+        load = int(h.get('load', 0)) or None
+    else:
+        load = diff.drive_to_load(rs, mm['tick'], [], 6500, start_frames=(1100, 1308))
+        rs.loaded = load
+    for _ in range(200):
+        hp = unit_hp(rs.read, units)
+        if rs.read(mm['battle_id'], 1)[0] and any(v[0] > 0 for v in hp['enemies'].values()) and hp['force']:
+            break
+        autoplay.play(rs, a.profile, 300, a.seed, walker=True, rearm=20, idle_over_turns=60, pathing=True)
+    rs.pad(())
+    for _ in range(30):
+        rs.step()
+    root = unit_hp(rs.read, units)
+    leader = min(root['force'])
+    st0 = out / 'states' / 'root.state'
+    save_state(r, st0)
+    base_actions, v0 = list(rs.actions), r.vblank
+    root_end = S.end_hashes(rs, a.profile)
+    r.close()
+    print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
+    common = dict(saturn=a.saturn, cue=str(a.cue), backup=str(out / 'root' / 'backup.bin'), clock=a.clock,
+                  profile=a.profile, goals=goals, root=root, leader=leader, state_id=state_id, W=a.window, L=a.look)
+    # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
+    levels = [dict(state=str(st0), v=v0, actions=base_actions, end=root_end, ranked=[], pick=0, score=0)]
+    log, backs, done_goal = [], 0, False
+    with ProcessPoolExecutor(a.jobs) as ex:
+        while levels[-1]['v'] - v0 < a.frames and len(log) < a.max_levels:
+            cur = levels[-1]
+            n = len(log)
+            jobs = [dict(common, state=cur['state'], v=cur['v'], seed=a.seed * 1000 + n * 37 + i,
+                         explore=0.0 if i == 0 else a.explore, out=str(out / 'c' / f'{n:04d}-{i}'))
+                    for i in range(a.k)]
+            res = sorted(ex.map(candidate, jobs), key=lambda x: -x['score'])
+            log.append([dict(seed=x['seed'], explore=x['explore'], score=round(x['score'], 3), v=x.get('v'),
+                             m=x.get('m_look'), error=x.get('error')) for x in res])
+            best = res[0]
+            print(f"level {len(levels)} @{cur['v']}: best {best['score']:.2f} ({best.get('m_look')}) "
+                  f"of {[round(x['score'], 2) for x in res]}", flush=True)
+            # back up while the best here is a loss
+            if best['score'] <= -1e6:
+                backs += 1
+                while len(levels) > 1:
+                    levels.pop()
+                    prev = levels[-1]
+                    prev['pick'] += 1
+                    if prev['pick'] < len(prev['ranked']) and prev['ranked'][prev['pick']]['score'] > -1e6:
+                        c = prev['ranked'][prev['pick']]
+                        levels.append(dict(state=c['state'], v=c['v'], actions=prev['actions'] + c['actions'],
+                                           end=c['end'], ranked=[], pick=0, score=c['score']))
+                        print(f'  back to level {len(levels) - 1}, candidate {prev["pick"]}', flush=True)
+                        break
+                if backs > a.max_backs or len(levels) == 1 and levels[0]['pick'] >= len(levels[0]['ranked']):
+                    print('search: out of branches', flush=True)
+                    break
+                continue
+            cur['ranked'] = res
+            levels.append(dict(state=best['state'], v=best['v'], actions=cur['actions'] + best['actions'],
+                               end=best['end'], ranked=[], pick=0, score=best['score']))
+            (out / 'search.json').write_text(json.dumps(dict(levels=log, path=[l['v'] for l in levels]), indent=0, default=str))
+            write_segment(a, out, start, load, h, levels[-1], S)
+            if best.get('reached') or best['m_commit'].get('won'):
+                done_goal = True
+                print(f"search: {'goal ' + ','.join(best['reached']) if best.get('reached') else 'battle won'} at VBlank {best['v']}", flush=True)
+                break
+    write_segment(a, out, start, load, h, levels[-1], S)
+    return 0 if done_goal else 1
+
+
+def write_segment(a, out, start, load, h, lv, S):
+    from . import story
+    seed = f"search-k{a.k}-w{a.window}-l{a.look}-s{a.seed}"
+    if a.cont:
+        seed = f"{h.get('seed')}+{seed}"
+    header = dict(profile=a.profile, save=Path(S.start_save(a.saves, start)).name, record=start['id'], seed=seed,
+                  assist='none', clock=a.clock, record_sha1=hashlib.sha1(start['record']['data']).hexdigest()[:16],
+                  load=load, binary=S.sha_bin(a.saturn), end_vblank=lv['v'], end_ram_sha1=lv['end']['ram_sha1'],
+                  end_flags_sha1=lv['end']['flags_sha1'], reached='-')
+    (out / 'segment.txt').write_text(story.segment_text(header, lv['actions']))
