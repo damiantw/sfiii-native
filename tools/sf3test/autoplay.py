@@ -457,7 +457,11 @@ def aimed_turn(side, units, pol, press):
         return {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rd, units['force'], units.get('live'))}
 
     enemies = memory_map.read_units(rd, units['enemies'], units.get('live'))
-    live = [(x, y) for k, x, y, f, hp in enemies if hp > 0]
+    key = tuple(sorted(e[0] for e in enemies))           # a new battle (enemy roster): forget edges
+    if key != pol.blocked_key:
+        pol.blocked, pol.blocked_key, pol.phantoms = {}, key, set()
+    phantoms = getattr(pol, 'phantoms', set())
+    live = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k not in phantoms]
     if not live:
         return tap(('C',), gap=30) * 4
     if panel_share(side.frame()) > 0.02:          # a menu or message is up: back out (B), or C
@@ -512,10 +516,29 @@ def aimed_turn(side, units, pol, press):
         press((), 20)
         cautious = True
         pol.cautious = getattr(pol, 'cautious', 0) + 1
+        # round 4: holding still on the start tile still lost Battle 22 (fresh run, the leader at
+        # 13/62 died within 25k VBlanks): step away from the enemies, one free tile at a time
+        fails = 0
+        for _ in range(8):
+            now = pos()
+            if me not in now or fails >= 3:
+                break
+            p = now[me]
+            taken = {v for k, v in now.items() if k != me} | set(live)
+            options = [(dist(step_of(p, d)), d) for d in DIRS
+                       if step_of(p, d) not in taken and not pol.blocked.get((p, step_of(p, d)))]
+            options = [o for o in options if o[0] > dist(p)]
+            if not options:
+                break
+            d = max(options)[1]
+            press((d,), 8)
+            press((), 10)
+            if pos().get(me, p) == p:
+                pol.blocked[(p, step_of(p, d))] = 1
+                fails += 1
+            else:
+                pol.retreats = getattr(pol, 'retreats', 0) + 1
     if pol.pathing and not cautious:
-        key = tuple(sorted(e[0] for e in enemies))       # a new battle (enemy roster): forget edges
-        if key != pol.blocked_key:
-            pol.blocked, pol.blocked_key = {}, key
         fails = 0
         for _ in range(16):
             now = pos()
@@ -572,10 +595,20 @@ def aimed_turn(side, units, pol, press):
             if me not in q or (q[me] != p and q[me] not in [v for k, v in q.items() if k != me]):
                 break
     now = pos()
-    if me in now and now[me] in [v for k, v in now.items() if k != me]:
+    ghost = [k for k, x, y, f, hp in enemies if hp > 0 and me in now and (x, y) == now[me]]
+    if ghost:
+        # standing on a live enemy record's tile (round 4: Sc3 Ch7:12 record 8 at 11,51 is walked
+        # over, so it is not on the field): stop aiming at it for the rest of this battle
+        pol.phantoms = phantoms | set(ghost)
+        live[:] = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k not in pol.phantoms]
+    if not live:
+        press(('B',), 6)
+        press((), 20)
+        return [(('C',), 6), ((), 30), ((RING['hold'],), 6), ((), 14), (('C',), 6), ((), 40)] + tap(('C',), gap=40) * 2
+    if me in now and (ghost or now[me] in [v for k, v in now.items() if k != me]):
         # still on a teammate's tile (round 4: Sc1 Battle 22 bridge, a unit probed onto a packed
-        # line wandered over teammates for 60k VBlanks; C does nothing there): B puts it back on
-        # its start tile, which is free, and the turn ends from there
+        # line wandered over teammates for 60k VBlanks; C does nothing there) or a phantom
+        # enemy's: B puts it back on its start tile, which is free, and the turn ends from there
         press(('B',), 6)
         press((), 20)
         pol.returns = getattr(pol, 'returns', 0) + 1
