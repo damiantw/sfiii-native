@@ -1545,7 +1545,7 @@ index 15eaa96..b4bce6b 100644
  // The range a number may take, by key.
  static const struct { const char* key; int lo, hi; } kRanges[] = {
 diff --git a/runtime/src/machine/agent.cpp b/runtime/src/machine/agent.cpp
-index 8f7fc01..04f303d 100644
+index 8f7fc01..663e008 100644
 --- a/runtime/src/machine/agent.cpp
 +++ b/runtime/src/machine/agent.cpp
 @@ -16,7 +16,9 @@
@@ -1573,7 +1573,7 @@ index 8f7fc01..04f303d 100644
      say("vblank " + std::to_string(sat_vblanks()));
      std::string line;
      while (read_line(line)) {
-@@ -115,6 +125,13 @@ void agent_poll() {
+@@ -115,6 +125,22 @@ void agent_poll() {
          } else if (cmd == "read") read_memory(args);
          else if (cmd == "write") write_memory(args);
          else if (cmd == "frame") send_frame();
@@ -1584,6 +1584,15 @@ index 8f7fc01..04f303d 100644
 +            else if (!std::getenv("SF3_STATE_ID")) say("error save needs SF3_STATE_ID (the executable/disc identity)");
 +            else try { state_request_save(path); say("ok"); } catch (const std::exception& e) { say(std::string("error ") + e.what()); }
 +        } else if (cmd == "saved") say("saved " + std::string(state_save_busy() ? "busy" : "done") + " " + std::to_string(state_write_result()));
++        else if (cmd == "statepart") {
++            std::string name;
++            args >> name;
++            static const char kHex[] = "0123456789ABCDEF";
++            std::string out = "statepart ";
++            for (uint8_t b : state_part_bytes(name)) { out += kHex[b >> 4]; out += kHex[b & 15]; }
++            say(out);
++        }
++        else if (cmd == "statehash") say("statehash" + state_part_hashes());
          else if (cmd == "quit") break;
          else say("error no command " + cmd);
      }
@@ -2604,7 +2613,7 @@ index 33a2cdd..cb37688 100644
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..e107e2c 100644
+index 6cbd98f..a7f3e58 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -2638,7 +2647,7 @@ index 6cbd98f..e107e2c 100644
  
  // ---- dumps of the machine (state.cpp; state.h for the parts) ----------------------------------
  void state_enable();                // the run has safe moments: a game's task switch
-@@ -112,10 +121,18 @@ void state_poll();                  // from the master's polls: dumps due, a sto
+@@ -112,10 +121,20 @@ void state_poll();                  // from the master's polls: dumps due, a sto
  void state_point(SH2Context& c);    // a safe moment: c's registers and PC are all the run needs to go on
  void state_stop(const char* why);   // the run stops at the next dump, or soon without one
  void state_finish();                // the last dump written
@@ -2646,6 +2655,8 @@ index 6cbd98f..e107e2c 100644
 +void state_check_file(const std::string& path);
 +bool state_save_busy();
 +int state_write_result();
++std::vector<uint8_t> state_part_bytes(const std::string& name);   // agent `statepart NAME`
++std::string state_part_hashes();     // each state part hashed as it would be written now (agent `statehash`)
 +bool machine_state_quiesce_slave();
 +void machine_state_park_slave(uint32_t pc);
  void state_load(const std::string& path);   // after the boot: the machine as the dump has it
@@ -2657,7 +2668,7 @@ index 6cbd98f..e107e2c 100644
  
  // ---- the BIOS (bios.cpp) -----------------------------------------------------------
  void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
-@@ -206,6 +223,7 @@ void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size);
+@@ -206,6 +225,7 @@ void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size);
  void onchip_input_capture(int cpu);   // SINIT/MINIT: the FRT's input-capture flag
  void onchip_reset(int cpu);
  void onchip_set_clock(bool dots352);   // SMPC's CKCHG: φ at 352 dots' rate or 320's
@@ -2665,7 +2676,7 @@ index 6cbd98f..e107e2c 100644
  uint64_t onchip_phi_clocks(uint64_t ns);   // φ's clocks in `ns`: the FRT's and the watchdog's time base
  bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if due and above c's mask; taken?
  
-@@ -213,11 +231,17 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
+@@ -213,11 +233,17 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
  void video_init();
  void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
  void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
@@ -2891,10 +2902,10 @@ index ef4f660..13864ed 100644
              }
          }
 diff --git a/runtime/src/machine/state.cpp b/runtime/src/machine/state.cpp
-index 67ccdd3..4f9b17f 100644
+index 67ccdd3..5f380b9 100644
 --- a/runtime/src/machine/state.cpp
 +++ b/runtime/src/machine/state.cpp
-@@ -19,16 +19,51 @@
+@@ -19,17 +19,52 @@
  #include <filesystem>
  #include <map>
  #include <thread>
@@ -2945,10 +2956,12 @@ index 67ccdd3..4f9b17f 100644
      {"bios", bios_state},       {"scu", scu_state},         {"scudsp", scudsp_state},   {"onchip", onchip_state},
      {"smpc", smpc_state},       {"cdblock", cdblock_state}, {"vdp1", vdp1_state},       {"vdp2", vdp2_state},
 -    {"sound", sound_state},     {"scsp", scsp_state},       {"tasks", tasks_state},     {"cddrive", cddrive_state, true},
+-    {"cdfs", cdfs_state, true},   {"clock", clock_state, true}, {"cdpos", cdpos_state, true},
 +    {"sound", sound_state},     {"scsp", scsp_state},       {"tasks", tasks_state},     {"cddrive", cddrive_state, true}, {"cdpause", cdpause_state, true},
-     {"cdfs", cdfs_state, true},   {"clock", clock_state, true}, {"cdpos", cdpos_state, true},
++    {"cdfs", cdfs_state, true},   {"clock", clock_state, true}, {"cdpos", cdpos_state, true}, {"soundpart", sound_part_state, true},
  };
  
+ static std::string g_loading_path;
 @@ -54,10 +89,23 @@ void core_state(State& s) {
      }
  }
@@ -3078,7 +3091,43 @@ index 67ccdd3..4f9b17f 100644
      if (g_writer.joinable()) g_writer.join();
      g_writing = true;
      g_writer = std::thread(write_file, std::move(out), g_cfg.state_out, sat_vblanks());
-@@ -147,13 +250,24 @@ void state_load(const std::string& path) {
+@@ -140,6 +243,35 @@ void state_finish() {
+     if (g_writer.joinable()) g_writer.join();
+ }
+ 
++// Each part as it would be written now, hashed (FNV-1a 64): the agent's `statehash`, to find the
++// first part two runs differ in. The machine part is skipped while the slave is busy.
++std::string state_part_hashes() {
++    std::string out;
++    char buf[64];
++    for (auto& p : kParts) {
++        if (p.fn == machine_state && state_slave_busy()) { out += std::string(" ") + p.name + "=busy"; continue; }
++        State s;
++        p.fn(s);
++        uint64_t h = 1469598103934665603ull;
++        for (uint8_t b : s.data) { h ^= b; h *= 1099511628211ull; }
++        std::snprintf(buf, sizeof buf, " %s=%016llx", p.name, (unsigned long long)h);
++        out += buf;
++    }
++    std::snprintf(buf, sizeof buf, " now=%llu cpu=%llu", (unsigned long long)sat_now(), (unsigned long long)sat_now_cpu());
++    return out + buf;
++}
++
++// One part's bytes as it would be written now (the agent's `statepart NAME`), empty if no such part.
++std::vector<uint8_t> state_part_bytes(const std::string& name) {
++    for (auto& p : kParts) {
++        if (name != p.name || (p.fn == machine_state && state_slave_busy())) continue;
++        State s;
++        p.fn(s);
++        return s.data;
++    }
++    return {};
++}
++
+ // ---- loading --------------------------------------------------------------------------------
+ void state_load(const std::string& path) {
+     g_loading_path = path;
+@@ -147,13 +279,24 @@ void state_load(const std::string& path) {
      if (!f) state_fail("cannot open it");
      std::vector<uint8_t> bytes;
      uint8_t buf[1 << 16];
@@ -3104,7 +3153,7 @@ index 67ccdd3..4f9b17f 100644
      std::map<std::string, std::vector<uint8_t>> parts;
      while (at < bytes.size()) {
          uint8_t n = bytes[at++];
-@@ -163,6 +277,7 @@ void state_load(const std::string& path) {
+@@ -163,6 +306,7 @@ void state_load(const std::string& path) {
          std::memcpy(&size, bytes.data() + at + n, sizeof size);
          at += n + sizeof size;
          if (bytes.size() - at < size) state_fail("cut short");
@@ -3113,7 +3162,7 @@ index 67ccdd3..4f9b17f 100644
          at += size;
      }
 diff --git a/runtime/src/machine/state.h b/runtime/src/machine/state.h
-index 91d606c..3166e5c 100644
+index 91d606c..5032015 100644
 --- a/runtime/src/machine/state.h
 +++ b/runtime/src/machine/state.h
 @@ -34,6 +34,7 @@ struct State {
@@ -3140,7 +3189,7 @@ index 91d606c..3166e5c 100644
  void mmio_state(State& s);
  void bios_state(State& s);
  void scu_state(State& s);
-@@ -62,6 +65,7 @@ void clock_state(State& s);
+@@ -62,11 +65,13 @@ void clock_state(State& s);
  void smpc_state(State& s);
  void cdblock_state(State& s);
  void cddrive_state(State& s);
@@ -3148,6 +3197,12 @@ index 91d606c..3166e5c 100644
  void cdfs_state(State& s);
  void cdpos_state(State& s);
  void video_state(State& s);
+ void vdp1_state(State& s);
+ void vdp2_state(State& s);
+ void sound_state(State& s);
++void sound_part_state(State& s);
+ void scsp_state(State& s);
+ void tasks_state(State& s);
 diff --git a/runtime/src/machine/tasks.cpp b/runtime/src/machine/tasks.cpp
 index c37141d..6517551 100644
 --- a/runtime/src/machine/tasks.cpp
@@ -4028,7 +4083,7 @@ index b40fefc..8369242 100644
 +    s(g_samples), s(g_counter), s(g_key_execute), s(g_stack), s(g_stack_pos), s(g_stack_delay), s(g_stack_delay_skip), s(g_dsp), s(g_noise), s(g_rbl), s(g_rbp), s(g_cpu_level);
  }
 diff --git a/runtime/src/sound/sound.cpp b/runtime/src/sound/sound.cpp
-index 319a3f3..5d13f11 100644
+index 319a3f3..e8ff3fa 100644
 --- a/runtime/src/sound/sound.cpp
 +++ b/runtime/src/sound/sound.cpp
 @@ -25,6 +25,7 @@
@@ -4257,6 +4312,21 @@ index 319a3f3..5d13f11 100644
      std::vector<uint8_t> cpu(m68k_state_size());
      m68k_state_get(cpu.data());
      s.vec(cpu);
+@@ -177,3 +305,14 @@ void sound_state(State& s) {
+     if (cpu.size() != m68k_state_size()) state_fail("the 68000's registers are another size");
+     m68k_state_set(cpu.data());
+ }
++
++// After sound: what a load needs to run the 68000 on as the dumped run does. The cycles of the
++// current sample already given, so that the 68000's run is split at the same times (the debt above
++// stays g_debt - g_part for dumps without this part); and the bus model's view of the last
++// instruction (its fetches and where they ended, an interrupt between two), which decides the
++// prefetch refill the next one pays.
++void sound_part_state(State& s) {
++    int part = g_part;
++    s(part), s(g_fetch_next), s(g_fetch_words), s(g_interrupted);
++    if (s.loading) g_debt += part, g_part = part;
++}
 diff --git a/runtime/src/sound/sound.h b/runtime/src/sound/sound.h
 index 1786242..dfe275c 100644
 --- a/runtime/src/sound/sound.h
@@ -7526,7 +7596,7 @@ index 3396388..70e2000 100644
                      else:
                          if slot not in f.code:
 diff --git a/src/saturnrecomp/recomp/emit.py b/src/saturnrecomp/recomp/emit.py
-index 4cf69d5..85c9dbf 100644
+index 4cf69d5..7c8e179 100644
 --- a/src/saturnrecomp/recomp/emit.py
 +++ b/src/saturnrecomp/recomp/emit.py
 @@ -16,8 +16,11 @@ into a C++ function:
@@ -7714,7 +7784,7 @@ index 4cf69d5..85c9dbf 100644
          if op == "rte":
              return ("{ const uint32_t x = ld32(c.r[15]); c.r[15] += 4; sh2_set_sr(c, ld32(c.r[15]) & 0x3F3u); "
                      "c.r[15] += 4; %sc.pc = x; return; }" % s), None
-@@ -436,13 +498,37 @@ class Body:
+@@ -436,13 +498,44 @@ class Body:
          code = self.f.code
          order = sorted(a for a in code if a not in self.slots or a in labels or a == self.f.entry)
          lines = ["void %s(SH2Context& c) {" % fname(self.f.entry)]
@@ -7728,6 +7798,7 @@ index 4cf69d5..85c9dbf 100644
              lines.append("    goto L_%08X;" % self.f.entry)
          late = set()
 +        lead = True
++        pointed = None
          for i, a in enumerate(order):
              if a in labels or a in late:
                  lines.append("L_%08X:" % a)
@@ -7747,16 +7818,22 @@ index 4cf69d5..85c9dbf 100644
 +                        cyc, mem = cyc + n, mem + m
 +                    if insb.op in BRANCHES:
 +                        break
++                # A state point comes before the charge: a loaded state
++                # resumes at the label and pays the block again, so a dump
++                # taken after the charge would bill it twice.
++                if self.resume_points and a in self.state_points:
++                    lines.append("    SH2_STATE_POINT(c, %s);" % _h(a))
++                    pointed = a
 +                lines.append("    SH2_CYC(c, %d, %d);" % (cyc, mem))
 +                lead = False
              text, succ = self._insn(a)
              ins = self.ops[a]
              if self.comments:
-@@ -453,7 +539,11 @@ class Body:
+@@ -453,7 +546,11 @@ class Body:
              self.locations.append((a, len(lines), "insn"))
              if ins.delay and a + 2 in code:
                  self.locations.append((a + 2, len(lines), "slot"))
-+            if self.resume_points and a in self.state_points:
++            if self.resume_points and a in self.state_points and pointed != a:
 +                lines.append("    SH2_STATE_POINT(c, %s);" % _h(a))
              lines.append("    " + text)
 +            if self.ops[a].op in BRANCHES:
@@ -7764,7 +7841,7 @@ index 4cf69d5..85c9dbf 100644
              nxt = order[i + 1] if i + 1 < len(order) else None
              if succ is not None and succ != nxt:
                  if succ in code:
-@@ -462,4 +552,7 @@ class Body:
+@@ -462,4 +559,7 @@ class Body:
                  else:
                      lines.append("    " + self._tail(succ))
          lines.append("}")
@@ -7772,3 +7849,43 @@ index 4cf69d5..85c9dbf 100644
 +            for a in sorted(self.resume_points | {self.f.entry}):
 +                lines.append("void %s(SH2Context& c) { body_%08X(c, %s); }" % (fname(a), self.f.entry, _h(a)))
          return lines
+diff --git a/tests/test_state_points.py b/tests/test_state_points.py
+new file mode 100644
+index 0000000..2af6ff8
+--- /dev/null
++++ b/tests/test_state_points.py
+@@ -0,0 +1,34 @@
++from conftest import BASE, assemble
++
++from saturnrecomp import sh2
++from saturnrecomp.recomp import discover
++from saturnrecomp.recomp import emit as E
++
++NOP, RTS = 0x0009, 0x000B
++# BASE: a loop of two nops (bf back to BASE), then a call and its return.
++CODE = assemble(
++    NOP, NOP, 0x8BFD,                            # L: nop; nop; bf L
++    0xB001, NOP,                                 # bsr Y
++    RTS, NOP,                                    # (resume point BASE+0x0A)
++    RTS, NOP,                                    # Y
++)
++
++
++def lines():
++    img = sh2.Image(CODE, BASE)
++    prog = discover.Program(img, [BASE])
++    body = E.Body(prog, prog.funcs[BASE], set(prog.funcs), resume_points=[BASE + 0x0A])
++    return [l.strip() for l in body.emit()]
++
++
++def test_a_state_point_is_taken_before_its_block_is_charged():
++    # A loaded state resumes at the label and runs the block's charge again,
++    # so a dump taken after the charge would bill the block twice.
++    out = lines()
++    points = [i for i, l in enumerate(out) if l.startswith("SH2_STATE_POINT(")]
++    assert points
++    for i in points:
++        assert out[i - 1].startswith("L_"), out[i - 1:i + 2]
++        assert out[i + 1].startswith("SH2_CYC("), out[i - 1:i + 2]
++    assert not any(out[i + 1].startswith("SH2_STATE_POINT(") for i, l in enumerate(out[:-1])
++                   if l.startswith("SH2_CYC("))
