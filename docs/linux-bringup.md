@@ -57,7 +57,7 @@ This is what `.github/workflows/linux-native.yml` runs on every push and PR:
 1. Build the pinned SDL commit from source.
 2. Compile the shaders with the pinned DXC.
 3. Have the real SH-2 emitter generate its synthetic instruction fixture project (`saturnrecomp.recomp.__main__.generate([], OUT, optest=True, native_states=True)`).
-4. Build `saturn`, `selftest`, `controller_setup`, `controller_selftest`, `replay_checkpoint`, `gpu_renderer_selftest`, `replay_ui_selftest` and `native_state_ui_selftest` with clang, using `tools/windows.cmake` as `SATURN_EXTRA` (despite its name it is the platform-neutral project host layer).
+4. Build `saturn`, `selftest`, `controller_setup`, `controller_selftest`, `replay_checkpoint`, `gpu_renderer_selftest`, `gpu_parity`, `replay_ui_selftest` and `native_state_ui_selftest` with clang, using `tools/windows.cmake` as `SATURN_EXTRA` (despite its name it is the platform-neutral project host layer).
 5. Run them, with the GPU cases under `xvfb-run` on lavapipe (`SF3_GPU_ALLOW_SOFTWARE=1`).
 
 Read the workflow file for the exact commands. Configure plus build takes about 15 s on 8 cores.

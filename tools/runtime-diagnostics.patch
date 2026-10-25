@@ -2318,7 +2318,7 @@ index c37141d..6517551 100644
      if (mco_uninit(t->co) != MCO_SUCCESS || mco_init(t->co, &desc) != MCO_SUCCESS)
          sat_fatal("tasks: the fiber cannot start over at %08X", pc);
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..03ab903 100644
+index 8589d33..0188326 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
 @@ -33,11 +33,13 @@
@@ -2410,7 +2410,7 @@ index 8589d33..03ab903 100644
  
  static Rgb rgb_of(uint16_t v) { return {v & 0x1F, v >> 5 & 0x1F, v >> 10 & 0x1F}; }
  
-@@ -136,12 +190,65 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+@@ -136,12 +190,66 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
  
  static bool g_fb8;                              // 8 bits a pixel (TVMR 1) for this draw
  
@@ -2439,7 +2439,8 @@ index 8589d33..03ab903 100644
 +    std::copy(xy,xy+8,q.xy);q.hflip=c.hflip;q.vflip=c.vflip;q.texture=texture;
 +    q.clip[0]=g_sys_x;q.clip[1]=g_sys_y;q.clip[2]=g_ux0;q.clip[3]=g_uy0;q.clip[4]=g_ux1;q.clip[5]=g_uy1;
 +    q.gpu_flags=c.pmod|((c.ctrl&15)<<16);q.gpu_eligible=true;
-+    for(auto raw:texture->raw) if(raw && raw!=0x7FFF && !(raw&0x8000)) {q.gpu_eligible=false;break;}
++    // 0x7FFF is an end code only while end codes are enabled; otherwise it is a palette dot.
++    for(auto raw:texture->raw) if(raw && !(raw==0x7FFF && !c.ecd) && !(raw&0x8000)) {q.gpu_eligible=false;break;}
 +    if((c.ctrl&15)>=2) {
 +        const Pt corners[]={a,b,cc,d};int sign=0;
 +        for(int i=0;i<4;++i) {
@@ -2476,7 +2477,7 @@ index 8589d33..03ab903 100644
      if (g_hi_target) {
          uint16_t& h = g_hi_target[y * 1024 + x];
          if (g_fb8) { if (!c.mon) h = pix & 0xFF; }
-@@ -156,12 +263,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
+@@ -156,12 +264,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
          return;
      }
      put(g_target[y * 512 + x], c, pix, g);
@@ -2495,7 +2496,7 @@ index 8589d33..03ab903 100644
          if (in == c.outside) return;
      }
      plot_clipped(c, x, y, pix, g);
-@@ -193,7 +304,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
+@@ -193,7 +305,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
  
  static Rgb mix(const Rgb& a, const Rgb& b, int k, int n) {
      if (n <= 0) return a;
@@ -2504,7 +2505,7 @@ index 8589d33..03ab903 100644
  }
  
  // A line from p0 to p1; for a texture, row v, its columns spread along the line.
-@@ -211,6 +322,7 @@ static uint64_t g_draw_steps;
+@@ -211,6 +323,7 @@ static uint64_t g_draw_steps;
  #endif
  
  static void command(const uint8_t* cmd, uint32_t a) {
@@ -2512,7 +2513,7 @@ index 8589d33..03ab903 100644
      Cmd c{};
      c.ctrl = cw(cmd, 0);
      c.pmod = cw(cmd, 4);
-@@ -256,6 +368,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
+@@ -256,6 +369,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
      }
      for (Pt& q : p) { q.x += g_local_x; q.y += g_local_y; }
      draw_shape(c, cmd, comm, p);
@@ -2525,7 +2526,7 @@ index 8589d33..03ab903 100644
  }
  
  // ---- the frames in between (--interp) -------------------------------------------------------
-@@ -289,6 +407,27 @@ struct RecFrame {
+@@ -289,6 +408,27 @@ struct RecFrame {
  static RecFrame g_rec_cur, g_rec_last, g_rec_prev;
  static uint16_t g_ifb[512 * 256];               // the frame in between
  static bool g_show_ifb;
@@ -2553,7 +2554,7 @@ index 8589d33..03ab903 100644
  static uint64_t g_fields;
  static float g_alpha;
  static std::vector<uint64_t> g_next_keys;       // vdp1_next_draw_keys: by command address / 32
-@@ -312,6 +451,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
+@@ -312,6 +452,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
      return x & 1 ? w & 0xFF : w >> 8;
  }
  
@@ -2568,7 +2569,7 @@ index 8589d33..03ab903 100644
  static void draw() {
      g_reg[EDSR] = (uint16_t)(g_reg[EDSR] >> 1 & 1);   // BEF <- CEF, CEF <- 0
      if ((g_reg[TVMR] & 3) == 3) sat_fatal("VDP1: TVMR %04X (8-bit rotation) is not done", g_reg[TVMR]);
-@@ -320,6 +467,12 @@ static void draw() {
+@@ -320,6 +468,12 @@ static void draw() {
      g_hi_on[g_draw_fb] = g_reg[FBCR] & 8;
      g_hi_target = g_hi_on[g_draw_fb] ? g_hi[g_draw_fb] : nullptr;
      g_dil = g_reg[FBCR] >> 2 & 1;
@@ -2581,7 +2582,7 @@ index 8589d33..03ab903 100644
      RecDraw* rec = nullptr;
      if (g_cfg.interp) {
          g_rec_cur.draws.push_back({g_sys_x, g_sys_y, g_ux0, g_uy0, g_ux1, g_uy1, g_local_x, g_local_y, {}});
-@@ -606,7 +759,11 @@ static void erase(int which) {
+@@ -606,7 +760,11 @@ static void erase(int which) {
      int x0 = (g_reg[EWLR] >> 9 & 0x7F) * 8, y0 = g_reg[EWLR] & 0x1FF;
      int x1 = (g_reg[EWRR] >> 9 & 0x7F) * 8, y1 = g_reg[EWRR] & 0x1FF;
      for (int y = y0; y <= y1 && y < 256; ++y)
@@ -2594,7 +2595,7 @@ index 8589d33..03ab903 100644
      if (!g_hi_on[which]) return;
      bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
      int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
-@@ -676,16 +833,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+@@ -676,16 +834,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
  }
  
  void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
@@ -2624,7 +2625,7 @@ index 8589d33..03ab903 100644
      for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
  }
  
-@@ -707,4 +874,38 @@ void vdp1_state(State& s) {
+@@ -707,4 +875,38 @@ void vdp1_state(State& s) {
      s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
      s(g_draw_end), s(g_frame_changes), s(g_draws);
      s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
