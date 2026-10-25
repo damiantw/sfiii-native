@@ -5,6 +5,7 @@ the game's own frame tick, so the reference's slower CD loads do not shift the i
 Compared at each sync point: the SF3 live state block (the save payload's RAM copy), the map and
 battle ids, and the picture. Pure comparison helpers are unit-tested with invented data."""
 import json
+import os
 from pathlib import Path
 
 from . import memory_map, saves, sweep
@@ -198,6 +199,13 @@ def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, t
         (work / 'backup.bin.cartridge').unlink()
     (work / 'core-save' / (Path(cue).stem + '.srm')).write_bytes(saves.build_bram([rec]))
 
+    if bios:
+        # Beetle Saturn's frames end at raster line 262, late in the VBlank: after the VBlank-IN handler
+        # (which writes the game's pad word) and with the SMPC INTBACK it issues in flight. Ours pauses
+        # at VBlank-IN, before that handler, so its writes land a step later than Beetle's and a press
+        # looked one frame late. Holding our pause to the same line (the runtime's SF3_AGENT_LINE) puts
+        # both steps' edges at the same point of the frame.
+        os.environ.setdefault('SF3_AGENT_LINE', '262')
     # ours: the boot ticks at our START presses, the load, then seeded inputs and sync points by tick
     with agent.start(str(saturn), ['--headless', '--cue', str(cue), '--save', str(work / 'backup.bin'),
                                    '--settings', '-'], str(work / 'ours')) as r:

@@ -1291,7 +1291,7 @@ index 15eaa96..520c1ba 100644
  // The range a number may take, by key.
  static const struct { const char* key; int lo, hi; } kRanges[] = {
 diff --git a/runtime/src/machine/agent.cpp b/runtime/src/machine/agent.cpp
-index 8f7fc01..fbce50a 100644
+index 8f7fc01..04f303d 100644
 --- a/runtime/src/machine/agent.cpp
 +++ b/runtime/src/machine/agent.cpp
 @@ -16,7 +16,9 @@
@@ -1304,7 +1304,22 @@ index 8f7fc01..fbce50a 100644
  #include <string>
  #if !defined(_WIN32)
  #include <sys/socket.h>
-@@ -115,6 +117,13 @@ void agent_poll() {
+@@ -95,6 +97,14 @@ static void send_frame() {
+ 
+ void agent_poll() {
+     if (g_cfg.agent_fd < 0 || sat_vblanks() < g_until) return;
++    // SF3_AGENT_LINE=N holds the pause, once the VBlank has come, until raster line N of it (the
++    // display's lines up to 262), so that a step ends where another machine's frame does: Beetle
++    // Saturn's ends late in the VBlank, after the VBlank-IN handler and the SMPC command it issues.
++    static const int pause_line = [] { const char* v = std::getenv("SF3_AGENT_LINE"); return v ? std::atoi(v) : 0; }();
++    if (pause_line > 0) {
++        const int line = video_raster_line();
++        if (line >= video_display_lines() && line < pause_line) return;
++    }
+     say("vblank " + std::to_string(sat_vblanks()));
+     std::string line;
+     while (read_line(line)) {
+@@ -115,6 +125,13 @@ void agent_poll() {
          } else if (cmd == "read") read_memory(args);
          else if (cmd == "write") write_memory(args);
          else if (cmd == "frame") send_frame();
@@ -1923,7 +1938,7 @@ index 33a2cdd..6b783ff 100644
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..7bc2ee0 100644
+index 6cbd98f..19af60f 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -1961,6 +1976,15 @@ index 6cbd98f..7bc2ee0 100644
  
  // ---- the BIOS (bios.cpp) -----------------------------------------------------------
  void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
+@@ -213,6 +223,8 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
+ void video_init();
+ void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
+ void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
++int video_raster_line();              // the line the raster is on, 0 at VBlank-OUT
++int video_display_lines();            // the display's lines: VBlank-IN is the line after them
+ uint32_t video_read(uint32_t a, int size);    // VDP1, VDP2, SCSP (canonical addresses)
+ void video_write(uint32_t a, uint32_t v, int size);
+ bool video_owns(uint32_t a);
 diff --git a/runtime/src/machine/scudsp.cpp b/runtime/src/machine/scudsp.cpp
 index ef4f660..26a52aa 100644
 --- a/runtime/src/machine/scudsp.cpp
@@ -3781,7 +3805,7 @@ index 4c8bcb1..c5f555d 100644
 -void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
-index 88d1642..00a1b7c 100644
+index 88d1642..4e44a71 100644
 --- a/runtime/src/video/video.cpp
 +++ b/runtime/src/video/video.cpp
 @@ -21,6 +21,7 @@
@@ -3878,6 +3902,13 @@ index 88d1642..00a1b7c 100644
      uint32_t off;
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
+@@ -152,3 +176,6 @@ void video_write(uint32_t a, uint32_t v, int size) {
+ }
+ 
+ void video_state(State& s) { s(g_line_abs), s(g_vblanks); }
++
++int video_raster_line() { return (int)(g_line_abs % kLines); }
++int video_display_lines() { return display_lines(); }
 diff --git a/runtime/src/video/video.h b/runtime/src/video/video.h
 index ebaa466..c68e655 100644
 --- a/runtime/src/video/video.h
