@@ -230,6 +230,10 @@ def goal_list(ts, start):
     return kept
 
 
+def _stop_reset(sd):
+    raise Done('reset')
+
+
 def drive(a):
     from saturnrecomp import agent
     mm = memory_map.lookup(a.profile)
@@ -263,7 +267,7 @@ def drive(a):
                 raise Done('no-load')
             s.loaded = load
         res = autoplay.play(s, a.profile, a.frames, a.seed, assist=a.assist, walker=True, rearm=20, idle_over_turns=60, pathing=a.pathing,
-                            reload=lambda sd: autoplay.reload_menu(sd, a.profile, 6500))
+                            reload=_stop_reset if a.no_reload else lambda sd: autoplay.reload_menu(sd, a.profile, 6500))
     except Done as e:
         status = 'ok' if str(e) in ('frames', 'goal') else str(e)
     except (agent.RunEnded, agent.AgentError, BrokenPipeError, ConnectionResetError) as e:
@@ -426,6 +430,7 @@ def main():
     d.add_argument('--max-vblank', type=int)
     d.add_argument('--continue', dest='cont', help='replay this segment first, then drive on')
     d.add_argument('--pathing', action='store_true', help='planned unit paths in battle (round 26)')
+    d.add_argument('--no-reload', action='store_true', help='stop the drive (status reset) when the game falls back to its title (game over, quit) instead of reloading the save')
     d.add_argument('--assist', choices=['party', 'party+enemy1'], help='TEST ONLY battle stat pokes')
     d.add_argument('--clock', default=CLOCK, help='SMPC clock at power-on (default %(default)s)')
     d.add_argument('--out', required=True)
