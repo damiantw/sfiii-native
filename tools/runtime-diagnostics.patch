@@ -2016,7 +2016,7 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..c6a759d 100644
+index a17d926..e173de7 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
 @@ -1,11 +1,11 @@
@@ -2308,16 +2308,22 @@ index a17d926..c6a759d 100644
      if (bios_is_dispatcher(vec, target)) {
          bios_dispatch(c, vec);
      } else {
-@@ -570,7 +703,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -568,9 +701,12 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+ }
+ 
  void sh2_sleep(SH2Context& c, uint32_t pc) {
-     // wait for an interrupt: time passes until one is taken
+-    // wait for an interrupt: time passes until one is taken
++    // wait for an interrupt: time passes until one is taken. What the master had spent of its
++    // slice is time already passed, so it goes in first (the sleep starts at the SLEEP's cycle,
++    // and sat_now_cpu() reads sat_now() while it sleeps).
++    if (&c == &g_master) { g_vtime += quarters_ns((int64_t)kBudget - c.budget); c.budget = kBudget; }
      for (int i = 0; i < 100000; ++i) {
 -        g_vtime += kBudget * kNsPerSafePoint;
 +        g_vtime += quarters_ns(kBudget);
          master_poll_devices();
          if (scu_deliver(c) | onchip_deliver(c)) return;
      }
-@@ -584,6 +717,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
+@@ -584,6 +720,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
  
  void sh2_bad_return(SH2Context& c, uint32_t expected) {
      if (tasks_pending()) { tasks_route(c, expected); return; }
@@ -2329,7 +2335,7 @@ index a17d926..c6a759d 100644
      sat_fatal("returned to %08X, expected %08X", c.pc, expected);
  }
  
-@@ -658,7 +796,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -658,7 +799,7 @@ int saturn_main(const SaturnConfig& cfg) {
      else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
      for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
      bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
@@ -2338,7 +2344,7 @@ index a17d926..c6a759d 100644
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
-@@ -704,3 +842,11 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -704,3 +845,11 @@ int saturn_main(const SaturnConfig& cfg) {
      std::fflush(stdout);
      std::_Exit(0);                  // the slave's thread is parked: do not wait for it
  }
