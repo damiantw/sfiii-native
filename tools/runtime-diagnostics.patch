@@ -2899,10 +2899,10 @@ index 8589d33..1ad83e1 100644
 +        for(int y=0;y<256;++y) for(int x=0;x<512;++x) scaled_store(p,x,y,g_fb[p][y*512+x]);
  }
 diff --git a/runtime/src/video/vdp1_raster.inc b/runtime/src/video/vdp1_raster.inc
-index 15c677f..d431de8 100644
+index 15c677f..65ccb23 100644
 --- a/runtime/src/video/vdp1_raster.inc
 +++ b/runtime/src/video/vdp1_raster.inc
-@@ -9,12 +9,150 @@
+@@ -9,12 +9,160 @@
  // Bresenham's with an extra pixel wherever both coordinates step (VDP1's
  // anti-aliasing, so no holes between lines). A texture's row is the step's
  // (v = i * h / steps), its column the position along the line
@@ -2965,6 +2965,8 @@ index 15c677f..d431de8 100644
 +    if constexpr (MODE == 2) mask8 = c.cmode == 2 ? 0x3F : c.cmode == 3 ? 0x7F : 0xFF;
 +    vdp1_steps::EndCodes ends;
 +    int sampled_u = -1;
++    // the texture memory held in a local: the framebuffer stores cannot make the compiler fetch it again
++    const uint8_t* const tex = g_tex;
 +    auto pixel = [&](int x, int y, int k, bool aa) __attribute__((always_inline)) {
 +        const int s = aa ? vdp1_steps::aa_step(k, len) : k;
 +        uint16_t pix = c.colr;
@@ -2981,16 +2983,24 @@ index 15c677f..d431de8 100644
 +            const uint32_t i = rowi + (uint32_t)(c.hflip ? w - 1 - u : u);
 +            bool is_end, is_zero;
 +            if constexpr (MODE == 0 || MODE == 1) {
-+                const uint8_t b = g_tex[(c.srca + i / 2) & 0x7FFFF];
++                const uint8_t b = tex[(c.srca + i / 2) & 0x7FFFF];
 +                const uint32_t raw = (i & 1) ? (b & 0xF) : (b >> 4);
 +                is_end = raw == 0xF; is_zero = raw == 0;
 +                pix = MODE == 0 ? (uint16_t)((c.colr & 0xFFF0) | raw) : c.lut[raw];
 +            } else if constexpr (MODE == 2) {
-+                const uint32_t raw = g_tex[(c.srca + i) & 0x7FFFF];
++                const uint32_t raw = tex[(c.srca + i) & 0x7FFFF];
 +                is_end = raw == 0xFF; is_zero = raw == 0;
 +                pix = (uint16_t)((c.colr & ~mask8) | (raw & mask8));
 +            } else {
-+                const uint32_t raw = tw(c.srca + i * 2);
++                // tw(): the big-endian word at an even address, read as one load
++                const uint32_t a = (c.srca + i * 2) & 0x7FFFE;
++#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++                uint16_t word;
++                std::memcpy(&word, tex + a, 2);
++                const uint32_t raw = __builtin_bswap16(word);
++#else
++                const uint32_t raw = (uint32_t)(tex[a] << 8 | tex[a + 1]);
++#endif
 +                is_end = raw == 0x7FFF; is_zero = raw == 0;
 +                pix = (uint16_t)raw;
 +            }
@@ -3054,7 +3064,7 @@ index 15c677f..d431de8 100644
  static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      if (outside_clip(c, std::min(p0.x, p1.x), std::min(p0.y, p1.y), std::max(p0.x, p1.x), std::max(p0.y, p1.y))) return;
      int dx = p1.x - p0.x, dy = p1.y - p0.y;
-@@ -22,21 +160,39 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -22,21 +170,39 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      int len = std::max(adx, ady);
      g_draw_steps += (uint64_t)len + 1;
      int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
@@ -3101,7 +3111,7 @@ index 15c677f..d431de8 100644
          plot(c, x, y, pix, c.gouraud ? &g : nullptr);
      };
      int x = p0.x, y = p0.y;
-@@ -46,9 +202,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -46,9 +212,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
              pixel(x, y, k);
              if (k == len) break;
              if (err > 0) {
@@ -3113,7 +3123,7 @@ index 15c677f..d431de8 100644
              }
              err += 2 * ady;
              x += xi;
-@@ -59,9 +216,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -59,9 +226,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
              pixel(x, y, k);
              if (k == len) break;
              if (err > 0) {
@@ -3124,7 +3134,7 @@ index 15c677f..d431de8 100644
              }
              err += 2 * adx;
              y += yi;
-@@ -69,32 +226,48 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -69,32 +236,48 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      }
  }
  
