@@ -1632,7 +1632,7 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..525dd36 100644
+index a17d926..6fcb641 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
 @@ -33,6 +33,7 @@
@@ -1643,7 +1643,7 @@ index a17d926..525dd36 100644
  #include <atomic>
  #include <chrono>
  #include <condition_variable>
-@@ -46,6 +47,7 @@
+@@ -46,13 +47,20 @@
  #include <mutex>
  #include <thread>
  #include <vector>
@@ -1651,7 +1651,21 @@ index a17d926..525dd36 100644
  
  SaturnConfig g_cfg;
  SH2Context g_master, g_slave;
-@@ -72,9 +74,26 @@ uint64_t sat_now() {
+ SH2Context* g_cpu = &g_master;
+ 
+ static const int32_t kBudget = 256;             // safe points between polls
+-static const uint64_t kNsPerSafePoint = 400;    // virtual time: ~11 instructions at 28.6 MHz
++// SF3_NS_PER_SP=N overrides the virtual time a safe point costs (default 400 ns), for timing
++// calibration against a reference emulator: a larger value is a slower CPU against the devices.
++static const uint64_t kNsPerSafePoint = [] {
++    const char* v = std::getenv("SF3_NS_PER_SP");
++    const long n = v ? std::atol(v) : 0;
++    return n > 0 ? (uint64_t)n : 400ull;    // virtual time: ~11 instructions at 28.6 MHz
++}();
+ static const uint32_t kIntPC = 0xFFFFFFE4u;     // the PC an interrupt pushes: where rte must go
+ static const int kSlaveSlice = 64;              // polls the slave runs before it gives the CPU back
+ 
+@@ -72,9 +80,26 @@ uint64_t sat_now() {
  }
  
  static void vprint(const char* tag, const char* fmt, va_list ap) {
@@ -1681,7 +1695,7 @@ index a17d926..525dd36 100644
  }
  
  void sat_trace(const char* fmt, ...) {
-@@ -302,6 +321,36 @@ void sat_fatal(const char* fmt, ...) {
+@@ -302,6 +327,36 @@ void sat_fatal(const char* fmt, ...) {
      va_start(ap, fmt);
      vprint("FATAL", fmt, ap);
      va_end(ap);
@@ -1718,7 +1732,7 @@ index a17d926..525dd36 100644
      SH2Context& c = *g_cpu;
      std::fprintf(stderr, "  cpu %d  pr %08X  pc %08X  sr %03X\n", c.cpu, c.pr, c.pc, sh2_get_sr(c));
      for (int i = 0; i < 16; ++i) std::fprintf(stderr, "  r%-2d %08X%s", i, c.r[i], i % 4 == 3 ? "\n" : "");
-@@ -316,6 +365,7 @@ void sat_fatal(const char* fmt, ...) {
+@@ -316,6 +371,7 @@ void sat_fatal(const char* fmt, ...) {
          sound_close();                          // a run that ends in an error is the one most worth watching
          movie_finish();
      }
@@ -1726,7 +1740,7 @@ index a17d926..525dd36 100644
      std::fflush(stderr);
      std::_Exit(1);
  }
-@@ -333,6 +383,8 @@ static std::condition_variable g_cv;
+@@ -333,6 +389,8 @@ static std::condition_variable g_cv;
  static int g_turn;                  // 0 the master runs, 1 the slave
  static bool g_slave_on, g_slave_idle = true, g_slave_reset, g_slave_thread;
  static int g_slave_polls;
@@ -1735,7 +1749,7 @@ index a17d926..525dd36 100644
  
  static void give(int to) {          // hand the CPU over and wait until it comes back
      std::unique_lock<std::mutex> lk(g_mu);
-@@ -366,6 +418,14 @@ static void slave_main() {
+@@ -366,6 +424,14 @@ static void slave_main() {
              // the BIOS's slave boot: its own vector table, interrupts masked,
              // its stack, then the entry the program set as vector 0x94
              SH2Context& s = g_slave;
@@ -1750,7 +1764,7 @@ index a17d926..525dd36 100644
              s = SH2Context{};
              s.cpu = 1;
              s.vbr = 0x06000400u;
-@@ -421,7 +481,29 @@ static void watch_for_stalls() {
+@@ -421,7 +487,29 @@ static void watch_for_stalls() {
      }
  }
  
@@ -1781,7 +1795,7 @@ index a17d926..525dd36 100644
  
  void slave_on() {
      if (!g_slave_thread) {
-@@ -446,7 +528,7 @@ void slave_off() {
+@@ -446,7 +534,7 @@ void slave_off() {
  void slave_idle_check(uint32_t ftcsr) {
      if (g_cpu->cpu != 1 || (ftcsr & 0x80)) return;
      g_slave_idle = true;
@@ -1790,7 +1804,7 @@ index a17d926..525dd36 100644
  }
  
  // SINIT: the master pulses the slave's FRT input capture
-@@ -460,16 +542,26 @@ void slave_kick() {
+@@ -460,16 +548,26 @@ void slave_kick() {
  // The clock and the multitap are the run's own settings, but a dump goes on with the ones it was made with.
  void machine_state(State& s) {
      uint8_t ip[16];
@@ -1820,7 +1834,7 @@ index a17d926..525dd36 100644
  }
  
  // --coverage FILE: "MODULE ADDRESS INSTRUCTIONS RAN" for every recompiled function, RAN 1 or 0.
-@@ -490,6 +582,30 @@ static void write_coverage(const std::string& path) {
+@@ -490,6 +588,30 @@ static void write_coverage(const std::string& path) {
      if (e) sat_note("coverage: cannot replace %s: %s", path.c_str(), e.message().c_str());
  }
  
@@ -1851,7 +1865,7 @@ index a17d926..525dd36 100644
  // --checkpoint SECONDS: coverage written again every SECONDS of the host's time, so a run that is
  // killed rather than stopped still leaves what it ran.
  static void checkpoint_due() {
-@@ -531,7 +647,9 @@ void master_poll_devices() {
+@@ -531,7 +653,9 @@ void master_poll_devices() {
  void sh2_poll(SH2Context& c) {
      c.budget = kBudget;
      if (c.cpu == 1) {
@@ -1862,7 +1876,7 @@ index a17d926..525dd36 100644
          return;
      }
      g_poll_ring[g_poll_pos++ % 4096] = __builtin_return_address(0);
-@@ -555,6 +673,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -555,6 +679,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
      c.r[15] -= 4; st32(c.r[15], sh2_get_sr(c));
      c.r[15] -= 4; st32(c.r[15], kIntPC);
      c.imask = level;
@@ -1870,7 +1884,7 @@ index a17d926..525dd36 100644
      if (bios_is_dispatcher(vec, target)) {
          bios_dispatch(c, vec);
      } else {
-@@ -584,6 +703,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
+@@ -584,6 +709,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
  
  void sh2_bad_return(SH2Context& c, uint32_t expected) {
      if (tasks_pending()) { tasks_route(c, expected); return; }
@@ -1882,7 +1896,7 @@ index a17d926..525dd36 100644
      sat_fatal("returned to %08X, expected %08X", c.pc, expected);
  }
  
-@@ -658,7 +782,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -658,7 +788,7 @@ int saturn_main(const SaturnConfig& cfg) {
      else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
      for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
      bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
