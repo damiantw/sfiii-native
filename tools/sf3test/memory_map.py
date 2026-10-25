@@ -134,6 +134,9 @@ BATTLE_UNITS = {'scenario1-usa-v25_1': dict(enemies=0x0602F6F0, force=0x06032030
 BATTLE_UNITS.update({
     'scenario2-v25_1-v2_000': dict(enemies=0x06030970, force=0x060332B0, live=0x98),
     'scenario3-v25_1-redump': dict(enemies=0x060312A0, force=0x06033BE0, live=0x98),
+    # Sc2 1.003: both tables 0x50 below 2.000, like its flag block (read in the Ch6:26 battle on the
+    # map 11 approach: 15 force records with ASCII names and 6 live enemies at -0x50, nothing at +0)
+    'scenario2-v25_1-v1_003': dict(enemies=0x06030920, force=0x06033260, live=0x98),
 })
 
 # Map ids a map sweep must not edit into a save: checked on Beetle Saturn with a real BIOS (the game

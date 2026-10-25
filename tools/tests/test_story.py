@@ -103,5 +103,52 @@ class StoryTest(unittest.TestCase):
             autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, press)
         self.assertTrue(presses)
 
+    def test_aimed_turn_returns_off_a_teammate(self):
+        # invented roster: every step the mover takes lands on a teammate (a packed bridge); the
+        # turn must not end there, so B returns it to its start tile before the ring opens
+        from unittest import mock
+        from sf3test import autoplay
+        start, tiles = (5, 7), [(5, 6), (4, 6)]
+        force = {1: (5, 6), 2: start, 3: (4, 6)}
+        log = []
+
+        def read_units(rd, base, live=None):
+            if base == 'E':
+                return [(0, 5, 0, 0, 10)]
+            return [(k, x, y, 0, 10) for k, (x, y) in force.items()]
+
+        def press(btn, n):
+            if btn == ('B',):
+                force[2] = start
+            elif btn and btn[0] in autoplay.DIRS:
+                force[2] = tiles[len(log) % 2]
+            if btn:
+                log.append((btn, force[2]))
+
+        class Side:
+            read = None
+            def frame(self):
+                return None
+        pol = autoplay.Policy(1)
+        pol.pathing = True
+        with mock.patch.object(autoplay.memory_map, 'read_units', read_units), \
+                mock.patch.object(autoplay, 'panel_share', lambda f: 0.0), \
+                mock.patch.object(autoplay, 'is_hurt', lambda *a: False):
+            autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, press)
+        first_c = next(i for i, (b, _) in enumerate(log) if b == ('C',))
+        self.assertEqual(log[first_c - 1], (('B',), start))
+        self.assertEqual(pol.returns, 1)
+
+    def test_is_hurt(self):
+        from sf3test import autoplay, memory_map as M
+        rec = bytearray(M.UNIT_STRIDE * 2)
+        o = M.UNIT_STRIDE
+        rec[o + M.UNIT_HP:o + M.UNIT_HP + 2] = (18).to_bytes(2, 'big')
+        rec[o + M.UNIT_MAX_HP:o + M.UNIT_MAX_HP + 2] = (63).to_bytes(2, 'big')
+        read = lambda a, n: bytes(rec[a - 0x1000:a - 0x1000 + n])
+        self.assertTrue(autoplay.is_hurt(read, 0x1000, 1, 0.6))
+        self.assertFalse(autoplay.is_hurt(read, 0x1000, 1, 0.2))
+        self.assertFalse(autoplay.is_hurt(read, 0x1000, 0, 0.6))     # empty record
+
 if __name__ == '__main__':
     unittest.main()
