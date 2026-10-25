@@ -1906,10 +1906,41 @@ index a17d926..6fcb641 100644
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
 diff --git a/runtime/src/machine/mmio.cpp b/runtime/src/machine/mmio.cpp
-index b9dd332..a73895f 100644
+index b9dd332..217dabf 100644
 --- a/runtime/src/machine/mmio.cpp
 +++ b/runtime/src/machine/mmio.cpp
-@@ -102,12 +102,13 @@ void mmio_log_write(const std::string& path) {
+@@ -46,7 +46,15 @@ static std::map<std::tuple<uint32_t, char, uint32_t>, ModemLog> g_modem_log;
+ // A register access costs the CPU a safe point of time: a loop that waits on a
+ // device (a status register, the CD block's answers) lets time move on.
+ static void log_reg(uint32_t a, int size, char rw) {
+-    ++g_regs[{a, size, rw}];
++    // the count's map node found through a small direct-mapped table (map nodes stay put),
++    // so a register seen before costs no map search
++    struct Slot { uint64_t key = 0; uint64_t* n = nullptr; };
++    static Slot cache[512];
++    const uint64_t key = 1ull << 63 | (uint64_t)(uint8_t)rw << 40 | (uint64_t)(uint8_t)size << 32 | a;
++    Slot& c = cache[(a >> 1 ^ a >> 10 ^ a >> 19 ^ (uint32_t)size << 5 ^ (uint32_t)(rw == 'W') << 8) & 511];
++    if (c.key != key) { c.n = &g_regs[{a, size, rw}]; c.key = key; }
++    uint64_t* last = c.n;
++    ++*last;
+     --g_cpu->budget;
+ }
+ // --watch LO:HI: every address in the range, one by one
+@@ -63,7 +71,12 @@ static void log_area(const char* name, uint32_t a, char rw) {
+         else if (!window)
+             sat_trace("watch %c %08X (pr %08X)", rw, a, g_cpu->pr);
+     }
+-    AreaLog& l = g_areas[{name, rw}];
++    // the last area's entry remembered by its name's address, so a run of VRAM accesses builds no key
++    static AreaLog* last = nullptr;
++    static const char* last_name = nullptr;
++    static char last_rw = 0;
++    if (!last || name != last_name || rw != last_rw) { last = &g_areas[{name, rw}]; last_name = name; last_rw = rw; }
++    AreaLog& l = *last;
+     if (a < l.lo) l.lo = a;
+     if (a > l.hi) l.hi = a;
+     ++l.n;
+@@ -102,12 +115,13 @@ void mmio_log_write(const std::string& path) {
  }
  
  // ---- memory with no device behind it (yet) ------------------------------------------------------
@@ -1925,7 +1956,7 @@ index b9dd332..a73895f 100644
      if (a >= 0x02000000u && a < 0x05000000u) return "A-bus cartridge";
      if (a >= 0x05A00000u && a < 0x05B00000u) return "SCSP RAM";
      if (a >= 0x05C00000u && a < 0x05C80000u) return "VDP1 VRAM";
-@@ -135,7 +136,7 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
+@@ -135,7 +149,7 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
      if (area != 0) { log_area("cache address array", a, 'R'); return 0; }
      if (const char* n = area_of(a)) {
          log_area(n, a, 'R');
@@ -1934,7 +1965,7 @@ index b9dd332..a73895f 100644
          if (video_owns(a)) return video_read(a, size);
          if (a >= 0x02000000u && a < 0x05000000u) return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFFu;
          return bios_rom_read(a, size);          // the BIOS ROM is not here
-@@ -154,6 +155,10 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
+@@ -154,6 +168,10 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
      if (a >= 0x05800000u && a < 0x05900000u) return cd_read(a & 0xFFFFF, size);
      if (a >= 0x05FE0000u && a < 0x05FE0100u) return scu_read(a & 0xFF, size);
      if (video_owns(a)) return video_read(a, size);
@@ -1945,7 +1976,7 @@ index b9dd332..a73895f 100644
      sat_fatal("%d-byte read of %08X: nothing there", size, a);
  }
  
-@@ -164,7 +169,7 @@ void sh2_mmio_write(uint32_t a, uint32_t v, int size) {
+@@ -164,7 +182,7 @@ void sh2_mmio_write(uint32_t a, uint32_t v, int size) {
      if (area != 0) { log_area(area == 2 ? "cache purge" : "cache address array", a, 'W'); return; }
      if (const char* n = area_of(a)) {
          log_area(n, a, 'W');
@@ -2868,10 +2899,10 @@ index 8589d33..1ad83e1 100644
 +        for(int y=0;y<256;++y) for(int x=0;x<512;++x) scaled_store(p,x,y,g_fb[p][y*512+x]);
  }
 diff --git a/runtime/src/video/vdp1_raster.inc b/runtime/src/video/vdp1_raster.inc
-index 15c677f..5b3ee90 100644
+index 15c677f..d431de8 100644
 --- a/runtime/src/video/vdp1_raster.inc
 +++ b/runtime/src/video/vdp1_raster.inc
-@@ -9,12 +9,134 @@
+@@ -9,12 +9,150 @@
  // Bresenham's with an extra pixel wherever both coordinates step (VDP1's
  // anti-aliasing, so no holes between lines). A texture's row is the step's
  // (v = i * h / steps), its column the position along the line
@@ -2901,7 +2932,10 @@ index 15c677f..5b3ee90 100644
 +// companion): the same walk, dots, texels, end codes, Gouraud colours and clipping as the
 +// general one below, with the per-dot choices (colour mode, flips, clipping, the colour
 +// calculation) made once for the line and the texture column stepped without a division.
-+template <int MODE>   // texel mode: -1 untextured, 0 4bpp bank, 1 4bpp table, 2 8bpp masks, 5 RGB
++// INSIDE: every dot of the line (its ends' bounding box holds them all, anti-aliasing dots
++// included) is inside the system clipping, the framebuffer and any user clipping that keeps the
++// inside, so the per-dot clipping tests would all pass.
++template <int MODE, bool INSIDE>   // texel mode: -1 untextured, 0 4bpp bank, 1 4bpp table, 2 8bpp masks, 5 RGB
 +static void line_native(const Cmd& c, Pt p0, int dx, int dy, int len, int v, Rgb g0, Rgb g1, bool hss) {
 +    const int adx = std::abs(dx), ady = std::abs(dy);
 +    const int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
@@ -2931,7 +2965,7 @@ index 15c677f..5b3ee90 100644
 +    if constexpr (MODE == 2) mask8 = c.cmode == 2 ? 0x3F : c.cmode == 3 ? 0x7F : 0xFF;
 +    vdp1_steps::EndCodes ends;
 +    int sampled_u = -1;
-+    auto pixel = [&](int x, int y, int k, bool aa) {
++    auto pixel = [&](int x, int y, int k, bool aa) __attribute__((always_inline)) {
 +        const int s = aa ? vdp1_steps::aa_step(k, len) : k;
 +        uint16_t pix = c.colr;
 +        if constexpr (MODE >= 0) {
@@ -2964,8 +2998,10 @@ index 15c677f..5b3ee90 100644
 +            if (is_zero && !c.spd) return;
 +        }
 +        // plot(): system clipping, user clipping, the framebuffer's edge, mesh
-+        if (x < 0 || y < 0 || x > xmax || y > ymax) return;
-+        if (clip && ((x >= ux0 && x <= ux1 && y >= uy0 && y <= uy1) == outside)) return;
++        if constexpr (!INSIDE) {
++            if (x < 0 || y < 0 || x > xmax || y > ymax) return;
++            if (clip && ((x >= ux0 && x <= ux1 && y >= uy0 && y <= uy1) == outside)) return;
++        }
 +        if (mesh && ((x ^ y) & 1)) return;
 +        const int at = y * 512 + x;
 +        if (hd_owner) g_hd_owner[g_draw_fb][at] = g_hd_current;
@@ -3004,10 +3040,21 @@ index 15c677f..5b3ee90 100644
 +    }
 +}
 +
++template <bool INSIDE>
++static void line_mode(const Cmd& c, Pt p0, int dx, int dy, int len, int v, Rgb g0, Rgb g1, bool hss) {
++    if (!c.textured) line_native<-1, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss);
++    else switch (c.cmode) {
++    case 0: line_native<0, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    case 1: line_native<1, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    case 2: case 3: case 4: line_native<2, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    default: line_native<5, INSIDE>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++    }
++}
++
  static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      if (outside_clip(c, std::min(p0.x, p1.x), std::min(p0.y, p1.y), std::max(p0.x, p1.x), std::max(p0.y, p1.y))) return;
      int dx = p1.x - p0.x, dy = p1.y - p0.y;
-@@ -22,21 +144,41 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -22,21 +160,39 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      int len = std::max(adx, ady);
      g_draw_steps += (uint64_t)len + 1;
      int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
@@ -3021,13 +3068,11 @@ index 15c677f..5b3ee90 100644
 +    const int eos = g_reg[FBCR] >> 4 & 1;
 +    int sampled_u = -1;
 +    if (!g_scaled_drawing && !g_hi_target && !g_fb8 && !g_reference_raster) {
-+        if (!c.textured) line_native<-1>(c, p0, dx, dy, len, v, g0, g1, hss);
-+        else switch (c.cmode) {
-+        case 0: line_native<0>(c, p0, dx, dy, len, v, g0, g1, hss); break;
-+        case 1: line_native<1>(c, p0, dx, dy, len, v, g0, g1, hss); break;
-+        case 2: case 3: case 4: line_native<2>(c, p0, dx, dy, len, v, g0, g1, hss); break;
-+        default: line_native<5>(c, p0, dx, dy, len, v, g0, g1, hss); break;
-+        }
++        const int x0 = std::min(p0.x, p1.x), x1 = std::max(p0.x, p1.x), y0 = std::min(p0.y, p1.y), y1 = std::max(p0.y, p1.y);
++        const bool inside = x0 >= 0 && y0 >= 0 && x1 <= std::min(g_sys_x, 511) && y1 <= std::min(g_sys_y, 255)
++                            && (!c.clip || (!c.outside && x0 >= g_ux0 && x1 <= g_ux1 && y0 >= g_uy0 && y1 <= g_uy1));
++        if (inside) line_mode<true>(c, p0, dx, dy, len, v, g0, g1, hss);
++        else line_mode<false>(c, p0, dx, dy, len, v, g0, g1, hss);
 +        return;
 +    }
 +    // `aa` is an anti-aliasing dot: it takes the next step's texel and colour
@@ -3056,7 +3101,7 @@ index 15c677f..5b3ee90 100644
          plot(c, x, y, pix, c.gouraud ? &g : nullptr);
      };
      int x = p0.x, y = p0.y;
-@@ -46,9 +188,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -46,9 +202,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
              pixel(x, y, k);
              if (k == len) break;
              if (err > 0) {
@@ -3068,7 +3113,7 @@ index 15c677f..5b3ee90 100644
              }
              err += 2 * ady;
              x += xi;
-@@ -59,9 +202,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -59,9 +216,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
              pixel(x, y, k);
              if (k == len) break;
              if (err > 0) {
@@ -3079,7 +3124,7 @@ index 15c677f..5b3ee90 100644
              }
              err += 2 * adx;
              y += yi;
-@@ -69,32 +212,48 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -69,32 +226,48 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      }
  }
  
