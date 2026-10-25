@@ -2907,7 +2907,7 @@ index 0000000..af28d62
 +
 +}  // namespace vdp1_steps
 diff --git a/runtime/src/video/vdp2.cpp b/runtime/src/video/vdp2.cpp
-index 4c8bcb1..c5f555d 100644
+index 4c8bcb1..e894360 100644
 --- a/runtime/src/video/vdp2.cpp
 +++ b/runtime/src/video/vdp2.cpp
 @@ -5,9 +5,10 @@
@@ -3304,7 +3304,18 @@ index 4c8bcb1..c5f555d 100644
          p.prio = prio_of(0);
          p.ratio = ratio_of(0);
          msb = true;
-@@ -367,21 +653,23 @@ static void note_unsupported() {
+@@ -305,7 +591,9 @@ static SpriteDot sprite_pixel(uint16_t d, Pix& p) {
+         else if (msb_shadow && !(d & 0x7FFF)) {
+             if (!(reg(0xE2) >> 8 & 1)) return S_NONE;                    // transparent shadows off (TPSDSL)
+             kind = S_SHADOW;
+-        } else if (dc == 0) return S_NONE;
++        }
++        // A palette dot with colour code 0 is still a dot when its priority/ratio bits are set: only an
++        // all-zero word is transparent (checked against the reference core's pictures).
+         p.shade = msb_shadow;
+         int pr = t.pr_mask ? d >> t.pr_shift & t.pr_mask : 0;
+         int cc = t.cc_mask ? d >> t.cc_shift & t.cc_mask : 0;
+@@ -367,21 +655,23 @@ static void note_unsupported() {
      auto once = [&](int i, bool cond, const char* what, uint16_t v) {
          if (cond && !noted[i]) { noted[i] = fresh = true; sat_note("VDP2: %s (%04X) is not done", what, v); }
      };
@@ -3332,7 +3343,7 @@ index 4c8bcb1..c5f555d 100644
  static uint32_t apply_offset(uint32_t rgb, bool b) {
      uint32_t base = b ? 0x11A : 0x114;
      int out = 0;
-@@ -393,23 +681,60 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
+@@ -393,23 +683,60 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
      return (uint32_t)out;
  }
  
@@ -3395,7 +3406,7 @@ index 4c8bcb1..c5f555d 100644
      back.offset = reg(0x110) >> 5 & 1;
      back.offset_b = reg(0x112) >> 5 & 1;
      back.ratio = (uint8_t)(reg(0x10E) >> 8 & 0x1F);
-@@ -420,7 +745,7 @@ void vdp2_compose(Frame& f) {
+@@ -420,7 +747,7 @@ void vdp2_compose(Frame& f) {
      Pix line_colour{};
      line_colour.ratio = (uint8_t)(reg(0x10E) & 0x1F);
      uint16_t sfprmd = reg(0xEA), sfccmd = reg(0xEE);
@@ -3404,7 +3415,7 @@ index 4c8bcb1..c5f555d 100644
                               (uint8_t)reg(0xD2), (uint8_t)(reg(0xD2) >> 8)};
      uint8_t cc_wctl = (uint8_t)(reg(0xD6) >> 8);
      uint16_t sdctl = reg(0xE2);
-@@ -428,10 +753,40 @@ void vdp2_compose(Frame& f) {
+@@ -428,10 +755,40 @@ void vdp2_compose(Frame& f) {
      // top or second image of a colour calculation
      static const int kGradLayer[8] = {L_SPRITE, -1, L_NBG0, -1, L_NBG1, L_NBG2, L_NBG3, -1};
      int grad = reg(0xEC) & 0x8000 && hreso < 2 && cram_mode() == 0 ? kGradLayer[reg(0xEC) >> 12 & 7] : -1;
@@ -3446,7 +3457,7 @@ index 4c8bcb1..c5f555d 100644
          back.rgb = rgb555(vw(bk + (bk_lines ? (uint32_t)line * 2 : 0)));
          // a table word a line, a line of either field in double-density interlace
          line_colour.rgb = cram(vw(lc_table + (lc_lines ? (uint32_t)y * 2 : 0)) & 0x7FF, nullptr);
-@@ -439,35 +794,61 @@ void vdp2_compose(Frame& f) {
+@@ -439,35 +796,61 @@ void vdp2_compose(Frame& f) {
              // each dot averaged with the average of the two before it; a dot the screen does not draw is black
              auto avg = [](uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; };
              uint32_t prev[2] = {0, 0};
@@ -3518,7 +3529,7 @@ index 4c8bcb1..c5f555d 100644
              for (int n = 0; n < 4; ++n) {
                  Pix& p = l[L_NBG0 + n];
                  p = {};
-@@ -485,10 +866,18 @@ void vdp2_compose(Frame& f) {
+@@ -485,10 +868,18 @@ void vdp2_compose(Frame& f) {
                  p.ratio = s.ratio; p.offset = s.offset; p.offset_b = s.offset_b;
                  consider(L_NBG0 + n);
              }
@@ -3539,7 +3550,7 @@ index 4c8bcb1..c5f555d 100644
              uint32_t rgb = t.rgb;
              if (top >= 0 && t.cc && !windowed(cc_wctl, win, x)) {
                  uint32_t out = 0;
-@@ -504,11 +893,136 @@ void vdp2_compose(Frame& f) {
+@@ -504,11 +895,136 @@ void vdp2_compose(Frame& f) {
              if (t.offset) rgb = apply_offset(rgb, t.offset_b);
              // A shadow halves the top screen under it when SDCTL enables that screen (bit 5: the back screen).
              bool shaded = top == L_SPRITE ? t.shade
@@ -4157,6 +4168,30 @@ index 0000000..3a25230
 +    std::fclose(o);
 +    return 0;
 +}
+diff --git a/runtime/tests/vdp2_test.cpp b/runtime/tests/vdp2_test.cpp
+index 8229575..6a5ab11 100644
+--- a/runtime/tests/vdp2_test.cpp
++++ b/runtime/tests/vdp2_test.cpp
+@@ -187,6 +187,19 @@ TEST(msb_shadow_halves_the_sprite_itself) {
+     CHECK_EQ(at(f, 10, 0), kBlue);
+ }
+ 
++TEST(colour_code_0_with_priority_bits_is_a_dot) {
++    // Only an all-zero sprite word is transparent: colour code 0 with other bits set shows colour 0
++    // (a town's darkened road strip, 0x4800 in type 4, is drawn this way; checked against the reference).
++    sprites_over_green();
++    reg(0xF0, 0x0303);                           // PRISA: sprite priorities 0 and 1 are 3
++    cram16(0, 0x7C00);
++    show_sprites(0x4000, 10, 19);                // type 2: priority bit set, colour code 0
++    Frame f;
++    vdp2_compose(f);
++    CHECK_EQ(at(f, 10, 0), kBlue);
++    CHECK_EQ(at(f, 20, 0), kGreen);
++}
++
+ TEST(transparent_shadow_needs_tpsdsl) {
+     sprites_over_green();
+     reg(0xE2, 0x0001);
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
 index de3d7ec..a14fa32 100644
 --- a/src/saturnrecomp/recomp/__main__.py
