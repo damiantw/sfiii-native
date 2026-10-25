@@ -51,15 +51,20 @@ def fid_file(fid, inventory_paths, offset=2):
     return inventory_paths[fid - offset].strip('/')
 
 
-def overlay_file(ram, build):
-    """The X*.BIN file of BUILD/stage/extract whose bytes are resident at the start of RAM (bytes read at
-    the overlay base), or None: the ground truth for which overlay a coverage hit belongs to."""
+def overlay_file(ram, build, min_match=0.99):
+    """The X*.BIN file of BUILD/stage/extract resident at the start of RAM (bytes read at the overlay
+    base), or None: the ground truth for which overlay a coverage hit belongs to.  A few data bytes
+    change after load (X1SARA2 differs in 6 of 12304 bytes in scene 41), so the file that matches the
+    most bytes wins, if at least MIN_MATCH of it matches; empty and tiny files never match."""
     import glob, os
     best = None
     for p in glob.glob(os.path.join(build, 'stage', 'extract', 'X*.BIN')):
         data = open(p, 'rb').read()
-        if len(data) <= len(ram) and ram[:len(data)] == data and (best is None or len(data) > best[0]):
-            best = (len(data), os.path.basename(p))
+        if len(data) < 0x100 or len(data) > len(ram):
+            continue
+        same = sum(1 for a, b in zip(data, ram) if a == b)
+        if same >= min_match * len(data) and (best is None or same > best[0]):
+            best = (same, os.path.basename(p))
     return best and best[1]
 
 
