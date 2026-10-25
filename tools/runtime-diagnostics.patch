@@ -3115,7 +3115,7 @@ index c37141d..6517551 100644
      if (mco_uninit(t->co) != MCO_SUCCESS || mco_init(t->co, &desc) != MCO_SUCCESS)
          sat_fatal("tasks: the fiber cannot start over at %08X", pc);
 diff --git a/runtime/src/sound/scsp.cpp b/runtime/src/sound/scsp.cpp
-index b40fefc..1185839 100644
+index b40fefc..16ec480 100644
 --- a/runtime/src/sound/scsp.cpp
 +++ b/runtime/src/sound/scsp.cpp
 @@ -34,8 +34,7 @@
@@ -3179,7 +3179,7 @@ index b40fefc..1185839 100644
  };
  
  Slot g_slot[32];
-@@ -129,161 +127,155 @@ Timer g_timer[3];
+@@ -129,161 +127,162 @@ Timer g_timer[3];
  uint32_t g_scieb, g_scipd, g_scilv[3], g_mcieb, g_mcipd;
  bool g_main_line;
  uint32_t g_samples;                             // since reset
@@ -3382,14 +3382,14 @@ index b40fefc..1185839 100644
 +// tick, by more: L = (rate - 48) / 4, the 4n+2 rates one more on even ticks, at most 3. The
 +// attack takes away (env >> (4 - L)) + 1, and stays put at 0x3C0 or above; the decays and
 +// the release add 2^L.
-+void eg_step(Slot& s, uint32_t tick) {
++static void eg_move(Slot& s, uint32_t tick) {
 +    int R = s.env_phase == EG_ATTACK ? s.ar_r() : s.env_phase == EG_DECAY1 ? s.d1r_r()
 +          : s.env_phase == EG_DECAY2 ? s.d2r_r() : s.rr_r();
 +    int r = eg_rate(s, R);
 +    if (!r) return;
 +    if (s.env_phase == EG_ATTACK && r >= 64) {
 +        s.env = 0;
-+        s.env_phase = EG_DECAY1;
++        s.env_phase = s.dl_r() ? EG_DECAY1 : EG_DECAY2;   // an instant attack checks DL at once
 +        return;
 +    }
 +    r = std::min(r, 62);
@@ -3425,16 +3425,22 @@ index b40fefc..1185839 100644
      }
 -    return g_eg_gain[s.eg_vol >> kEgShift];
 +    s.env = std::min<uint32_t>(0x3FF, s.env + (1u << L));
-+    if (s.env_phase == EG_DECAY1 && (int)(s.env >> 5) == s.dl_r()) s.env_phase = EG_DECAY2;
  }
  
 -int lfo_next(Lfo& l, bool reset) {
 -    if (reset) l.phase = 0;
 -    else l.phase += l.step;
 -    return l.table[l.phase >> 8 & 0xFF];
--}
++// Decay 1 ends at DL whether or not its rate moved the level this step (D1R 0 with DL 0 goes on
++// to D2R), but not on the step a stepped attack reached 0: that waits a step (black box).
++void eg_step(Slot& s, uint32_t tick) {
++    bool d1 = s.env_phase == EG_DECAY1;
++    eg_move(s, tick);
++    if (d1 && (int)(s.env >> 5) == s.dl_r()) s.env_phase = EG_DECAY2;
+ }
  
 -int32_t read_sample(const Slot& s, int64_t idx) {
++
 +int32_t read_sample(const Slot& s, uint32_t idx) {
      if (s.ssctl() == 1) {                       // noise
          g_noise = g_noise * 1103515245u + 12345u;
@@ -3450,7 +3456,7 @@ index b40fefc..1185839 100644
          v = (int16_t)(g_sound_ram[a] << 8 | g_sound_ram[a + 1]);
      }
      if (s.sbctl() & 1) v ^= 0x7FFF;
-@@ -291,44 +283,85 @@ int32_t read_sample(const Slot& s, int64_t idx) {
+@@ -291,44 +290,85 @@ int32_t read_sample(const Slot& s, int64_t idx) {
      return v;
  }
  
@@ -3570,7 +3576,7 @@ index b40fefc..1185839 100644
  int32_t sext(int32_t v, int bits) { return (int32_t)((uint32_t)v << (32 - bits)) >> (32 - bits); }
  
  uint16_t dsp_pack(int32_t val) {
-@@ -350,15 +383,12 @@ int32_t dsp_unpack(uint16_t v) {
+@@ -350,15 +390,12 @@ int32_t dsp_unpack(uint16_t v) {
      return sext(u, 24) >> e;
  }
  
@@ -3589,7 +3595,7 @@ index b40fefc..1185839 100644
          const uint16_t* ip = d.mpro + st * 4;
          uint32_t tra = ip[0] >> 8 & 0x7F, twt = ip[0] >> 7 & 1, twa = ip[0] & 0x7F;
          uint32_t xsel = ip[1] >> 15 & 1, ysel = ip[1] >> 13 & 3, ira = ip[1] >> 6 & 0x3F, iwt = ip[1] >> 5 & 1,
-@@ -366,61 +396,54 @@ void dsp_step() {
+@@ -366,61 +403,54 @@ void dsp_step() {
          uint32_t table = ip[2] >> 15 & 1, mwt = ip[2] >> 14 & 1, mrd = ip[2] >> 13 & 1, ewt = ip[2] >> 12 & 1,
                   ewa = ip[2] >> 8 & 15, adrl = ip[2] >> 7 & 1, frcl = ip[2] >> 6 & 1, shift = ip[2] >> 4 & 3,
                   yrl = ip[2] >> 3 & 1, negb = ip[2] >> 2 & 1, zero = ip[2] >> 1 & 1, bsel = ip[2] & 1;
@@ -3677,7 +3683,7 @@ index b40fefc..1185839 100644
  
  // ---- interrupts ---------------------------------------------------------------------------
  int g_cpu_level;
-@@ -449,9 +472,9 @@ void pend(uint32_t bits) {
+@@ -449,9 +479,9 @@ void pend(uint32_t bits) {
  // ---- registers ------------------------------------------------------------------------------
  uint16_t monitor() {                            // 0x408: the slot MSLC names, CA, SGC, EG
      const Slot& s = g_slot[g_com[4] >> 11 & 31];
@@ -3690,7 +3696,7 @@ index b40fefc..1185839 100644
      return (uint16_t)((g_com[4] & 0xF800) | ca << 7 | sgc << 5 | eg);
  }
  
-@@ -514,24 +537,10 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
+@@ -514,24 +544,10 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
          int w = off >> 1 & 15;
          if (w >= 12) return;
          s.r[w] = (uint16_t)((s.r[w] & ~mask) | (v & mask));
@@ -3717,7 +3723,7 @@ index b40fefc..1185839 100644
          return;
      }
      if (off < 0x430) {
-@@ -590,13 +599,17 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
+@@ -590,13 +606,17 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
  void scsp_reset() {
      static bool tables;
      if (!tables) { init_tables(); tables = true; }
@@ -3736,7 +3742,7 @@ index b40fefc..1185839 100644
      g_dsp = Dsp{};
      g_rbl = 8192;
      g_rbp = 0;
-@@ -622,10 +635,84 @@ void scsp_write(uint32_t off, uint32_t v, int size) {
+@@ -622,10 +642,84 @@ void scsp_write(uint32_t off, uint32_t v, int size) {
  
  int scsp_cpu_level() { return g_cpu_level; }
  
@@ -3822,7 +3828,7 @@ index b40fefc..1185839 100644
      return m;
  }
  
-@@ -641,62 +728,75 @@ void scsp_sample(int16_t exts_l, int16_t exts_r, int16_t out[2]) {
+@@ -641,62 +735,75 @@ void scsp_sample(int16_t exts_l, int16_t exts_r, int16_t out[2]) {
      irq_update();
      ++g_samples;
  
@@ -5783,7 +5789,7 @@ index 4c8bcb1..246c28b 100644
 -void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
-index 88d1642..4e44a71 100644
+index 88d1642..0b705cc 100644
 --- a/runtime/src/video/video.cpp
 +++ b/runtime/src/video/video.cpp
 @@ -21,6 +21,7 @@
@@ -5869,10 +5875,21 @@ index 88d1642..4e44a71 100644
  }
  
  void video_tick(uint64_t now) {
-@@ -144,6 +164,10 @@ uint32_t video_read(uint32_t a, int size) {
+@@ -143,7 +163,20 @@ uint32_t video_read(uint32_t a, int size) {
+ }
  
  void video_write(uint32_t a, uint32_t v, int size) {
-     if (a < 0x05B01000u) { sound_write(a, v, size); return; }
+-    if (a < 0x05B01000u) { sound_write(a, v, size); return; }
++    if (a < 0x05B01000u) {
++        // SF3_SNDCMD_WATCH: the SH-2's writes to the sound driver's command slot (sound RAM 0x700-0x70F),
++        // with the raster line they land on (for timing against the reference)
++        static const bool watch_cmd = std::getenv("SF3_SNDCMD_WATCH") != nullptr;
++        if (watch_cmd && a >= 0x05A00700u && a < 0x05A00710u)
++            sat_note("SNDCMD %03X <- %0*X line %d vblank %llu pc %08X", a & 0xFFF, size * 2, v,
++                     (int)(g_line_abs % kLines), (unsigned long long)g_vblanks, g_cpu->pc);
++        sound_write(a, v, size);
++        return;
++    }
 +    static const bool watch_cram = std::getenv("SF3_CRAM_WATCH") != nullptr;
 +    if (watch_cram && a >= 0x05F00800u && a < 0x05F00A00u)
 +        sat_note("CRAM watch %08X <- %08X size %d pc %08X pr %08X r4 %08X r5 %08X r6 %08X r7 %08X",
@@ -5880,7 +5897,7 @@ index 88d1642..4e44a71 100644
      uint32_t off;
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
-@@ -152,3 +176,6 @@ void video_write(uint32_t a, uint32_t v, int size) {
+@@ -152,3 +185,6 @@ void video_write(uint32_t a, uint32_t v, int size) {
  }
  
  void video_state(State& s) { s(g_line_abs), s(g_vblanks); }
@@ -6443,10 +6460,10 @@ index 0000000..0603a4f
 +}
 diff --git a/runtime/tests/scsp_replay.cpp b/runtime/tests/scsp_replay.cpp
 new file mode 100644
-index 0000000..068aa64
+index 0000000..64371d5
 --- /dev/null
 +++ b/runtime/tests/scsp_replay.cpp
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,99 @@
 +// SCSP replay: the sound chip alone, outside any game, from a script, so the same registers and
 +// sound RAM given to a reference can be compared sample for sample (no 68000, no game timing).
 +//   scsp_replay SCRIPT.bin OUT.raw
@@ -6502,6 +6519,13 @@ index 0000000..068aa64
 +        }
 +        else if (op == 6) { uint32_t reg = word(p), v = word(p); m68k_set_reg((m68k_register_t)reg, v); }
 +        else if (op == 7) sound_replay_cpu(word(p) != 0);
++        else if (op == 14) {    // print N register words from OFF (scsp_read)
++            uint32_t off = word(p), n = word(p);
++            std::printf("W%u", off);
++            for (uint32_t i = 0; i < n; ++i) std::printf(" %x", scsp_read(off + 2 * i, 2));
++            std::printf("\n");
++        }
++        else if (op == 13) { uint32_t a = word(p), v = word(p); g_sound_ram[a & 0x7FFFF] = (uint8_t)v; }   // a byte the SH-2 writes (byte address)
 +        else if (op == 8) {
 +            uint32_t a = word(p), n = word(p);
 +            std::printf("M%u ", a);
@@ -6541,10 +6565,10 @@ index 0000000..068aa64
 +}
 diff --git a/runtime/tests/scsp_test.cpp b/runtime/tests/scsp_test.cpp
 new file mode 100644
-index 0000000..3e068b4
+index 0000000..9e0fb4f
 --- /dev/null
 +++ b/runtime/tests/scsp_test.cpp
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,223 @@
 +// The SCSP and the sound 68000 against numbers measured on Beetle Saturn as a black box (its output
 +// and save states only).
 +#include <cstring>
@@ -6730,6 +6754,26 @@ index 0000000..3e068b4
 +    scsp_write(0x00, 0x1800, 2);
 +    scsp_sample(0, 0, out);
 +    CHECK_EQ(scsp_get_internal(SCSP_ENV, 0) > 0u, true);
++}
++
++// Decay 1 ends on reaching DL even when D1R is 0 and nothing moved; an instant attack checks DL on
++// its own step, a stepped one on the next.
++TEST(decay_1_ends_at_dl_whatever_its_rate) {
++    for (int dl = 0; dl <= 1; dl++) {
++        scsp_reset();
++        int16_t out[2];
++        scsp_write(0x0A, dl << 5, 2);                                // D1R 0, DL
++        scsp_set_internal(SCSP_PLAYING, 0, 1); scsp_set_internal(SCSP_ENV, 0, 0);
++        scsp_set_internal(SCSP_ENV_PHASE, 0, 1);                     // decay 1
++        scsp_sample(0, 0, out); scsp_sample(0, 0, out);
++        CHECK_EQ(scsp_get_internal(SCSP_ENV_PHASE, 0), dl ? 1u : 2u);
++    }
++    scsp_reset();
++    int16_t out[2];
++    scsp_write(0x08, 31, 2); scsp_write(0x0A, 1 << 10, 2);           // AR 31, KRS 1: instant, DL 0
++    scsp_write(0x00, 0x1800, 2);
++    for (int i = 0; i < 4; i++) scsp_sample(0, 0, out);
++    CHECK_EQ(scsp_get_internal(SCSP_ENV_PHASE, 0), 2u);
 +}
 +
 +// Backwards in a reverse loop, a step that ends past the wave's start (more than LSA samples past
