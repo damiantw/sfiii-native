@@ -514,3 +514,18 @@ def test_search_finalize_takes_straight_replay_hashes(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, 'run', lambda *a, **k: types.SimpleNamespace(stdout='seg: run stopped\n', stderr=''))
     (tmp_path / 'segment.txt').write_text(story.segment_text(header, [(20, 'pad', 'START')]))
     assert not search.finalize(a, tmp_path)
+
+
+def test_search_left_battle_is_a_loss():
+    from sf3test import search, memory_map
+    prof = 'scenario1-usa-v25_1'
+    bid = memory_map.lookup(prof)['battle_id']
+    job = dict(profile=prof, root_battle=22)
+    town = lambda addr, n: bytes([0]) if addr == bid else bytes(n)
+    still = lambda addr, n: bytes([22]) if addr == bid else bytes(n)
+    assert search.left_battle(town, job, [])
+    assert not search.left_battle(town, job, ['save:x:2'])
+    assert not search.left_battle(still, job, [])
+    assert not search.left_battle(town, dict(job, root_battle=0), [])
+    m = dict(enemy_left=0.5, kills=1, force_left=1.0, deaths=0, leader=1.0, leader_down=False, won=False)
+    assert search.score(dict(m, left=True)) <= -1e6 < search.score(m)

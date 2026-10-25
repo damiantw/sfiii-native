@@ -348,6 +348,15 @@ def replay(a):
                modules=modules_run(out / 'coverage.tsv') if a.coverage else None)
     (out / 'replay.json').write_text(json.dumps(res, indent=1) + '\n')
     print(f"{a.segment}: {'MATCH' if ok else 'MISMATCH'} end {end} reached {reached}", flush=True)
+    if a.rebase and not ok:
+        # A runtime change moved the end state but the same pads still reach every goal: the replay on
+        # this binary is the new recording. Write its binary and end hashes (load is kept: informational).
+        if reached[:len(want)] != want or fat or not want:
+            print(f'rebase: not written (reached {reached}, want {want}, fatal {len(fat)})', flush=True)
+            return 1
+        h.update(binary=sha_bin(a.saturn), end_ram_sha1=end['ram_sha1'], end_flags_sha1=end['flags_sha1'])
+        Path(a.rebase).write_text(story.segment_text(h, actions))
+        print(f"rebase: wrote {a.rebase} (binary {h['binary']}, ram {end['ram_sha1']}); replay it again to confirm", flush=True)
     return 0 if ok else 1
 
 
@@ -426,6 +435,8 @@ def main():
     r.add_argument('--saves', nargs='+', required=True)
     r.add_argument('--out', required=True)
     r.add_argument('--coverage', action='store_true')
+    r.add_argument('--rebase', metavar='OUT', help='on an end-hash mismatch that still reaches every goal, write the segment '
+                   'with this binary and its end hashes to OUT (re-record after a runtime change)')
     r.add_argument('segment')
     q = sub.add_parser('search', help='TAS-style battle search over save states (sf3test/search.py)')
     for n in ('--saturn', '--cue', '--profile', '--record', '--out'):
@@ -442,6 +453,8 @@ def main():
     q.add_argument('--frames', type=int, default=150000)
     q.add_argument('--max-levels', type=int, default=400)
     q.add_argument('--max-backs', type=int, default=40)
+    q.add_argument('--no-left', action='store_true', help='do not score battle id 0 as Egress/defeat (Sc2 V1.003: its map/battle bytes do not track in Ch6)')
+    q.add_argument('--stall', type=int, default=8, help='stop when the best score is flat this many levels (0: never)')
     q.add_argument('-j', '--jobs', type=int, default=4)
     o = sub.add_parser('order')
     o.add_argument('--profile', required=True)
