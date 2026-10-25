@@ -38,8 +38,34 @@ UNIT_MP, UNIT_ATK, UNIT_DEF, UNIT_AGI, UNIT_MOV = 0x84, 0x85, 0x86, 0x87, 0x89
 # game out of the door to scene 86 (X1OBCHUR, Quonus outside), the same as walking onto the tile.
 # Re-pointing state+0x10 to a scene on another map (41 Saraband, 56 shop) during that exit loads
 # the new overlay file but stays black, polling BOOT 060125E0 (a test-made state, not a port result).
+# The scene record's file id counts the ISO directory's '.' and '..' entries: the file is row fid-2 of
+# stage/inventory.csv (checked against RAM: scene 51, fid 0x1EF, is X1SARA4, not row 0x1EF X1SARA6).
+# Rounds 15-19 named scenes by row fid; those names were two rows off. The shop and bar files by fid:
 SC1_SCENES = dict(table_ptr=0x0602DA74, fid_loaded=0x0602E8E4, tile_map=0x060B8000, event_ptr=0x0602886C, exit_event=4,
-                  record=16, shops={56: 'X1S_SHOP', 66: 'X1BAR01', 159: 'X1SHOP_T', 164: 'X1SHOP_T'})
+                  record=16, overlay_base=0x0605F000, fid_row_offset=2,
+                  shop_fids={0x202: 'X1S_SHOP', 0x17B: 'X1BAR01', 0x1F7: 'X1SHOP_T'})
+
+
+def fid_file(fid, inventory_paths, offset=2):
+    """The file a scene record's file id names, from stage/inventory.csv's paths in order."""
+    return inventory_paths[fid - offset].strip('/')
+
+
+def overlay_file(ram, build, min_match=0.99):
+    """The X*.BIN file of BUILD/stage/extract resident at the start of RAM (bytes read at the overlay
+    base), or None: the ground truth for which overlay a coverage hit belongs to.  A few data bytes
+    change after load (X1SARA2 differs in 6 of 12304 bytes in scene 41), so the file that matches the
+    most bytes wins, if at least MIN_MATCH of it matches; empty and tiny files never match."""
+    import glob, os
+    best = None
+    for p in glob.glob(os.path.join(build, 'stage', 'extract', 'X*.BIN')):
+        data = open(p, 'rb').read()
+        if len(data) < 0x100 or len(data) > len(ram):
+            continue
+        same = sum(1 for a, b in zip(data, ram) if a == b)
+        if same >= min_match * len(data) and (best is None or same > best[0]):
+            best = (same, os.path.basename(p))
+    return best and best[1]
 
 
 def scene_records(raw, record=16):
@@ -62,18 +88,28 @@ def tile_events(tiles):
 # 16.16 fixed point; the lookup's tile is value >> 21 (32 units a tile). In HQ (scene 89) the slot is 0.
 SC1_PLAYER = dict(obj=0x06044844, x=12, z=20, tile_shift=21)
 
-# Kind-2 tile ids (event slot +0) in scene 51 X1SARA6 are door triggers that fire on a
-# walked tile change (poking the slot or warping onto the tile does not fire them).
-# Found by walking (sf3-town-bfs) and by assist warps next to each door, save record :03.
-# None means the door stays shut at that point of the story: 6 is the item shop, whose
-# keeper refuses to open ("I'm not going to open this place up...").
-SC1_SARA6_DOORS = {
-    2: 44,     # (36,38) church, X1DREAM
-    7: 43,     # north edge near (45-47,19): X1SARA5, then 52 X1SHIEF1
-    6: None,   # (44,31) shop, closed by story
-    5: None, 9: None, 12: None, 13: None,
+# Kind-2 tile ids (event slot +0) in scene 51 (fid 0x1EF, X1SARA4 Saraband) are door triggers that
+# fire on a walked tile change (poking the slot or warping onto the tile does not fire them).
+# Found by walking (sf3-town-bfs) and assist warps next to each door, save record :03; files are
+# the resident overlay (fid - 2 rows), not the round-18 names. None: shut at that point of the story.
+# Under later story flags the town is scene 41 and door 6 opens into X1BAR01 (scene 45, fid 0x17B),
+# door 12 (26,37) into X1S_SHOP (scene 47, fid 0x202).
+SC1_SCENE51_DOORS = {
+    2: 44,     # (36,38) church, X1CHUR01 (fid 0x1B0)
+    7: 43,     # north edge near (45-47,19): X1SARA3 (fid 0x1EE), then 52 X1SARA5 (fid 0x1F0)
+    6: None,   # (44,31) the bar; its keeper blocks the door this early
+    12: None,  # (26,37) the shop
+    5: None, 9: None, 13: None,
 }
-SC1_SARA6_EXITS = {10: 7}  # kind-1 slot +4 id 10: leave town to scene 7 (fid 0x184)
+SC1_SCENE51_EXITS = {10: 7}  # kind-1 slot +4 id 10: leave town to scene 7 (fid 0x184, X1BTL102)
+# Saraband story gate (round 20 bisection, binary d3887ed2): record byte 0x3E2 bit 0
+# (RAM SC1 save mirror + 0x3E2).  Set (live value 0x07) while the opening Saraband
+# sequence runs, and the town loads as scene 51 (X1SARA4: bar keeper blocks door 6,
+# shop door 12 shut).  Clear it inside the church (scene 44) and walk out: the town
+# reloads as scene 41 (X1SARA2) and tile (26,37) UP enters scene 47 (X1S_SHOP).
+# Copying record bytes 0x3C0-0x3D0 from a later save instead sends the story back to
+# scene 6 (X1BTL101).  Labelled assist only; never a route for the regular playtests.
+SC1_SARABAND_INTRO_FLAG = (0x3E2, 0x01)
 
 
 def player_tile(x_raw, z_raw, shift=21):

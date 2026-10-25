@@ -8,7 +8,10 @@ START.state is a native state (agent `save PATH`) taken in a town with the playe
 Each frontier tile is restored with --state-in, a direction is held until the tile changes, and the
 new (scene, tile) is kept once. The player object is the one the tile-event lookup 06056DF0 is
 called with (SF3_CALL_TRACE, caller 06056C1C passes it in r3); its tile is memory_map.player_tile.
-A scene change is a goal: its picture and a state in the new scene are kept. OUT/result.json."""
+A scene change is a goal: its picture and a state in the new scene are kept. OUT/result.json.
+--coverage: every restore also runs with --coverage, and the union of the functions that ran is
+written to OUT/coverage/coverage.tsv (a run directory sf3-coverage.py reads).
+Each goal names the overlay file actually resident at 0605F000 (memory_map.overlay_file)."""
 import argparse
 import itertools
 import json
@@ -72,6 +75,8 @@ def expand(job):
         work.mkdir(parents=True, exist_ok=True)
         (work / 'backup.bin').write_bytes(saves.native_backup([a['record']]))
         args = ['--headless', '--cue', a['cue'], '--save', str(work / 'backup.bin'), '--settings', '-', '--state-in', src]
+        if a.get('coverage'):
+            args += ['--coverage', str(work / 'coverage.tsv')]
         with agent.start(a['saturn'], args, str(work / 'ours')) as r:
             s = diff.OurSide(r)
             state = u32(s, u32(s, a['state_ptr']))
@@ -104,6 +109,11 @@ def expand(job):
             elif tile() != at:
                 res['state'] = save_state(s, str(out / f's{n}.state'))
             res.update(scene=u16(s, state + 16), fid=u32(s, SCENE_FID), tile=tile())
+            if res['scene'] != scene0 and a.get('build'):
+                res['overlay'] = memory_map.overlay_file(s.read(memory_map.SC1_SCENES['overlay_base'], 0x10000), a['build'])
+        cov = work / 'coverage.tsv'
+        if cov.exists():
+            res['ran'] = [ln for ln in cov.read_text().splitlines() if ln.endswith(' 1')]
         return res
     except Exception as e:
         return dict(src=src, d=d, error=repr(e)[:200])
@@ -122,21 +132,24 @@ def main():
     p.add_argument('--out', required=True)
     p.add_argument('--budget', type=int, default=3000, help='restores at most')
     p.add_argument('--jobs', type=int, default=6)
+    p.add_argument('--coverage', action='store_true', help='union coverage of all restores in OUT/coverage')
+    p.add_argument('--build', help='profile build root (stage/extract) to name the resident overlay of each goal')
     o = p.parse_args()
     os.environ['SF3_CALL_TRACE'] = '06056DF0'
     os.environ.setdefault('SF3_STATE_ID', 'sf3-town-bfs')  # must match the id START.state was saved with
     mm = memory_map.lookup(o.profile)
     target = [t for t in sweep.targets_from_saves([o.save], mm['scenario']) if t['id'].endswith(':' + o.record)][0]
     a = dict(saturn=o.saturn, cue=o.cue, out=o.out, obj=memory_map.SC1_PLAYER['obj'], state_ptr=0x0602AE64,
-             record=dict(target['record'], name=f"SFORCE3{mm['scenario']}_01"))
+             record=dict(target['record'], name=f"SFORCE3{mm['scenario']}_01"), coverage=o.coverage, build=o.build)
     Path(o.out).mkdir(parents=True, exist_ok=True)
-    seen, goals, frontier, count, used = set(), [], [o.state], itertools.count(), 0
+    seen, goals, frontier, count, used, ran = set(), [], [o.state], itertools.count(), 0, set()
     with ProcessPoolExecutor(o.jobs) as ex:
         while frontier and used < o.budget:
             jobs = [(a, src, d, next(count)) for src in frontier for d in DIRS]
             used += len(jobs)
             new = []
             for res in ex.map(expand, jobs):
+                ran.update(res.pop('ran', ()))
                 if 'error' in res:
                     print('error', res, flush=True)
                     continue
@@ -158,6 +171,9 @@ def main():
     for src in frontier:
         if os.path.exists(src):
             os.remove(src)
+    if o.coverage and ran:
+        (Path(o.out) / 'coverage').mkdir(exist_ok=True)
+        (Path(o.out) / 'coverage' / 'coverage.tsv').write_text(''.join(ln + '\n' for ln in sorted(ran)))
     json.dump(dict(tiles=sorted(map(list, seen)), goals=goals), open(Path(o.out) / 'result.json', 'w'), indent=1, default=str)
 
 
