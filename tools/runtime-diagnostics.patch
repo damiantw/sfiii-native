@@ -1,8 +1,8 @@
 diff --git a/runtime/include/saturn/sh2.h b/runtime/include/saturn/sh2.h
-index 1219a02..72b2ee6 100644
+index 1219a02..9bbb945 100644
 --- a/runtime/include/saturn/sh2.h
 +++ b/runtime/include/saturn/sh2.h
-@@ -11,6 +11,7 @@
+@@ -11,9 +11,11 @@
  // Semantics are src/saturnrecomp/sh2emu.py's, instruction for instruction: the
  // self-test (runtime/src/app/selftest.cpp) holds the two together.
  #pragma once
@@ -10,10 +10,36 @@ index 1219a02..72b2ee6 100644
  #include <cstddef>
  #include <cstdint>
  #include <cstring>
-@@ -60,6 +61,10 @@ void     sh2_mmio_write(uint32_t a, uint32_t v, int size);
++#include <cstdlib>
+ 
+ #define SH2_UNLIKELY(x) __builtin_expect(!!(x), 0)
+ 
+@@ -22,7 +24,7 @@ struct SH2Context {
+     uint32_t t, s, q, m, imask;         // SR, a field each
+     uint32_t gbr, vbr, mach, macl, pr;
+     uint32_t pc;                        // where the last rts/rte went: the caller checks it
+-    int32_t  budget;                    // safe points left before sh2_poll
++    int32_t  budget;                    // time left before sh2_poll, in quarter SH-2 cycles
+     int      cpu;                       // 0 master, 1 slave
+ };
+ 
+@@ -59,7 +61,22 @@ uint32_t sh2_mmio_read(uint32_t a, int size);           // what sh2_io_* does no
+ void     sh2_mmio_write(uint32_t a, uint32_t v, int size);
  
  // A safe point: loop back-edges, calls, and `ldc ...,sr` (the mask may drop).
- #define SH2_POLL(c) do { if (SH2_UNLIKELY(--(c).budget < 0)) sh2_poll(c); } while (0)
+-#define SH2_POLL(c) do { if (SH2_UNLIKELY(--(c).budget < 0)) sh2_poll(c); } while (0)
++// Time is charged per block (SH2_CYC); a safe point (SH2_SAFE)
++// polls when it is spent.
++#define SH2_SAFE(c) do { if (SH2_UNLIKELY((c).budget < 0)) sh2_poll(c); } while (0)
++// Code generated before the cycle model (no SH2_CYC) still builds and runs: its
++// safe points charge the old flat 400 ns (46 quarter cycles) each.
++#define SH2_POLL(c) do { if (SH2_UNLIKELY(((c).budget -= 46) < 0)) sh2_poll(c); } while (0)
++// A block's cost: n issue cycles and m memory accesses (each g_sh2_mem_q
++// quarter cycles: the average wait the cache and the bus add).
++// SF3_MEM_Q=N overrides it (default 8: two cycles of average wait per access,
++// fitted to Beetle's Sc1 battle-start counter plateaus). Larger is a slower CPU.
++inline int32_t g_sh2_mem_q = [] { const char* v = std::getenv("SF3_MEM_Q"); return v ? (int32_t)std::atol(v) : 8; }();
++#define SH2_CYC(c, n, m) ((c).budget -= (n) * 4 + (m) * g_sh2_mem_q)
 +extern std::atomic<bool> g_state_requested;
 +extern const bool g_sh2_native_states;
 +void state_native_point(SH2Context& c, uint32_t pc);
@@ -1612,6 +1638,130 @@ index 5b42ace..2c288f5 100644
 +        if(s.loading) device.changed=true;
      }
  }
+diff --git a/runtime/src/machine/cdblock.cpp b/runtime/src/machine/cdblock.cpp
+index cd80763..b0504cb 100644
+--- a/runtime/src/machine/cdblock.cpp
++++ b/runtime/src/machine/cdblock.cpp
+@@ -58,6 +58,7 @@ static bool g_is_cdrom = true;                  // the report's CD-ROM bit
+ static uint64_t g_cdrom_clear_at, g_fs_data_at;
+ static const uint64_t kCdromClearNs = 500ull * 1000000000ull / (44100 * 256);
+ static uint64_t g_play_t0, g_play_done;         // time the play began, sectors read since
++static uint64_t g_pause_at;                     // --accurate-drive: a data play's end, BUSY until PAUSE
+ static uint64_t g_seek_from, g_seek_until;      // --accurate-drive: a play's seek, BUSY then SEEK, until PLAY
+ static int g_getlen = 2048;
+ static std::deque<int16_t> g_cdda;              // the audio played, not yet taken by the SCSP (L, R)
+@@ -207,6 +208,15 @@ static void play_ended() {
+         g_play_done = 0;
+         return;
+     }
++    if (g_cfg.accurate_drive && !g_audio_play) {
++        // Mednafen's drive (black box, Sc1's first battle load): after the last sector it reports
++        // BUSY, without PEND, and PAUSE comes 9.3-14.9 ms after its head passes the end, i.e. two
++        // sectors' time at 2x. Ours ends one sector after the last delivery: one sector more.
++        g_status = ST_BUSY;
++        g_pause_at = sat_now() + 1000000000ull / (uint64_t)cd_data_rate();
++        sat_trace("CD: play ended at FAD %u, pausing", g_fad);
++        return;
++    }
+     g_status = ST_PAUSE;
+     g_hirq |= PEND;
+     sat_trace("CD: play ended at FAD %u", g_fad);
+@@ -238,6 +248,7 @@ void cd_tick() {
+     } else if (g_fs_done && now >= g_seek_from) {
+         g_status = ST_SEEK;
+     }
++    if (g_pause_at && now >= g_pause_at) { g_pause_at = 0; g_status = ST_PAUSE; g_hirq |= PEND; }
+     if (g_status == ST_BUSY && g_seek_until && now >= g_seek_from) g_status = ST_SEEK;
+     if (g_status == ST_SEEK && g_seek_until && now >= g_seek_until) {
+         g_status = ST_PLAY;
+@@ -261,7 +272,13 @@ void cd_tick() {
+         }
+     }
+     if (now >= g_next_peri) {                   // the periodic report
+-        g_next_peri = now + 16666667;
++        // Saturn Technical Bulletin (Sattechs p31): the report is updated every 13.3 ms at
++        // standard speed, 6.7 ms at double speed, 16.7 ms or less otherwise, and not while a
++        // command is being answered. With --accurate-drive, a play's reports follow its sectors.
++        uint64_t period = 16666667;
++        if (g_cfg.accurate_drive && g_status == ST_PLAY)
++            period = 1000000000ull / (g_audio_play ? 75 : (uint64_t)cd_data_rate());
++        g_next_peri = now + period;
+         g_hirq |= SCDQ;
+         if (!g_cmd_busy) {
+             report();
+@@ -329,7 +346,7 @@ static void fs_read(uint32_t fad, uint32_t size) {
+     g_seek_from = now + busy;
+     g_seek_until = 0;
+     g_fad = fad + n;
+-    g_status = ST_BUSY;
++    g_status = ST_BUSY; g_pause_at = 0;
+     g_cdrom_clear_at = now + kCdromClearNs;
+     g_fs_data_at = g_fs_done - n * (1000000000ull / cd_data_rate());
+ }
+@@ -363,9 +380,14 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
+     g_play_done = 0;
+     g_seek_until = 0;
+     g_fs_done = 0;
++    g_pause_at = 0;
+     if (g_cfg.accurate_drive) {
+         uint64_t busy;
+         g_seek_until = g_play_t0 + cd_seek_ns(head, g_fad, g_audio_play ? 75 : 150, &busy);
++        // A data read's first sector comes 3 ms later than the seek model says: fitted to
++        // Mednafen (black box) on Sc1's first battle load (battle counter start 358 vs 357)
++        // and the church load's fade-in (within a VBlank); 2 ms and 4 ms each miss one of them.
++        if (!g_audio_play) g_seek_until += 3000000;
+         g_seek_from = g_play_t0 + busy;
+         g_status = ST_BUSY;
+     }
+@@ -410,7 +432,7 @@ static void command() {
+         g_hirq |= CMOK;
+         break;
+     case 0x04:                                  // Initialize CD System
+-        if (cr1 & 1) { reset_all(); g_status = ST_PAUSE; }
++        if (cr1 & 1) { reset_all(); g_status = ST_PAUSE; g_pause_at = 0; }
+         if (cr1 & 0x10) sat_trace("CD: 1x speed asked for (kept at 2x)");
+         report();
+         g_hirq |= CMOK | ESEL;
+@@ -431,12 +453,12 @@ static void command() {
+         break;
+     case 0x11: {                                // Seek Disc
+         uint32_t pos = (uint32_t)(cr1 & 0xFF) << 16 | cr2;
+-        if (pos == 0) g_status = ST_STANDBY, g_is_cdrom = true, g_cdrom_clear_at = 0;
++        if (pos == 0) g_pause_at = 0, g_status = ST_STANDBY, g_is_cdrom = true, g_cdrom_clear_at = 0;
+         else {                                  // 0xFFFFFF: pause where it is
+             if (pos == 0xFFFFFF) {}
+             else if (pos & 0x800000) g_fad = pos & 0x7FFFFF;
+             else g_fad = track_fad(pos >> 8, false);
+-            g_status = ST_PAUSE;
++            g_status = ST_PAUSE; g_pause_at = 0;
+         }
+         report();
+         g_hirq |= CMOK;
+@@ -587,7 +609,7 @@ static void command() {
+         report(); g_hirq |= CMOK;
+         break;
+     }
+-    case 0x75: g_status = ST_PAUSE; g_fs_done = 0; report(); g_hirq |= CMOK | EFLS; break;   // Abort File
++    case 0x75: g_status = ST_PAUSE; g_pause_at = 0; g_fs_done = 0; report(); g_hirq |= CMOK | EFLS; break;   // Abort File
+     case 0xE0: report(); g_hirq |= CMOK | EFLS | CSCT; break;                 // Authenticate Device
+     case 0xE1: answer(status_hi(), 4, 0, 0); g_hirq |= CMOK; break;                 // a Saturn disc
+     default:
+@@ -615,7 +637,7 @@ static uint16_t next_word() {
+ void cd_init() {
+     reset_all();
+     g_cddev = 0;                                // as the BIOS leaves it after reading the boot files
+-    g_status = ST_PAUSE;
++    g_status = ST_PAUSE; g_pause_at = 0;
+     g_fad = 150;
+     g_seek_until = 0;
+     g_fs_done = 0;
+@@ -680,5 +702,6 @@ void cdblock_state(State& s) {
+ }
+ 
+ void cddrive_state(State& s) { s(g_seek_from), s(g_seek_until); }
++void cdpause_state(State& s) { s(g_pause_at); }
+ void cdfs_state(State& s) { s(g_fs_done), s(g_root_known); }
+ void cdpos_state(State& s) { s(g_is_cdrom), s(g_cdrom_clear_at), s(g_fs_data_at); }
 diff --git a/runtime/src/machine/cdrom.cpp b/runtime/src/machine/cdrom.cpp
 index e1918ba..453fb8f 100644
 --- a/runtime/src/machine/cdrom.cpp
@@ -1642,9 +1792,26 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..6fcb641 100644
+index a17d926..5720321 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
+@@ -1,11 +1,11 @@
+ // saturn-recomp runtime — the machine: the run loop, time, interrupts taken by a
+ // CPU, the slave SH-2, and program starts.
+ //
+-// Time. The recompiled code has no cycle counts; it has safe points (loop
+-// back-edges, calls, `ldc ...,sr`). Every kBudget safe points the master
+-// polls: time moves on, the devices run, interrupts are taken. Time is
+-// virtual by default (kNsPerSafePoint per safe point: a run is the same run
+-// every time) or the host's clock (`realtime`).
++// Time. Each recompiled block charges its SH-2 cycles to the CPU's budget;
++// safe points (loop back-edges, calls, `ldc ...,sr`) check it. When kBudget
++// is spent the master polls: time moves on by what was spent, the devices
++// run, interrupts are taken. Time is virtual by default (a run is the same
++// run every time) or the host's clock (`realtime`).
+ //
+ // Interrupts are taken at a poll, as the CPU would between two instructions:
+ // SR and a return PC pushed on the guest stack, the mask raised to the
 @@ -33,6 +33,7 @@
  #include "host.h"
  #include "video.h"
@@ -1653,7 +1820,7 @@ index a17d926..6fcb641 100644
  #include <atomic>
  #include <chrono>
  #include <condition_variable>
-@@ -46,13 +47,20 @@
+@@ -46,13 +47,26 @@
  #include <mutex>
  #include <thread>
  #include <vector>
@@ -1663,19 +1830,26 @@ index a17d926..6fcb641 100644
  SH2Context g_master, g_slave;
  SH2Context* g_cpu = &g_master;
  
- static const int32_t kBudget = 256;             // safe points between polls
+-static const int32_t kBudget = 256;             // safe points between polls
 -static const uint64_t kNsPerSafePoint = 400;    // virtual time: ~11 instructions at 28.6 MHz
-+// SF3_NS_PER_SP=N overrides the virtual time a safe point costs (default 400 ns), for timing
-+// calibration against a reference emulator: a larger value is a slower CPU against the devices.
-+static const uint64_t kNsPerSafePoint = [] {
-+    const char* v = std::getenv("SF3_NS_PER_SP");
++// The CPU's time is counted in quarter SH-2 cycles: each recompiled block
++// charges its instructions' cycles (the SH-2 manual's issue counts) and its
++// memory accesses (g_sh2_mem_q each); a device register access adds its bus's
++// wait (mmio.cpp). A poll turns what was spent into virtual time.
++static const int32_t kBudget = 4 * 2932;        // between polls: ~102 us, as 256 safe points of 400 ns were
++// SF3_PS_PER_CYCLE=N: the clock (default 34921 ps, 28.6364 MHz); the
++// quarter cycles per memory access are g_sh2_mem_q (SF3_MEM_Q, sh2.h).
++static const uint64_t kPsPerCycle = [] {
++    const char* v = std::getenv("SF3_PS_PER_CYCLE");
 +    const long n = v ? std::atol(v) : 0;
-+    return n > 0 ? (uint64_t)n : 400ull;    // virtual time: ~11 instructions at 28.6 MHz
++    return n > 0 ? (uint64_t)n : 34921ull;
 +}();
++// Virtual ns for q quarter cycles (the sub-ns rest is dropped: no state to keep).
++static uint64_t quarters_ns(int64_t q) { return q > 0 ? (uint64_t)q * kPsPerCycle / 4000 : 0; }
  static const uint32_t kIntPC = 0xFFFFFFE4u;     // the PC an interrupt pushes: where rte must go
  static const int kSlaveSlice = 64;              // polls the slave runs before it gives the CPU back
  
-@@ -72,9 +80,26 @@ uint64_t sat_now() {
+@@ -72,9 +86,26 @@ uint64_t sat_now() {
  }
  
  static void vprint(const char* tag, const char* fmt, va_list ap) {
@@ -1705,7 +1879,7 @@ index a17d926..6fcb641 100644
  }
  
  void sat_trace(const char* fmt, ...) {
-@@ -302,6 +327,36 @@ void sat_fatal(const char* fmt, ...) {
+@@ -302,6 +333,36 @@ void sat_fatal(const char* fmt, ...) {
      va_start(ap, fmt);
      vprint("FATAL", fmt, ap);
      va_end(ap);
@@ -1742,7 +1916,7 @@ index a17d926..6fcb641 100644
      SH2Context& c = *g_cpu;
      std::fprintf(stderr, "  cpu %d  pr %08X  pc %08X  sr %03X\n", c.cpu, c.pr, c.pc, sh2_get_sr(c));
      for (int i = 0; i < 16; ++i) std::fprintf(stderr, "  r%-2d %08X%s", i, c.r[i], i % 4 == 3 ? "\n" : "");
-@@ -316,6 +371,7 @@ void sat_fatal(const char* fmt, ...) {
+@@ -316,6 +377,7 @@ void sat_fatal(const char* fmt, ...) {
          sound_close();                          // a run that ends in an error is the one most worth watching
          movie_finish();
      }
@@ -1750,7 +1924,7 @@ index a17d926..6fcb641 100644
      std::fflush(stderr);
      std::_Exit(1);
  }
-@@ -333,6 +389,8 @@ static std::condition_variable g_cv;
+@@ -333,6 +395,8 @@ static std::condition_variable g_cv;
  static int g_turn;                  // 0 the master runs, 1 the slave
  static bool g_slave_on, g_slave_idle = true, g_slave_reset, g_slave_thread;
  static int g_slave_polls;
@@ -1759,7 +1933,7 @@ index a17d926..6fcb641 100644
  
  static void give(int to) {          // hand the CPU over and wait until it comes back
      std::unique_lock<std::mutex> lk(g_mu);
-@@ -366,6 +424,14 @@ static void slave_main() {
+@@ -366,6 +430,14 @@ static void slave_main() {
              // the BIOS's slave boot: its own vector table, interrupts masked,
              // its stack, then the entry the program set as vector 0x94
              SH2Context& s = g_slave;
@@ -1774,7 +1948,7 @@ index a17d926..6fcb641 100644
              s = SH2Context{};
              s.cpu = 1;
              s.vbr = 0x06000400u;
-@@ -421,7 +487,29 @@ static void watch_for_stalls() {
+@@ -421,7 +493,29 @@ static void watch_for_stalls() {
      }
  }
  
@@ -1805,7 +1979,7 @@ index a17d926..6fcb641 100644
  
  void slave_on() {
      if (!g_slave_thread) {
-@@ -446,7 +534,7 @@ void slave_off() {
+@@ -446,7 +540,7 @@ void slave_off() {
  void slave_idle_check(uint32_t ftcsr) {
      if (g_cpu->cpu != 1 || (ftcsr & 0x80)) return;
      g_slave_idle = true;
@@ -1814,7 +1988,7 @@ index a17d926..6fcb641 100644
  }
  
  // SINIT: the master pulses the slave's FRT input capture
-@@ -460,16 +548,26 @@ void slave_kick() {
+@@ -460,16 +554,26 @@ void slave_kick() {
  // The clock and the multitap are the run's own settings, but a dump goes on with the ones it was made with.
  void machine_state(State& s) {
      uint8_t ip[16];
@@ -1844,7 +2018,7 @@ index a17d926..6fcb641 100644
  }
  
  // --coverage FILE: "MODULE ADDRESS INSTRUCTIONS RAN" for every recompiled function, RAN 1 or 0.
-@@ -490,6 +588,30 @@ static void write_coverage(const std::string& path) {
+@@ -490,6 +594,30 @@ static void write_coverage(const std::string& path) {
      if (e) sat_note("coverage: cannot replace %s: %s", path.c_str(), e.message().c_str());
  }
  
@@ -1875,8 +2049,19 @@ index a17d926..6fcb641 100644
  // --checkpoint SECONDS: coverage written again every SECONDS of the host's time, so a run that is
  // killed rather than stopped still leaves what it ran.
  static void checkpoint_due() {
-@@ -531,7 +653,9 @@ void master_poll_devices() {
+@@ -512,6 +640,7 @@ static void checkpoint_due() {
+ static const int kModemLine = 12;
+ 
+ void master_poll_devices() {
++    BusQuiet quiet;
+     uint64_t now = sat_now();
+     video_tick(now);
+     writes_due();
+@@ -529,13 +658,16 @@ void master_poll_devices() {
+ }
+ 
  void sh2_poll(SH2Context& c) {
++    const int32_t used = c.budget;
      c.budget = kBudget;
      if (c.cpu == 1) {
 -        if (++g_slave_polls >= kSlaveSlice) to_master();
@@ -1886,7 +2071,12 @@ index a17d926..6fcb641 100644
          return;
      }
      g_poll_ring[g_poll_pos++ % 4096] = __builtin_return_address(0);
-@@ -555,6 +679,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+-    g_vtime += kBudget * kNsPerSafePoint;
++    g_vtime += quarters_ns((int64_t)kBudget - used);
+     master_poll_devices();
+     scu_deliver(c);
+     onchip_deliver(c);
+@@ -555,6 +687,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
      c.r[15] -= 4; st32(c.r[15], sh2_get_sr(c));
      c.r[15] -= 4; st32(c.r[15], kIntPC);
      c.imask = level;
@@ -1894,7 +2084,16 @@ index a17d926..6fcb641 100644
      if (bios_is_dispatcher(vec, target)) {
          bios_dispatch(c, vec);
      } else {
-@@ -584,6 +709,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
+@@ -570,7 +703,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+ void sh2_sleep(SH2Context& c, uint32_t pc) {
+     // wait for an interrupt: time passes until one is taken
+     for (int i = 0; i < 100000; ++i) {
+-        g_vtime += kBudget * kNsPerSafePoint;
++        g_vtime += quarters_ns(kBudget);
+         master_poll_devices();
+         if (scu_deliver(c) | onchip_deliver(c)) return;
+     }
+@@ -584,6 +717,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
  
  void sh2_bad_return(SH2Context& c, uint32_t expected) {
      if (tasks_pending()) { tasks_route(c, expected); return; }
@@ -1906,7 +2105,7 @@ index a17d926..6fcb641 100644
      sat_fatal("returned to %08X, expected %08X", c.pc, expected);
  }
  
-@@ -658,7 +788,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -658,7 +796,7 @@ int saturn_main(const SaturnConfig& cfg) {
      else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
      for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
      bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
@@ -1916,14 +2115,26 @@ index a17d926..6fcb641 100644
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
 diff --git a/runtime/src/machine/mmio.cpp b/runtime/src/machine/mmio.cpp
-index b9dd332..217dabf 100644
+index b9dd332..22fd0fd 100644
 --- a/runtime/src/machine/mmio.cpp
 +++ b/runtime/src/machine/mmio.cpp
-@@ -46,7 +46,15 @@ static std::map<std::tuple<uint32_t, char, uint32_t>, ModemLog> g_modem_log;
- // A register access costs the CPU a safe point of time: a loop that waits on a
- // device (a status register, the CD block's answers) lets time move on.
+@@ -19,6 +19,7 @@
+ #include "modem.h"
+ #include "state.h"
+ #include <cstdio>
++#include <cstdlib>
+ #include <map>
+ #include <set>
+ #include <tuple>
+@@ -43,12 +44,55 @@ static std::map<std::pair<uint32_t, uint32_t>, uint64_t> g_calls;
+ struct ModemLog { uint64_t n = 0, first = 0, last = 0; std::set<uint32_t> values; };
+ static std::map<std::tuple<uint32_t, char, uint32_t>, ModemLog> g_modem_log;
+ 
+-// A register access costs the CPU a safe point of time: a loop that waits on a
+-// device (a status register, the CD block's answers) lets time move on.
  static void log_reg(uint32_t a, int size, char rw) {
 -    ++g_regs[{a, size, rw}];
+-    --g_cpu->budget;
 +    // the count's map node found through a small direct-mapped table (map nodes stay put),
 +    // so a register seen before costs no map search
 +    struct Slot { uint64_t key = 0; uint64_t* n = nullptr; };
@@ -1933,10 +2144,49 @@ index b9dd332..217dabf 100644
 +    if (c.key != key) { c.n = &g_regs[{a, size, rw}]; c.key = key; }
 +    uint64_t* last = c.n;
 +    ++*last;
-     --g_cpu->budget;
  }
++
++// What an access outside the work RAMs costs the CPU beyond its issue cycle:
++// the wait states of the bus it goes over, in SH-2 cycles (read, write). A
++// loop that waits on a device (a status register, the CD block's answers)
++// lets time move on by them. Estimates for the bus paths (on-chip modules;
++// the SCU's own registers; the A-bus with the CD block and the BIOS ROM; the
++// B-bus behind the SCU with VDP1, VDP2 and the SCSP; the SMPC), calibrated as
++// a whole against a reference emulator. SF3_BUS_WAITS="onchip,scu,abus,vdp1,
++// vdp2,scsp,smpc" overrides the reads, each with the write as R/W (e.g. 12/8).
++enum Bus { kOnchip, kScu, kAbus, kVdp1, kVdp2, kScsp, kSmpc, kBuses };
++struct Waits { int32_t q[kBuses][2]; };
++static Waits make_waits() {
++    Waits w{};
++    static const int32_t def[kBuses][2] = {{3, 3}, {4, 4}, {12, 12}, {10, 6}, {10, 6}, {16, 12}, {12, 12}};
++    for (int i = 0; i < kBuses; ++i) for (int k = 0; k < 2; ++k) w.q[i][k] = def[i][k] * 4;
++    if (const char* v = std::getenv("SF3_BUS_WAITS")) {
++        for (int i = 0; i < kBuses && *v; ++i) {
++            char* e;
++            long r = std::strtol(v, &e, 10), wr = r;
++            if (*e == '/') wr = std::strtol(e + 1, &e, 10);
++            w.q[i][0] = (int32_t)(r * 4); w.q[i][1] = (int32_t)(wr * 4);
++            v = *e == ',' ? e + 1 : e;
++        }
++    }
++    return w;
++}
++static const Waits g_waits = make_waits();
++static Bus bus_of(uint32_t a) {
++    if (a >= 0xFFFFFE00u) return kOnchip;
++    if (a >= 0x05FE0000u && a < 0x05FF0000u) return kScu;
++    if (a >= 0x05A00000u && a < 0x05C00000u) return kScsp;
++    if (a >= 0x05C00000u && a < 0x05E00000u) return kVdp1;
++    if (a >= 0x05E00000u && a < 0x05FE0000u) return kVdp2;
++    if (a >= 0x00100000u && a < 0x00180000u) return kSmpc;
++    return kAbus;
++}
++
++static inline void bus_wait(uint32_t a, char rw) { if (!g_bus_quiet) g_cpu->budget -= g_waits.q[bus_of(a)][rw == 'W']; }
  // --watch LO:HI: every address in the range, one by one
-@@ -63,7 +71,12 @@ static void log_area(const char* name, uint32_t a, char rw) {
+ static std::map<std::pair<uint32_t, char>, uint64_t> g_watch;
+ static uint32_t g_watch_lo = 1, g_watch_hi = 0;
+@@ -63,7 +107,12 @@ static void log_area(const char* name, uint32_t a, char rw) {
          else if (!window)
              sat_trace("watch %c %08X (pr %08X)", rw, a, g_cpu->pr);
      }
@@ -1950,7 +2200,7 @@ index b9dd332..217dabf 100644
      if (a < l.lo) l.lo = a;
      if (a > l.hi) l.hi = a;
      ++l.n;
-@@ -102,12 +115,13 @@ void mmio_log_write(const std::string& path) {
+@@ -102,12 +151,13 @@ void mmio_log_write(const std::string& path) {
  }
  
  // ---- memory with no device behind it (yet) ------------------------------------------------------
@@ -1966,7 +2216,14 @@ index b9dd332..217dabf 100644
      if (a >= 0x02000000u && a < 0x05000000u) return "A-bus cartridge";
      if (a >= 0x05A00000u && a < 0x05B00000u) return "SCSP RAM";
      if (a >= 0x05C00000u && a < 0x05C80000u) return "VDP1 VRAM";
-@@ -135,7 +149,7 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
+@@ -129,13 +179,14 @@ static int uart_register(uint32_t a, int size) {
+ }
+ 
+ uint32_t sh2_mmio_read(uint32_t a, int size) {
++    bus_wait(a, 'R');
+     if (a >= 0xFFFFFE00u) { log_reg(a, size, 'R'); return onchip_read(*g_cpu, a, size); }
+     uint32_t area = a >> 29;
+     if (area == 6) { log_area("cache data array", a, 'R'); return mem_rd(g_cache[g_cpu->cpu], a & 0xFFF, size); }
      if (area != 0) { log_area("cache address array", a, 'R'); return 0; }
      if (const char* n = area_of(a)) {
          log_area(n, a, 'R');
@@ -1975,7 +2232,7 @@ index b9dd332..217dabf 100644
          if (video_owns(a)) return video_read(a, size);
          if (a >= 0x02000000u && a < 0x05000000u) return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFFu;
          return bios_rom_read(a, size);          // the BIOS ROM is not here
-@@ -154,6 +168,10 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
+@@ -154,17 +205,22 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
      if (a >= 0x05800000u && a < 0x05900000u) return cd_read(a & 0xFFFFF, size);
      if (a >= 0x05FE0000u && a < 0x05FE0100u) return scu_read(a & 0xFF, size);
      if (video_owns(a)) return video_read(a, size);
@@ -1986,7 +2243,11 @@ index b9dd332..217dabf 100644
      sat_fatal("%d-byte read of %08X: nothing there", size, a);
  }
  
-@@ -164,7 +182,7 @@ void sh2_mmio_write(uint32_t a, uint32_t v, int size) {
+ void sh2_mmio_write(uint32_t a, uint32_t v, int size) {
++    bus_wait(a, 'W');
+     if (a >= 0xFFFFFE00u) { log_reg(a, size, 'W'); onchip_write(*g_cpu, a, v, size); return; }
+     uint32_t area = a >> 29;
+     if (area == 6) { log_area("cache data array", a, 'W'); mem_wr(g_cache[g_cpu->cpu], a & 0xFFF, v, size); return; }
      if (area != 0) { log_area(area == 2 ? "cache purge" : "cache address array", a, 'W'); return; }
      if (const char* n = area_of(a)) {
          log_area(n, a, 'W');
@@ -1996,7 +2257,7 @@ index b9dd332..217dabf 100644
          return;                                 // ROM, no cartridge
      }
 diff --git a/runtime/src/machine/onchip.cpp b/runtime/src/machine/onchip.cpp
-index 33a2cdd..6b783ff 100644
+index 33a2cdd..590690a 100644
 --- a/runtime/src/machine/onchip.cpp
 +++ b/runtime/src/machine/onchip.cpp
 @@ -151,7 +151,9 @@ static void divide(OnChip& o, bool wide) {
@@ -2010,7 +2271,7 @@ index 33a2cdd..6b783ff 100644
      if (!ovf) {
          q = n / dvsr; r = n % dvsr;
          ovf = q > INT32_MAX || q < INT32_MIN;
-@@ -163,6 +165,9 @@ static void divide(OnChip& o, bool wide) {
+@@ -163,11 +165,15 @@ static void divide(OnChip& o, bool wide) {
      }
      wr(o, 0x104, (uint32_t)q, 4); wr(o, 0x114, (uint32_t)q, 4);
      wr(o, 0x110, (uint32_t)r, 4);
@@ -2020,7 +2281,13 @@ index 33a2cdd..6b783ff 100644
      // the unit's registers are mirrored at +0x20
      for (uint32_t k = 0x100; k < 0x120; k += 4) wr(o, k + 0x20, rd(o, k, 4), 4);
  }
-@@ -183,7 +188,8 @@ static void dma(OnChip& o, int ch) {
+ 
+ static void dma(OnChip& o, int ch) {
++    BusQuiet quiet;
+     uint32_t base = 0x180 + ch * 0x10;
+     uint32_t chcr = rd(o, base + 0xC, 4), dmaor = rd(o, 0x1B0, 4);
+     if (!(chcr & 1) || (chcr & 2) || !(dmaor & 1)) return;
+@@ -183,7 +189,8 @@ static void dma(OnChip& o, int ch) {
          if (ts == 3) {
              for (int k = 0; k < 16; k += 4) st32(dar + (dm ? k : 0), ld32(sar + (sm ? k : 0)));
              sar += step(sm); dar += step(dm);
@@ -2031,7 +2298,7 @@ index 33a2cdd..6b783ff 100644
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..19af60f 100644
+index 6cbd98f..ad3037a 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -2042,15 +2309,20 @@ index 6cbd98f..19af60f 100644
      std::string settings;           // the player's settings file (host.cpp); "-": none, the defaults; empty: settings.ini
                                      // in saturn-recomp's directory in the user's data directory
      std::string wav;                // the run's sound to this file (16-bit stereo, 44 100 Hz)
-@@ -104,6 +105,7 @@ void slave_idle_check(uint32_t ftcsr);   // the slave read its FTCSR: yield if n
+@@ -103,7 +104,12 @@ void slave_off();                   // SSHOFF: held in reset
+ void slave_idle_check(uint32_t ftcsr);   // the slave read its FTCSR: yield if nothing is there
  void slave_kick();                  // SINIT: the slave's input capture, and the CPU to it
  void master_poll_devices();
++// Device-side memory traffic (DMA, the devices' own polls, the agent) costs the
++// CPU no bus waits: mmio.cpp charges an access only while this is 0.
++inline int g_bus_quiet = 0;    // >0: device or DMA traffic, charged to no CPU
++struct BusQuiet { BusQuiet() { ++g_bus_quiet; } ~BusQuiet() { --g_bus_quiet; } };
  bool state_slave_busy();            // the slave is on: no dump can be taken (state.cpp)
 +void machine_capture_debug(const std::string& directory);
  
  // ---- dumps of the machine (state.cpp; state.h for the parts) ----------------------------------
  void state_enable();                // the run has safe moments: a game's task switch
-@@ -112,10 +114,18 @@ void state_poll();                  // from the master's polls: dumps due, a sto
+@@ -112,10 +118,18 @@ void state_poll();                  // from the master's polls: dumps due, a sto
  void state_point(SH2Context& c);    // a safe moment: c's registers and PC are all the run needs to go on
  void state_stop(const char* why);   // the run stops at the next dump, or soon without one
  void state_finish();                // the last dump written
@@ -2069,7 +2341,7 @@ index 6cbd98f..19af60f 100644
  
  // ---- the BIOS (bios.cpp) -----------------------------------------------------------
  void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
-@@ -213,6 +223,8 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
+@@ -213,6 +227,8 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
  void video_init();
  void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
  void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
@@ -2078,8 +2350,28 @@ index 6cbd98f..19af60f 100644
  uint32_t video_read(uint32_t a, int size);    // VDP1, VDP2, SCSP (canonical addresses)
  void video_write(uint32_t a, uint32_t v, int size);
  bool video_owns(uint32_t a);
+diff --git a/runtime/src/machine/scu.cpp b/runtime/src/machine/scu.cpp
+index 52ca0df..509f1a3 100644
+--- a/runtime/src/machine/scu.cpp
++++ b/runtime/src/machine/scu.cpp
+@@ -76,6 +76,7 @@ static bool bbus(uint32_t a) {
+ }
+ 
+ static void copy(uint32_t& src, uint32_t& dst, uint32_t bytes, uint32_t radd, uint32_t wadd) {
++    BusQuiet quiet;
+     // 32-bit units; the B bus takes them as two 16-bit writes, each moving by the write add
+     for (uint32_t i = 0; i < bytes; i += 4) {
+         uint32_t n = bytes - i < 4 ? bytes - i : 4;
+@@ -103,6 +104,7 @@ static void copy(uint32_t& src, uint32_t& dst, uint32_t bytes, uint32_t radd, ui
+ }
+ 
+ static void dma_run(int lvl) {
++    BusQuiet quiet;
+     Dma& d = g_dma[lvl];
+     uint32_t radd = (d.ad >> 8 & 1) ? 4 : 0;
+     uint32_t wadd = (d.ad & 7) ? 1u << (d.ad & 7) : 0;
 diff --git a/runtime/src/machine/scudsp.cpp b/runtime/src/machine/scudsp.cpp
-index ef4f660..26a52aa 100644
+index ef4f660..13864ed 100644
 --- a/runtime/src/machine/scudsp.cpp
 +++ b/runtime/src/machine/scudsp.cpp
 @@ -9,9 +9,9 @@
@@ -2152,7 +2444,7 @@ index ef4f660..26a52aa 100644
      bool hold = op >> 14 & 1, to_d0 = op >> 12 & 1;
      int ram = op >> 8 & 7;
      int bump[4] = {};
-@@ -189,43 +197,82 @@ static void op_dma(uint32_t op) {
+@@ -189,43 +197,83 @@ static void op_dma(uint32_t op) {
          if (to_d0) g.wa0 += n * add / 4;
          else g.ra0 += n * add / 4;
      }
@@ -2176,6 +2468,7 @@ index ef4f660..26a52aa 100644
 -            int d = op >> 26 & 0xF;
 -            if (d == 12) { delay = g.pc; g.top = g.pc; g.pc = v & 0xFF; }
 -            else write_dst(d, v);
++    BusQuiet quiet;
 +    const Dsp initial=g;
 +    uint32_t visits[256]{};
 +    // PC addresses the prefetched word, one ahead of the executing instruction.
@@ -2265,10 +2558,10 @@ index ef4f660..26a52aa 100644
              }
          }
 diff --git a/runtime/src/machine/state.cpp b/runtime/src/machine/state.cpp
-index 67ccdd3..2124fa9 100644
+index 67ccdd3..4f9b17f 100644
 --- a/runtime/src/machine/state.cpp
 +++ b/runtime/src/machine/state.cpp
-@@ -19,13 +19,48 @@
+@@ -19,16 +19,51 @@
  #include <filesystem>
  #include <map>
  #include <thread>
@@ -2318,7 +2611,11 @@ index 67ccdd3..2124fa9 100644
 +    {"machine", machine_state}, {"video", video_state},     {"core", core_state},       {"heads", core_heads_state, true}, {"mmio", mmio_state},
      {"bios", bios_state},       {"scu", scu_state},         {"scudsp", scudsp_state},   {"onchip", onchip_state},
      {"smpc", smpc_state},       {"cdblock", cdblock_state}, {"vdp1", vdp1_state},       {"vdp2", vdp2_state},
-     {"sound", sound_state},     {"scsp", scsp_state},       {"tasks", tasks_state},     {"cddrive", cddrive_state, true},
+-    {"sound", sound_state},     {"scsp", scsp_state},       {"tasks", tasks_state},     {"cddrive", cddrive_state, true},
++    {"sound", sound_state},     {"scsp", scsp_state},       {"tasks", tasks_state},     {"cddrive", cddrive_state, true}, {"cdpause", cdpause_state, true},
+     {"cdfs", cdfs_state, true},   {"clock", clock_state, true}, {"cdpos", cdpos_state, true},
+ };
+ 
 @@ -54,10 +89,23 @@ void core_state(State& s) {
      }
  }
@@ -2483,7 +2780,7 @@ index 67ccdd3..2124fa9 100644
          at += size;
      }
 diff --git a/runtime/src/machine/state.h b/runtime/src/machine/state.h
-index 91d606c..94c273e 100644
+index 91d606c..3166e5c 100644
 --- a/runtime/src/machine/state.h
 +++ b/runtime/src/machine/state.h
 @@ -34,6 +34,7 @@ struct State {
@@ -2510,6 +2807,14 @@ index 91d606c..94c273e 100644
  void mmio_state(State& s);
  void bios_state(State& s);
  void scu_state(State& s);
+@@ -62,6 +65,7 @@ void clock_state(State& s);
+ void smpc_state(State& s);
+ void cdblock_state(State& s);
+ void cddrive_state(State& s);
++void cdpause_state(State& s);
+ void cdfs_state(State& s);
+ void cdpos_state(State& s);
+ void video_state(State& s);
 diff --git a/runtime/src/machine/tasks.cpp b/runtime/src/machine/tasks.cpp
 index c37141d..6517551 100644
 --- a/runtime/src/machine/tasks.cpp
@@ -6365,10 +6670,69 @@ index 3396388..70e2000 100644
                      else:
                          if slot not in f.code:
 diff --git a/src/saturnrecomp/recomp/emit.py b/src/saturnrecomp/recomp/emit.py
-index 4cf69d5..78f3e88 100644
+index 4cf69d5..85c9dbf 100644
 --- a/src/saturnrecomp/recomp/emit.py
 +++ b/src/saturnrecomp/recomp/emit.py
-@@ -268,17 +268,32 @@ class Body:
+@@ -16,8 +16,11 @@ into a C++ function:
+   know goes to sh2_call, as a tail. Calls through registers compare with the
+   target analysis expects and otherwise dispatch: a wrong guess costs a
+   lookup, never a wrong call;
+-* safe points (SH2_POLL) at loop back-edges, before calls and after
+-  `ldc ...,sr`.
++* safe points (SH2_SAFE) at loop back-edges, before calls and after
++  `ldc ...,sr`;
++* time: each block (a label or a branch to the next) charges its SH-2 issue
++  cycles and memory accesses as it is entered (SH2_CYC), a taken
++  conditional branch its extra cycles; safe points only check the budget.
+ 
+ Every multi-statement instruction is its own block, so a `goto` never
+ crosses an initialisation.
+@@ -237,7 +240,7 @@ def stmt(ins, literal=None):
+         else:
+             head, v = "", R(m)
+         if reg == "sr":
+-            body = "sh2_set_sr(c, %s & 0x3F3u); SH2_POLL(c);" % v
++            body = "sh2_set_sr(c, %s & 0x3F3u); SH2_SAFE(c);" % v
+         else:
+             body = "c.%s = %s;" % (reg, v)
+         return "{ %s%s }" % (head, body) if head else body
+@@ -255,6 +258,35 @@ def stmt(ins, literal=None):
+ 
+ BRANCHES = {"bt", "bf", "bt/s", "bf/s", "bra", "bsr", "jmp", "jsr", "braf", "bsrf", "rts", "rte"}
+ 
++# Issue cycles per instruction, from the SH-1/SH-2 Programming Manual's
++# instruction tables (execution states, no contention): 1 unless listed. A
++# conditional branch is listed not taken; the taken path adds _TAKEN. The
++# multiply-unit ones are their issue cost (the manual's lower bound).
++_CYCLES = {"bra": 2, "bsr": 2, "braf": 2, "bsrf": 2, "jmp": 2, "jsr": 2, "rts": 2, "rte": 4,
++           "trapa": 8, "sleep": 3, "and.b": 3, "or.b": 3, "xor.b": 3, "tst.b": 3, "tas.b": 4,
++           "mul.l": 2, "dmuls.l": 2, "dmulu.l": 2, "mac.l": 3, "mac.w": 3, "stc.l": 2}
++_TAKEN = {"bt": 2, "bf": 2, "bt/s": 1, "bf/s": 1}
++
++
++def cycles(ins):
++    """(issue cycles, memory accesses) of one instruction, its delay slot not included."""
++    op = ins.op
++    n = _CYCLES.get(op, 1)
++    if op == "ldc.l":
++        n = 3
++    t = ins.text
++    mem = 0
++    if op in ("mov.b", "mov.w", "mov.l", "and.b", "or.b", "xor.b", "tst.b", "tas.b", "ldc.l", "lds.l", "stc.l", "sts.l"):
++        mem = 1
++    elif op in ("mac.l", "mac.w"):
++        mem = 2
++    elif op == "rte":
++        mem = 2
++    elif op == "trapa":
++        mem = 3
++    return n, mem
++
++
+ 
+ class Body:
+     """One discovered function as C++.
+@@ -268,17 +300,32 @@ class Body:
      its own ("insn") as well when something jumps to it.
      """
  
@@ -6402,7 +6766,14 @@ index 4cf69d5..78f3e88 100644
  
      # -- analysis
      def _resolve(self):
-@@ -334,9 +349,14 @@ class Body:
+@@ -328,15 +375,20 @@ class Body:
+         if t not in self.f.code:
+             return "{ %s }" % self._tail(t)
+         if t <= src:
+-            return "SH2_POLL(c); goto L_%08X;" % t
++            return "SH2_SAFE(c); goto L_%08X;" % t
+         return "goto L_%08X;" % t
+ 
      def _tail(self, t):
          """Leave for `t`, a static target outside this function's code."""
          if t in self.entries:
@@ -6413,13 +6784,13 @@ index 4cf69d5..78f3e88 100644
 +        return "sh2_call(c, %s); %s" % (_h(t), self._returned())
 +
 +    def _returned(self):
-+        cases = " ".join("case %s: SH2_POLL(c); goto L_%08X;" % (_h(t), t)
++        cases = " ".join("case %s: SH2_SAFE(c); goto L_%08X;" % (_h(t), t)
 +                         for t in sorted(self._local_returns))
 +        return ("switch (c.pc) { %s default: return; }" % cases) if cases else "return;"
  
      def _call(self, t):
          if t in self.entries:
-@@ -371,16 +391,16 @@ class Body:
+@@ -371,16 +423,16 @@ class Body:
                  cases.append("case %s: goto L_%08X;" % (_h(v), v))
                  back |= v <= a
              elif v in self.entries:
@@ -6427,7 +6798,8 @@ index 4cf69d5..78f3e88 100644
 +                cases.append("case %s: %s" % (_h(v), self._tail(v)))
              else:
                  self.unknown.append(v)
-         poll = "SH2_POLL(c); " if back else ""
+-        poll = "SH2_POLL(c); " if back else ""
++        poll = "SH2_SAFE(c); " if back else ""
          if not cases:
 -            return "sh2_call(c, x); return;"
 -        return "%sswitch (x) { %s default: sh2_call(c, x); return; }" % (poll, " ".join(cases))
@@ -6440,32 +6812,53 @@ index 4cf69d5..78f3e88 100644
          code = self.f.code
          self._fallback = sorted(a for a in code if a not in self.slots)
          for a, ins in self.ops.items():
-@@ -418,13 +438,23 @@ class Body:
-             return "c.pr = %s; %sSH2_POLL(c); %s %s" % (ret, s, self._call(ins.target), check), a + 4
+@@ -402,7 +454,7 @@ class Body:
+         if op not in BRANCHES:
+             return self._stmt(ins), a + 2
+         if op in ("bt", "bf"):
+-            return "if (%sc.t) { %s }" % ("" if op == "bt" else "!", self._goto(ins.target, a)), a + 2
++            return "if (%sc.t) { SH2_CYC(c, %d, 0); %s }" % ("" if op == "bt" else "!", _TAKEN[op], self._goto(ins.target, a)), a + 2
+         slot = self._stmt(self.img.insn(a + 2))
+         if slot == ";":
+             slot = ""
+@@ -410,21 +462,31 @@ class Body:
+         ret = _h(a + 4)
+         check = "if (c.pc != %s) return;" % ret if self.unwind_returns else "SH2_RET(c, %s);" % ret
+         if op in ("bt/s", "bf/s"):
+-            return ("{ const bool k = %sc.t; %sif (k) { %s } }"
+-                    % ("" if op == "bt/s" else "!", s, self._goto(ins.target, a)), a + 4)
++            return ("{ const bool k = %sc.t; %sif (k) { SH2_CYC(c, %d, 0); %s } }"
++                    % ("" if op == "bt/s" else "!", s, _TAKEN[op], self._goto(ins.target, a)), a + 4)
+         if op == "bra":
+             return s + self._goto(ins.target, a), None
+         if op == "bsr":
+-            return "c.pr = %s; %sSH2_POLL(c); %s %s" % (ret, s, self._call(ins.target), check), a + 4
++            return "c.pr = %s; %sSH2_SAFE(c); %s %s" % (ret, s, self._call(ins.target), check), a + 4
          if op in ("jsr", "bsrf"):
              x = _r(ins.n) if op == "jsr" else "%s + %s" % (ret, _r(ins.n))
+-            return ("{ const uint32_t x = %s; c.pr = %s; %sSH2_POLL(c); %s %s }"
 +            if a in self.stack_return_calls:
 +                # A verified wrapper saved its caller's PR immediately before
 +                # this call. Accept only an exact one-word stack pop returning
 +                # to that saved address; all other mismatches stay fatal.
 +                check = ("if (c.pc != %s && c.r[15] == saved_sp + 4u && c.pc == saved_return) return; SH2_RET(c, %s);" % (ret, ret))
-+                return ("{ const uint32_t x = %s; const uint32_t saved_sp = c.r[15], saved_return = ld32(saved_sp); c.pr = %s; %sSH2_POLL(c); %s %s }"
++                return ("{ const uint32_t x = %s; const uint32_t saved_sp = c.r[15], saved_return = ld32(saved_sp); c.pr = %s; %sSH2_SAFE(c); %s %s }"
 +                        % (x, ret, s, self._dcall(a), check), a + 4)
-             return ("{ const uint32_t x = %s; c.pr = %s; %sSH2_POLL(c); %s %s }"
++            return ("{ const uint32_t x = %s; c.pr = %s; %sSH2_SAFE(c); %s %s }"
                      % (x, ret, s, self._dcall(a), check), a + 4)
          if op in ("jmp", "braf"):
              x = _r(ins.n) if op == "jmp" else "%s + %s" % (ret, _r(ins.n))
              return "{ const uint32_t x = %s; %s%s }" % (x, s, self._djump(a)), None
          if op == "rts":
 -            return "{ const uint32_t x = c.pr; %sc.pc = x; return; }" % s, None
-+            cases = " ".join("case %s: SH2_POLL(c); goto L_%08X;" % (_h(t), t)
++            cases = " ".join("case %s: SH2_SAFE(c); goto L_%08X;" % (_h(t), t)
 +                             for t in sorted(self._local_returns))
 +            local = ("switch (x) { %s default: break; } " % cases) if cases else ""
 +            return "{ const uint32_t x = c.pr; %s%sc.pc = x; return; }" % (s, local), None
          if op == "rte":
              return ("{ const uint32_t x = ld32(c.r[15]); c.r[15] += 4; sh2_set_sr(c, ld32(c.r[15]) & 0x3F3u); "
                      "c.r[15] += 4; %sc.pc = x; return; }" % s), None
-@@ -436,6 +466,11 @@ class Body:
+@@ -436,13 +498,37 @@ class Body:
          code = self.f.code
          order = sorted(a for a in code if a not in self.slots or a in labels or a == self.f.entry)
          lines = ["void %s(SH2Context& c) {" % fname(self.f.entry)]
@@ -6477,16 +6870,45 @@ index 4cf69d5..78f3e88 100644
          if order and order[0] != self.f.entry:            # code shared from below the entry
              labels.add(self.f.entry)
              lines.append("    goto L_%08X;" % self.f.entry)
-@@ -453,6 +488,8 @@ class Body:
+         late = set()
++        lead = True
+         for i, a in enumerate(order):
+             if a in labels or a in late:
+                 lines.append("L_%08X:" % a)
++                lead = True
++            if lead:
++                # A block: this instruction up to the next label or branch,
++                # charged as it is entered.
++                cyc = mem = 0
++                for b in order[i:]:
++                    if b != a and (b in labels or b in late):
++                        break
++                    insb = self.ops[b]
++                    n, m = cycles(insb)
++                    cyc, mem = cyc + n, mem + m
++                    if insb.delay and b + 2 in code:
++                        n, m = cycles(self.img.insn(b + 2))
++                        cyc, mem = cyc + n, mem + m
++                    if insb.op in BRANCHES:
++                        break
++                lines.append("    SH2_CYC(c, %d, %d);" % (cyc, mem))
++                lead = False
+             text, succ = self._insn(a)
+             ins = self.ops[a]
+             if self.comments:
+@@ -453,7 +539,11 @@ class Body:
              self.locations.append((a, len(lines), "insn"))
              if ins.delay and a + 2 in code:
                  self.locations.append((a + 2, len(lines), "slot"))
 +            if self.resume_points and a in self.state_points:
 +                lines.append("    SH2_STATE_POINT(c, %s);" % _h(a))
              lines.append("    " + text)
++            if self.ops[a].op in BRANCHES:
++                lead = True
              nxt = order[i + 1] if i + 1 < len(order) else None
              if succ is not None and succ != nxt:
-@@ -462,4 +499,7 @@ class Body:
+                 if succ in code:
+@@ -462,4 +552,7 @@ class Body:
                  else:
                      lines.append("    " + self._tail(succ))
          lines.append("}")
