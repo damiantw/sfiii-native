@@ -7,9 +7,9 @@ assist none
 clock 2026-01-01T00:00:00
 record_sha1 248edbb4d68dc192
 load 2905
-binary 2af3315e9c3d2c95
+binary 8c49bdcbe4919384
 end_vblank 92905
-end_ram_sha1 a6939e1eb54c6ac9
+end_ram_sha1 f0cd6689dec5ae6f
 end_flags_sha1 7aeae9bc21885be7
 reached save:3-Battle-22-to-End:27
 input
