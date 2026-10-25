@@ -56,6 +56,21 @@ def tile_events(tiles):
     return {(i % 64, i // 64): (b >> 4, b & 15) for i, b in enumerate(tiles) if b >> 4 in (1, 2, 5)}
 
 
+# Sc1 town player (found with SF3_CALL_TRACE=06056DF0: the tile-event lookup's only caller, 06056C1C,
+# passes obj+12 / obj+20 of the object at @(r15+60)). Checked live at 1:30 outside HQ (scene 86):
+# the pad moves these (DOWN +x, UP -x, LEFT -z, RIGHT +z, about 4 units a frame) and a poke sticks.
+# 16.16 fixed point; the lookup's tile is value >> 21 (32 units a tile). In HQ (scene 89) the slot is 0.
+SC1_PLAYER = dict(obj=0x06044844, x=12, z=20, tile_shift=21)
+
+
+def player_tile(x_raw, z_raw, shift=21):
+    """The tile (x, z) the town lookup 06056DF0 indexes for the player's 16.16 position."""
+    def t(v):
+        v -= (1 << 32) if v & 0x80000000 else 0
+        return (v >> shift) & 63
+    return t(x_raw), t(z_raw)
+
+
 BATTLE_UNITS = {'scenario1-usa-v25_1': dict(enemies=0x0602F6F0, force=0x06032030)}
 # Round 13 (sc2-2.000 58271484, sc3 0e80231f; black-box, same method: scan work RAM for named
 # records at stride 0xB0 in a Ch1 battle, then read them against the status window: Sc2 Ch1 :01
