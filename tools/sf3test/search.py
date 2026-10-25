@@ -10,6 +10,7 @@ best. Only pad presses are kept, so the result is an ordinary pad-only segment t
 checks from the save; states stay in the work directory (never in the repository).
 """
 import copy
+import shutil
 import hashlib
 import importlib.util
 import json
@@ -101,6 +102,10 @@ def candidate(job):
     out.mkdir(parents=True, exist_ok=True)
     os.environ['SF3_STATE_ID'] = job['state_id']
     res = dict(seed=job['seed'], explore=job['explore'], out=str(out))
+    # round 5: each branch gets its own backup memory file, copied from its parent's (the game writes
+    # its save at a goal record; candidates sharing one file made the end RAM differ from a replay)
+    shutil.copyfile(job['backup'], out / 'backup.bin')
+    job = dict(job, backup=str(out / 'backup.bin'))
     r = agent.start(job['saturn'], run_args(job, job['state']), str(out / 'o'))
     r._sock.settimeout(120)
     try:
@@ -121,6 +126,7 @@ def candidate(job):
             raise RuntimeError('state not written')
         end = S.end_hashes(s, job['profile'])
         res.update(actions=[a for a in s.actions if a[0] >= job['v']], v=r.vblank, end=end, state=str(state),
+                   backup=job['backup'],
                    m_commit=m1, reached=reached)
         if job['L'] and not reached and score(m1) > -1e6:
             p2 = _play(s, job, job['L'], job['seed'] + 7919, 0.0)
@@ -181,17 +187,19 @@ def search(a):
     base_actions, v0 = list(rs.actions), r.vblank
     root_end = S.end_hashes(rs, a.profile)
     r.close()
+    shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
-    common = dict(saturn=a.saturn, cue=str(a.cue), backup=str(out / 'root' / 'backup.bin'), clock=a.clock,
+    common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
                   profile=a.profile, goals=goals, root=root, leader=leader, state_id=state_id, W=a.window, L=a.look)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
-    levels = [dict(state=str(st0), v=v0, actions=base_actions, end=root_end, ranked=[], pick=0, score=0)]
+    levels = [dict(state=str(st0), v=v0, actions=base_actions, end=root_end, ranked=[], pick=0, score=0,
+                   backup=str(out / 'states' / 'root.backup.bin'))]
     log, backs, done_goal = [], 0, False
     with ProcessPoolExecutor(a.jobs) as ex:
         while levels[-1]['v'] - v0 < a.frames and len(log) < a.max_levels:
             cur = levels[-1]
             n = len(log)
-            jobs = [dict(common, state=cur['state'], v=cur['v'], seed=a.seed * 1000 + n * 37 + i,
+            jobs = [dict(common, state=cur['state'], backup=cur['backup'], v=cur['v'], seed=a.seed * 1000 + n * 37 + i,
                          explore=0.0 if i == 0 else a.explore, out=str(out / 'c' / f'{n:04d}-{i}'))
                     for i in range(a.k)]
             res = sorted(ex.map(candidate, jobs), key=lambda x: -x['score'])
@@ -210,7 +218,8 @@ def search(a):
                     if prev['pick'] < len(prev['ranked']) and prev['ranked'][prev['pick']]['score'] > -1e6:
                         c = prev['ranked'][prev['pick']]
                         levels.append(dict(state=c['state'], v=c['v'], actions=prev['actions'] + c['actions'],
-                                           end=c['end'], ranked=[], pick=0, score=c['score']))
+                                           end=c['end'], ranked=[], pick=0, score=c['score'], backup=c['backup'],
+                                           reached=c.get('reached')))
                         print(f'  back to level {len(levels) - 1}, candidate {prev["pick"]}', flush=True)
                         break
                 if backs > a.max_backs or len(levels) == 1 and levels[0]['pick'] >= len(levels[0]['ranked']):
@@ -219,7 +228,8 @@ def search(a):
                 continue
             cur['ranked'] = res
             levels.append(dict(state=best['state'], v=best['v'], actions=cur['actions'] + best['actions'],
-                               end=best['end'], ranked=[], pick=0, score=best['score'], reached=best.get('reached')))
+                               end=best['end'], ranked=[], pick=0, score=best['score'], reached=best.get('reached'),
+                               backup=best['backup']))
             (out / 'search.json').write_text(json.dumps(dict(levels=log, path=[l['v'] for l in levels]), indent=0, default=str))
             write_segment(a, out, start, load, h, levels[-1], S)
             if best.get('reached') or best['m_commit'].get('won'):
