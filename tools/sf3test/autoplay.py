@@ -599,10 +599,16 @@ def aimed_turn(side, units, pol, press):
         press((), 40)
         pol.attacks += 1
     else:
-        press((RING['hold'],), 6)
-        press((), 14)
+        # not next to an enemy by the unit table: take the ring's own choice. The game opens the
+        # ring on Attack when something is in reach and on Hold otherwise (probe, round 3), and a
+        # large enemy (the Sc3 Ch7:12 boss, max HP 2400) covers more tiles than its record's x/y,
+        # so units standing next to it never attacked. C confirms the default (Hold ends the turn;
+        # Attack opens the target choice, the next C confirms the highlighted target).
         press(('C',), 6)
         press((), 30)
+        press(('C',), 6)
+        press((), 40)
+        pol.defaults = getattr(pol, 'defaults', 0) + 1
     return tap(('C',), gap=40) * 4
 
 
