@@ -438,6 +438,31 @@ def plan_step(p, live, occupied, blocked, size=64, limit=6000, passable=frozense
 LEADER_SAFE = 0.6
 
 
+def retreat_path(p, live, allies, blocked, reach=5, size=64):
+    """Directions from `p` to the free tile within `reach` steps farthest from every live enemy
+    (allies are walked through but not ended on, enemies and known-blocked edges are not
+    crossed); [] when no tile is farther than `p` itself."""
+    def dist(q):
+        return min(abs(q[0] - e[0]) + abs(q[1] - e[1]) for e in live) if live else 0
+    enemies = set(live)
+    best, best_key = [], (dist(p), 0)
+    seen = {p: []}
+    frontier = [p]
+    for depth in range(1, reach + 1):
+        nxt = []
+        for q in frontier:
+            for d in DIRS:
+                r = step_of(q, d)
+                if r in seen or r in enemies or blocked.get((q, r)) or not (0 <= r[0] < size and 0 <= r[1] < size):
+                    continue
+                seen[r] = seen[q] + [d]
+                nxt.append(r)
+                if r not in allies and (dist(r), -depth) > best_key:
+                    best, best_key = seen[r], (dist(r), -depth)
+        frontier = nxt
+    return best
+
+
 def is_hurt(read, table, slot, share):
     """True when force record `slot` has less than `share` of its max HP."""
     e = read(table + slot * memory_map.UNIT_STRIDE, memory_map.UNIT_STRIDE)
@@ -508,35 +533,30 @@ def aimed_turn(side, units, pol, press):
         return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)
 
     # the leader (the force's first on-field slot) losing all HP loses the battle (round 3: Sc1
-    # Battle 22 lost with Synbios at 18 HP walking up to the boss): below LEADER_SAFE of max HP the
-    # leader steps back (B returns the probe step) and only attacks what is already next to it
+    # Battle 22 lost with Synbios at 18 HP walking up to the boss). Round 4 (fresh :25 run): the
+    # leader walked to the front of the Battle 22 bridge at full HP, stood between two enemies and
+    # fell 30k VBlanks later. So the leader never advances: B returns the probe step and it only
+    # attacks what is already in reach; below LEADER_SAFE of max HP it walks away from the
+    # enemies (through teammates, to a free tile)
     cautious = False
-    if me == min(before) and is_hurt(rd, units['force'], me, LEADER_SAFE):
+    if me == min(before):
         press(('B',), 6)
         press((), 20)
         cautious = True
         pol.cautious = getattr(pol, 'cautious', 0) + 1
-        # round 4: holding still on the start tile still lost Battle 22 (fresh run, the leader at
-        # 13/62 died within 25k VBlanks): step away from the enemies, one free tile at a time
-        fails = 0
-        for _ in range(8):
-            now = pos()
-            if me not in now or fails >= 3:
-                break
-            p = now[me]
-            taken = {v for k, v in now.items() if k != me} | set(live)
-            options = [(dist(step_of(p, d)), d) for d in DIRS
-                       if step_of(p, d) not in taken and not pol.blocked.get((p, step_of(p, d)))]
-            options = [o for o in options if o[0] > dist(p)]
-            if not options:
-                break
-            d = max(options)[1]
-            press((d,), 8)
-            press((), 10)
-            if pos().get(me, p) == p:
-                pol.blocked[(p, step_of(p, d))] = 1
-                fails += 1
-            else:
+        now = pos()
+        if me in now and is_hurt(rd, units['force'], me, LEADER_SAFE):
+            path = retreat_path(now[me], live, {v for k, v in now.items() if k != me}, pol.blocked)
+            for i, d in enumerate(path):
+                q = pos().get(me)
+                if q is None:
+                    break
+                press((d,), 8)
+                press((), 10)
+                if pos().get(me, q) == q:          # a wall early on; later it is the move range's end
+                    if i < 2:
+                        pol.blocked[(q, step_of(q, d))] = 1
+                    break
                 pol.retreats = getattr(pol, 'retreats', 0) + 1
     if pol.pathing and not cautious:
         fails = 0

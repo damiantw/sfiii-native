@@ -202,8 +202,21 @@ class StoryTest(unittest.TestCase):
                 mock.patch.object(autoplay, 'is_hurt', lambda *a: True):
             autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, press)
         x, y = force[1]
-        self.assertGreater(abs(x - 5) + abs(y - 7), 4)
+        self.assertGreater(abs(x - 5) + abs(y - 7), 5)
         self.assertGreater(pol.retreats, 2)
+
+    def test_retreat_path_goes_through_allies(self):
+        from sf3test import autoplay
+        # a column of teammates north of the leader, the enemy south: the path crosses them and
+        # ends on a free tile
+        allies = {(5, 6), (5, 7), (4, 6), (6, 6)}
+        path = autoplay.retreat_path((5, 5), [(5, 2)], allies, {})
+        p = (5, 5)
+        for d in path:
+            p = autoplay.step_of(p, d)
+        self.assertNotIn(p, allies)
+        self.assertGreaterEqual(p[1], 8)
+        self.assertEqual(autoplay.retreat_path((5, 5), [(5, 2)], allies, {}, reach=0), [])
 
     def test_is_hurt(self):
         from sf3test import autoplay, memory_map as M
