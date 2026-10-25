@@ -2664,28 +2664,42 @@ index 8589d33..03ab903 100644
 +        for(int y=0;y<256;++y) for(int x=0;x<512;++x) scaled_store(p,x,y,g_fb[p][y*512+x]);
  }
 diff --git a/runtime/src/video/vdp1_raster.inc b/runtime/src/video/vdp1_raster.inc
-index 15c677f..6804664 100644
+index 15c677f..af0a0b0 100644
 --- a/runtime/src/video/vdp1_raster.inc
 +++ b/runtime/src/video/vdp1_raster.inc
-@@ -22,16 +22,23 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -9,7 +9,7 @@
+ // Bresenham's with an extra pixel wherever both coordinates step (VDP1's
+ // anti-aliasing, so no holes between lines). A texture's row is the step's
+ // (v = i * h / steps), its column the position along the line
+-// (u = k * w / length). Normal and scaled sprites are quadrilaterals too.
++// (u = k * w / length), sampled at the dot's centre when shrinking (vdp1_steps). Normal and scaled sprites are quadrilaterals too.
+ // Polylines and lines are the lines alone.
+ //
+ 
+@@ -22,21 +22,32 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      int len = std::max(adx, ady);
      g_draw_steps += (uint64_t)len + 1;
      int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
 -    int ends = 0;
 -    bool stop = false;
+-    auto pixel = [&](int x, int y, int k) {
+-        if (stop) return;
 +    vdp1_steps::EndCodes ends;
++    // high speed shrink (PMOD bit 12): a line with fewer dots than the character is wide
 +    const bool hss = c.textured && (c.pmod & 0x1000) && (c.ctrl & 15) != 0 && len + 1 < c.w;
++    const int eos = g_reg[FBCR] >> 4 & 1;
 +    int sampled_u = -1;
 +    const bool backward = (adx >= ady ? dx < 0 : dy < 0) != c.hflip;
-     auto pixel = [&](int x, int y, int k) {
--        if (stop) return;
++    // `aa` is an anti-aliasing dot: it takes the next step's texel and colour
++    auto pixel = [&](int x, int y, int k, bool aa = false) {
 +        if (ends.stopped) return;
++        const int s = aa ? vdp1_steps::aa_step(k, len) : k;
          uint16_t pix = c.colr;
          if (c.textured) {
              bool end;
 -            int u = (int)((int64_t)k * c.w / (len + 1));
-+            int u = vdp1_steps::column_dir(k, c.w, len, backward);
-+            if (hss) u = vdp1_steps::hss_column(u, c.w, g_reg[FBCR] >> 4 & 1);
++            const int u = hss ? vdp1_steps::hss_column(s, c.w, len, backward, c.hflip, eos)
++                              : vdp1_steps::column(s, c.w, len);
 +            bool first_sample = u != sampled_u;
 +            sampled_u = u;
              if (!texel(c, u, v, pix, end)) {
@@ -2696,30 +2710,36 @@ index 15c677f..6804664 100644
                  return;
              }
          }
-@@ -46,9 +53,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+         Rgb g;
+-        if (c.gouraud) g = mix(g0, g1, k, len);
++        if (c.gouraud) g = mix(g0, g1, s, len);
+         plot(c, x, y, pix, c.gouraud ? &g : nullptr);
+     };
+     int x = p0.x, y = p0.y;
+@@ -46,9 +57,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
              pixel(x, y, k);
              if (k == len) break;
              if (err > 0) {
 +                // anti-aliasing (VDP1 manual, figure 1.6), see vdp1_steps::aa_corner
-+                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k); }
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
                  y += yi;
                  err -= 2 * adx;
 -                pixel(x, y, k);                 // anti-aliasing: the corner between the two steps
              }
              err += 2 * ady;
              x += xi;
-@@ -59,9 +67,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -59,9 +71,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
              pixel(x, y, k);
              if (k == len) break;
              if (err > 0) {
-+                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k); }
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
                  x += xi;
                  err -= 2 * ady;
 -                pixel(x, y, k);
              }
              err += 2 * adx;
              y += yi;
-@@ -69,30 +77,40 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -69,30 +81,40 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      }
  }
  
@@ -2770,10 +2790,10 @@ index 15c677f..6804664 100644
          line(c, l, r, v, gl, gr);
 diff --git a/runtime/src/video/vdp1_steps.h b/runtime/src/video/vdp1_steps.h
 new file mode 100644
-index 0000000..9ce97d3
+index 0000000..1be7276
 --- /dev/null
 +++ b/runtime/src/video/vdp1_steps.h
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,107 @@
 +// saturn-recomp runtime — the step arithmetic of VDP1's shape drawing, kept apart from the
 +// drawing so tests can check it. Clean-room: written from Sega's VDP1 User's Manual
 +// (ST-013-R3-061694) and black-box comparison of output frames only.
@@ -2805,27 +2825,55 @@ index 0000000..9ce97d3
 +
 +// Edge walk: the point of edge a->b at step i of n.
 +inline int edge(int a, int b, int i, int n) { return lerp_half_down(a, b, i, n); }
-+// The texture column for pixel k of a line of len + 1 pixels: the character's first column
-+// lands on the line's first pixel and its last column (w - 1) on its last, as the manual's
-+// figures put the character's corners on the vertices.
-+inline int column(int k, int w, int len) { return len > 0 && w > 0 ? lerp_half_up(0, w - 1, k, len) : 0; }
-+// The same column for a line drawn the other way: an exact half rounds down instead of up.
-+// `backward` is a line whose major axis steps toward -x or -y, with a horizontally flipped
-+// character swapping the two. Black-box: Beetle Saturn output frames (Shining Force III church
-+// and battle floor), not the manual, which does not give the rounding.
-+inline int column_dir(int k, int w, int len, bool backward) {
-+    if (len <= 0 || w <= 0) return 0;
-+    return backward ? lerp_half_down(0, w - 1, k, len) : lerp_half_up(0, w - 1, k, len);
++
++// Shrinking (more texels than dots): dot q of len + 1 dots takes the texel under its centre,
++// floor((q + 1/2) * span / (len + 1)). Black-box: Beetle Saturn framebuffers replayed from the
++// same VRAM with coordinate-coded characters (Shining Force III church, battle, deck), not the
++// manual, which does not give the sampling.
++inline int shrink_sample(int q, int span, int len) {
++    if (len < 0 || span <= 0) return 0;
++    const int s = (int)((int64_t)(2 * q + 1) * span / (2 * (len + 1)));
++    return s < span ? s : span - 1;
 +}
-+// The texture row for line i of n + 1 lines, the same corner-to-corner mapping.
-+inline int row(int i, int h, int n) { return n > 0 && h > 0 ? lerp_half_down(0, h - 1, i, n) : 0; }
-+// High speed shrink (manual, PMOD bit 12 and FBCR EOS): a line with fewer dots than texels
-+// samples only the even (eos 0) or odd (eos 1) columns of the character.
-+inline int hss_column(int u, int w, int eos) {
-+    int s = (u & ~1) | (eos & 1);
-+    if (s >= w) s -= 2;                 // keep the parity inside the character
-+    return s < 0 ? 0 : s;
++// The same corner-to-corner mapping for enlargement and 1:1, exact halves rounded by `up`.
++inline int stretch_sample(int q, int span, int len, bool up) {
++    if (len <= 0 || span <= 0) return 0;
++    return up ? lerp_half_up(0, span - 1, q, len) : lerp_half_down(0, span - 1, q, len);
 +}
++
++// The texture column for pixel k of a line of len + 1 pixels: shrunk, the texel under the dot's
++// centre; otherwise the character's first column lands on the line's first pixel and its last
++// column (w - 1) on its last, as the manual's figures put the character's corners on the
++// vertices, with an exact half rounded up whichever way the line is drawn.
++inline int column(int k, int w, int len) {
++    return w > len + 1 ? shrink_sample(k, w, len) : stretch_sample(k, w, len, true);
++}
++// The corner-to-corner column with an exact half rounded down for a line drawn backward (its
++// major axis stepping toward -x or -y, a horizontally flipped character swapping the two).
++inline int column_dir(int k, int w, int len, bool backward) { return stretch_sample(k, w, len, !backward); }
++// The texture row for line i of n + 1 lines: the texel under the line's centre when shrunk,
++// corner to corner with exact halves rounded down otherwise.
++inline int row(int i, int h, int n) { return h > n + 1 ? shrink_sample(i, h, n) : stretch_sample(i, h, n, false); }
++
++// High speed shrink (manual, PMOD bit 12 and FBCR EOS), applied to a line with fewer dots than
++// the character's width: the line steps over the character's w/2 column pairs, and takes the
++// even (eos 0) or odd (eos 1) column of each, counted in the character as stored, so a flipped
++// character keeps the parity of its stored columns. Returns the column in drawing order (before
++// the horizontal flip the texel fetch applies), like column(). Pair stepping: shrink_sample when
++// the pairs still outnumber the dots, column_dir otherwise. Black-box, as above.
++inline int hss_column(int k, int w, int len, bool backward, bool hflip, int eos) {
++    const int half = w / 2;
++    if (half <= 0) return 0;
++    int j = len <= 0 ? 0 : half > len + 1 ? shrink_sample(k, half, len) : column_dir(k, half, len, backward);
++    if (hflip) j = half - 1 - j;                       // the pair, counted in the stored character
++    int u = 2 * j + (eos & 1);
++    if (u > w - 1) u = w - 1;
++    return hflip ? w - 1 - u : u;
++}
++// The step an anti-aliasing dot (see aa_corner) takes its texel and Gouraud colour from: the
++// next step's, where the line is heading. Black-box, as above.
++inline int aa_step(int k, int len) { return k < len ? k + 1 : len; }
++
 +// One Gouraud channel (5 bits) at step k of n between two vertex colours.
 +inline int shade(int a, int b, int k, int n) { return lerp_half_away(a, b, k, n); }
 +
@@ -3756,16 +3804,19 @@ index ebaa466..c68e655 100644
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
 diff --git a/runtime/tests/CMakeLists.txt b/runtime/tests/CMakeLists.txt
-index 39eb423..04c3eb1 100644
+index 39eb423..ce3d050 100644
 --- a/runtime/tests/CMakeLists.txt
 +++ b/runtime/tests/CMakeLists.txt
-@@ -8,5 +8,5 @@ if(NOT CMAKE_BUILD_TYPE)
+@@ -8,5 +8,8 @@ if(NOT CMAKE_BUILD_TYPE)
    set(CMAKE_BUILD_TYPE Release)
  endif()
  include(${CMAKE_CURRENT_LIST_DIR}/../runtime.cmake)
 -add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp)
 +add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp vdp1_steps_test.cpp memmap_test.cpp call_frames_test.cpp)
  target_link_libraries(runtime_tests saturn_core saturn_machine saturn_host Threads::Threads)
++# vdp1_replay: a VRAM snapshot drawn by the rasterizer alone (tools/sf3-vdp1-replay.py)
++add_executable(vdp1_replay vdp1_replay.cpp no_modules.cpp)
++target_link_libraries(vdp1_replay saturn_core saturn_machine saturn_host Threads::Threads)
 diff --git a/runtime/tests/bup_test.cpp b/runtime/tests/bup_test.cpp
 index 6943552..0c64057 100644
 --- a/runtime/tests/bup_test.cpp
@@ -3883,12 +3934,54 @@ index 0000000..6b71f96
 +    CHECK_EQ(sh2_mmio_read(0x012C0002, 2), 0xFFFFu);
 +    CHECK_EQ(sh2_mmio_read(0x01800000, 4), 0xFFFFFFFFu);
 +}
+diff --git a/runtime/tests/vdp1_replay.cpp b/runtime/tests/vdp1_replay.cpp
+new file mode 100644
+index 0000000..9985dee
+--- /dev/null
++++ b/runtime/tests/vdp1_replay.cpp
+@@ -0,0 +1,36 @@
++// VDP1 replay: draws a VRAM snapshot's command list with the runtime's own rasterizer, outside any
++// game, so a reference framebuffer for the same VRAM can be compared dot for dot (no game timing).
++//   vdp1_replay VRAM.bin OUT.bin TVMR FBCR EWDR EWLR EWRR      (registers in hex)
++// VRAM.bin: the 512 KiB of VDP1 VRAM, big-endian as the bus sees it. OUT.bin: the 512x256 16-bit
++// draw framebuffer, big-endian. The erase window is filled with EWDR first, the rest with 0.
++#include "../src/video/video.h"
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++
++int main(int argc, char** argv) {
++    if (argc < 8) { std::fprintf(stderr, "usage: vdp1_replay VRAM.bin OUT.bin TVMR FBCR EWDR EWLR EWRR\n"); return 2; }
++    FILE* f = std::fopen(argv[1], "rb");
++    if (!f || std::fread(g_vdp1_vram, 1, sizeof g_vdp1_vram, f) != sizeof g_vdp1_vram) { std::fprintf(stderr, "bad VRAM file\n"); return 1; }
++    std::fclose(f);
++    unsigned r[5];
++    for (int i = 0; i < 5; ++i) r[i] = (unsigned)std::strtoul(argv[3 + i], nullptr, 16) & 0xFFFF;
++    vdp1_init();
++    vdp1_reg_write(0x00, r[0], 2);                       // TVMR
++    vdp1_reg_write(0x02, r[1] & ~3u, 2);                 // FBCR, no frame change or erase request
++    vdp1_reg_write(0x06, r[2], 2); vdp1_reg_write(0x08, r[3], 2); vdp1_reg_write(0x0A, r[4], 2);
++    for (int i = 0; i < 512 * 256; ++i) vdp1_fb_write(i * 2, 0, 2);
++    int x0 = (r[3] >> 9 & 0x7F) * 8, y0 = r[3] & 0x1FF, x1 = (r[4] >> 9 & 0x7F) * 8, y1 = r[4] & 0x1FF;
++    for (int y = y0; y <= y1 && y < 256; ++y)
++        for (int x = x0; x < x1 && x < 512; ++x) vdp1_fb_write((y * 512 + x) * 2, r[2], 2);
++    vdp1_reg_write(0x04, 1, 2);                          // PTMR 1: draw now
++    FILE* o = std::fopen(argv[2], "wb");
++    if (!o) return 1;
++    for (int i = 0; i < 512 * 256; ++i) {
++        uint16_t v = (uint16_t)vdp1_fb_read(i * 2, 2);
++        uint8_t b[2] = {(uint8_t)(v >> 8), (uint8_t)v};
++        std::fwrite(b, 1, 2, o);
++    }
++    std::fclose(o);
++    return 0;
++}
 diff --git a/runtime/tests/vdp1_steps_test.cpp b/runtime/tests/vdp1_steps_test.cpp
 new file mode 100644
-index 0000000..b329a47
+index 0000000..badaa16
 --- /dev/null
 +++ b/runtime/tests/vdp1_steps_test.cpp
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,116 @@
 +// VDP1's step arithmetic (vdp1_steps.h) against the rules of Sega's VDP1 User's Manual.
 +#include "../src/video/vdp1_steps.h"
 +#include "test.h"
@@ -3926,7 +4019,8 @@ index 0000000..b329a47
 +    for (int k = 0; k < 16; ++k) CHECK_EQ(column(k, 16, 15), k);   // 1:1 is the identity
 +    CHECK_EQ(column(31, 16, 31), 15);                              // enlarged x2
 +    CHECK_EQ(column(7, 16, 7), 15);                                // reduced to 8 dots
-+    CHECK_EQ(column(0, 8, 0), 0);                                  // one dot
++    CHECK_EQ(column(0, 16, 7), 1);                                 // its dots' centres
++    CHECK_EQ(column(0, 8, 0), 4);                                  // one dot: the middle
 +}
 +// A line drawn backward rounds an exact half down; everything else is column()'s.
 +TEST(column_dir_rounds_halves_by_direction) {
@@ -3961,16 +4055,48 @@ index 0000000..b329a47
 +    CHECK_EQ(shade(10, 0, 1, 3), 7);    // 6.67 -> 7
 +}
 +
-+// High speed shrink: only even (EOS 0) or odd (EOS 1) columns are sampled.
-+TEST(high_speed_shrink_samples_one_parity) {
-+    for (int u = 0; u < 16; ++u) {
-+        CHECK_EQ(hss_column(u, 16, 0) % 2, 0);
-+        CHECK_EQ(hss_column(u, 16, 1) % 2, 1);
-+    }
-+    CHECK_EQ(hss_column(5, 16, 0), 4);
-+    CHECK_EQ(hss_column(4, 16, 1), 5);
-+    CHECK_EQ(hss_column(14, 15, 1), 13);   // odd column 15 is outside a 15-wide character
-+    CHECK_EQ(hss_column(0, 1, 1), 0);
++// High speed shrink steps over column pairs and takes one parity of the stored character.
++TEST(high_speed_shrink_samples_one_parity_of_stored_columns) {
++    for (int len = 0; len < 15; ++len)
++        for (int k = 0; k <= len; ++k) {
++            CHECK_EQ(hss_column(k, 16, len, false, false, 0) % 2, 0);
++            CHECK_EQ(hss_column(k, 16, len, false, false, 1) % 2, 1);
++            // flipped: the stored column (15 - drawn) keeps the parity
++            CHECK_EQ((15 - hss_column(k, 16, len, false, true, 0)) % 2, 0);
++            CHECK_EQ((15 - hss_column(k, 16, len, false, true, 1)) % 2, 1);
++        }
++    // 48 wide on 32 dots (the church wall): 24 pairs enlarged onto 32 dots, every pair used
++    bool used[24] = {};
++    for (int k = 0; k < 32; ++k) used[hss_column(k, 48, 31, false, false, 0) / 2] = true;
++    for (bool u : used) CHECK_EQ(u, true);
++    // 48 wide on 8 dots: pairs sampled at the dots' centres, (2k + 1) * 24 / 16
++    CHECK_EQ(hss_column(0, 48, 7, false, false, 0), 2);
++    CHECK_EQ(hss_column(7, 48, 7, false, false, 1), 2 * 22 + 1);
++    // a flipped 16-wide character on 4 dots, eos 0: drawn pairs 1,3,5,7 are stored pairs
++    // 6,4,2,0, stored columns 12,8,4,0, which the flip draws at 3,7,11,15
++    CHECK_EQ(hss_column(0, 16, 3, false, true, 0), 3);
++    CHECK_EQ(hss_column(1, 16, 3, false, true, 0), 7);
++    CHECK_EQ(hss_column(3, 16, 3, false, true, 0), 15);
++    CHECK_EQ(hss_column(0, 15, 3, false, false, 1), 1);
++    CHECK_EQ(hss_column(5, 1, 3, false, false, 1), 0);   // no pair: column 0
++}
++// Shrinking samples under the dot's centre; enlarging maps corner to corner.
++TEST(shrink_samples_at_dot_centres) {
++    for (int q = 0; q < 8; ++q) CHECK_EQ(shrink_sample(q, 16, 7), 2 * q + 1);
++    CHECK_EQ(shrink_sample(0, 48, 31), 0);  CHECK_EQ(shrink_sample(31, 48, 31), 47);
++    CHECK_EQ(shrink_sample(1, 48, 31), 2);  // 1.5 * 48 / 32 = 2.25
++    CHECK_EQ(shrink_sample(0, 5, 0), 2);    // one dot: the middle texel
++    CHECK_EQ(column(3, 16, 7), 7);          // shrunk columns sample centres
++    CHECK_EQ(row(3, 16, 7), 7);             // and so do rows
++    CHECK_EQ(row(1, 3, 4), 0);              // enlarged rows: corner to corner, halves down
++    CHECK_EQ(column(1, 3, 4), 1);           // enlarged columns: halves up
++}
++// An anti-aliasing dot takes the next step's texel and colour, never past the line's end.
++TEST(aa_dot_takes_the_next_step) {
++    CHECK_EQ(aa_step(0, 5), 1);
++    CHECK_EQ(aa_step(4, 5), 5);
++    CHECK_EQ(aa_step(5, 5), 5);
++    CHECK_EQ(aa_step(0, 0), 0);
 +}
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
 index de3d7ec..a14fa32 100644
