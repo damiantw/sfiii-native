@@ -115,23 +115,21 @@ index 0000000..712a96c
 +    ~SH2CallFrame() { g_sh2_frames->pop(depth); }
 +};
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..4618201 100644
+index cb6af72..c363a45 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
-@@ -3,7 +3,12 @@
+@@ -3,7 +3,10 @@
  // active modules (one per address range: the resident programs and the one
  // swapped in).
  #include "saturn/sh2.h"
 +#include "call_frames.h"
-+#include <cstdint>
-+uint64_t sat_vblanks();  // machine/saturn.h
 +extern const bool g_sh2_native_states __attribute__((weak)) = false;
  #include <cstdio>
 +#include <cstdlib>
  #include <cstring>
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
-@@ -13,19 +18,23 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
+@@ -13,19 +16,23 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
  // Areas by the top three bits: 0 cached, 1 cache-through (the same 27-bit
  // external bus), 2 associative purge (writes drop a cache line: nothing to
  // do), 3 the cache's address array, 6 its data array, 7 the on-chip
@@ -158,7 +156,7 @@ index cb6af72..4618201 100644
          return sh2_mmio_read(p, size);
      }
      if (area == 2) return 0;
-@@ -40,6 +49,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -40,6 +47,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
              for (int i = size - 1; i >= 0; --i, v >>= 8) g_wram_h[(p + i) & 0xFFFFFu] = (uint8_t)v;
              return;
          }
@@ -169,7 +167,7 @@ index cb6af72..4618201 100644
          sh2_mmio_write(p, v, size);
          return;
      }
-@@ -50,7 +63,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -50,7 +61,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
  static uint8_t* host(uint32_t a) {
      a &= 0x1FFFFFFFu;
      if (a >= 0x06000000u && a < 0x08000000u) return g_wram_h + (a & 0xFFFFFu);
@@ -178,7 +176,7 @@ index cb6af72..4618201 100644
      return nullptr;
  }
  
-@@ -113,42 +126,59 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +124,59 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -251,7 +249,7 @@ index cb6af72..4618201 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -183,12 +213,57 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -183,12 +211,57 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  
@@ -290,8 +288,8 @@ index cb6af72..4618201 100644
 +    static const char* trace = std::getenv("SF3_CALL_TRACE");
 +    static const uint32_t trace_addr = trace ? std::strtoul(trace, nullptr, 16) : 0;
 +    if (SH2_UNLIKELY(trace != nullptr) && addr == trace_addr)
-+        std::fprintf(stderr, "trace %08X v=%llu pr=%08X r0=%08X r1=%08X r2=%08X r3=%08X r4=%08X r5=%08X r6=%08X r7=%08X sp=%08X\n",
-+                     addr, (unsigned long long)sat_vblanks(), c.pr, c.r[0], c.r[1], c.r[2], c.r[3], c.r[4], c.r[5], c.r[6], c.r[7], c.r[15]);
++        std::fprintf(stderr, "trace %08X pr=%08X r0=%08X r1=%08X r2=%08X r3=%08X r4=%08X r5=%08X r6=%08X r7=%08X sp=%08X\n",
++                     addr, c.pr, c.r[0], c.r[1], c.r[2], c.r[3], c.r[4], c.r[5], c.r[6], c.r[7], c.r[15]);
 +    if (SH2_UNLIKELY(is_base(addr))) {
          const SH2Module* m = sh2_identify(addr);
 +        // A returning module may have changed its data since exact activation.
