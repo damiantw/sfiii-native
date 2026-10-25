@@ -1629,7 +1629,7 @@ index 5b42ace..2c288f5 100644
      }
  }
 diff --git a/runtime/src/machine/cdblock.cpp b/runtime/src/machine/cdblock.cpp
-index cd80763..ce45961 100644
+index cd80763..b0504cb 100644
 --- a/runtime/src/machine/cdblock.cpp
 +++ b/runtime/src/machine/cdblock.cpp
 @@ -58,6 +58,7 @@ static bool g_is_cdrom = true;                  // the report's CD-ROM bit
@@ -1688,7 +1688,7 @@ index cd80763..ce45961 100644
      g_cdrom_clear_at = now + kCdromClearNs;
      g_fs_data_at = g_fs_done - n * (1000000000ull / cd_data_rate());
  }
-@@ -363,9 +380,13 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
+@@ -363,9 +380,14 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
      g_play_done = 0;
      g_seek_until = 0;
      g_fs_done = 0;
@@ -1696,13 +1696,14 @@ index cd80763..ce45961 100644
      if (g_cfg.accurate_drive) {
          uint64_t busy;
          g_seek_until = g_play_t0 + cd_seek_ns(head, g_fad, g_audio_play ? 75 : 150, &busy);
-+        // A data read's first sector comes 4 ms later than the seek model says: fitted to
-+        // Mednafen's read-to-read intervals over Sc1's first battle load (15 reads).
-+        if (!g_audio_play) g_seek_until += 4000000;
++        // A data read's first sector comes 3 ms later than the seek model says: fitted to
++        // Mednafen (black box) on Sc1's first battle load (battle counter start 358 vs 357)
++        // and the church load's fade-in (within a VBlank); 2 ms and 4 ms each miss one of them.
++        if (!g_audio_play) g_seek_until += 3000000;
          g_seek_from = g_play_t0 + busy;
          g_status = ST_BUSY;
      }
-@@ -410,7 +431,7 @@ static void command() {
+@@ -410,7 +432,7 @@ static void command() {
          g_hirq |= CMOK;
          break;
      case 0x04:                                  // Initialize CD System
@@ -1711,7 +1712,7 @@ index cd80763..ce45961 100644
          if (cr1 & 0x10) sat_trace("CD: 1x speed asked for (kept at 2x)");
          report();
          g_hirq |= CMOK | ESEL;
-@@ -431,12 +452,12 @@ static void command() {
+@@ -431,12 +453,12 @@ static void command() {
          break;
      case 0x11: {                                // Seek Disc
          uint32_t pos = (uint32_t)(cr1 & 0xFF) << 16 | cr2;
@@ -1726,7 +1727,7 @@ index cd80763..ce45961 100644
          }
          report();
          g_hirq |= CMOK;
-@@ -587,7 +608,7 @@ static void command() {
+@@ -587,7 +609,7 @@ static void command() {
          report(); g_hirq |= CMOK;
          break;
      }
@@ -1735,7 +1736,7 @@ index cd80763..ce45961 100644
      case 0xE0: report(); g_hirq |= CMOK | EFLS | CSCT; break;                 // Authenticate Device
      case 0xE1: answer(status_hi(), 4, 0, 0); g_hirq |= CMOK; break;                 // a Saturn disc
      default:
-@@ -615,7 +636,7 @@ static uint16_t next_word() {
+@@ -615,7 +637,7 @@ static uint16_t next_word() {
  void cd_init() {
      reset_all();
      g_cddev = 0;                                // as the BIOS leaves it after reading the boot files
@@ -1744,7 +1745,7 @@ index cd80763..ce45961 100644
      g_fad = 150;
      g_seek_until = 0;
      g_fs_done = 0;
-@@ -680,5 +701,6 @@ void cdblock_state(State& s) {
+@@ -680,5 +702,6 @@ void cdblock_state(State& s) {
  }
  
  void cddrive_state(State& s) { s(g_seek_from), s(g_seek_until); }
