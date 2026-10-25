@@ -115,7 +115,7 @@ index 0000000..712a96c
 +    ~SH2CallFrame() { g_sh2_frames->pop(depth); }
 +};
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..64f6e52 100644
+index cb6af72..855d86b 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,7 +3,10 @@
@@ -176,7 +176,7 @@ index cb6af72..64f6e52 100644
      return nullptr;
  }
  
-@@ -113,42 +124,64 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +124,78 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -217,6 +217,20 @@ index cb6af72..64f6e52 100644
  int sh2_active_slots() { return kSlots; }
  const SH2Module* sh2_active_slot(int i) { return g_active[i]; }
 -void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m; }
++// module_head memoised per slot: the same 64 header bytes give the same hash, so a lookup compares
++// the bytes (a few vector compares) and hashes only when they changed. Exactly module_head(m).
++static const SH2Module* g_head_mod[kSlots];
++static uint8_t g_head_bytes[kSlots][64];
++static uint64_t g_head_hash[kSlots];
++static uint64_t module_head_cached(int slot, const SH2Module* m) {
++    uint8_t* p=m ? host(m->base):nullptr;
++    if(!p) return 0;
++    size_t n=m->size<64 ? m->size:64;
++    if(g_head_mod[slot]==m && std::memcmp(p,g_head_bytes[slot],n)==0) return g_head_hash[slot];
++    uint64_t h=module_head(m);
++    std::memcpy(g_head_bytes[slot],p,n);g_head_mod[slot]=m;g_head_hash[slot]=h;
++    return h;
++}
 +void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m;g_active_heads[i]=module_head(m); }
 +// The header each slot was activated with. A native state keeps it: an overlay loaded over an active
 +// module but not yet called is told apart from that module only by this, so recomputing it from the
@@ -243,7 +257,7 @@ index cb6af72..64f6e52 100644
 +        // Overlay transitions can call an interior export already present in
 +        // the old dispatch table. A changed header triggers full-image identity
 +        // before trusting that entry. Data-only mutation retains its owner.
-+        uint64_t head=module_head(m);
++        uint64_t head=m->callable_entry ? module_head_cached(slot,m) : 0;
 +        if(m->callable_entry && head!=g_active_heads[slot]) {
 +            bool exact=false;
 +            const SH2Module* loaded=sh2_identify_containing(addr,&exact);
@@ -254,7 +268,7 @@ index cb6af72..64f6e52 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -183,12 +216,57 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -183,12 +230,57 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  
