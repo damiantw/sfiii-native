@@ -115,7 +115,7 @@ index 0000000..712a96c
 +    ~SH2CallFrame() { g_sh2_frames->pop(depth); }
 +};
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..c363a45 100644
+index cb6af72..64f6e52 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,7 +3,10 @@
@@ -176,7 +176,7 @@ index cb6af72..c363a45 100644
      return nullptr;
  }
  
-@@ -113,42 +124,59 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +124,64 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -218,6 +218,11 @@ index cb6af72..c363a45 100644
  const SH2Module* sh2_active_slot(int i) { return g_active[i]; }
 -void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m; }
 +void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m;g_active_heads[i]=module_head(m); }
++// The header each slot was activated with. A native state keeps it: an overlay loaded over an active
++// module but not yet called is told apart from that module only by this, so recomputing it from the
++// restored memory would trust the old module's dispatch for the new image.
++uint64_t sh2_active_head(int i) { return g_active_heads[i]; }
++void sh2_set_active_head(int i, uint64_t head) { g_active_heads[i] = head; }
  
  void sh2_activate(const SH2Module* m) {
      for (auto& a : g_active)
@@ -249,7 +254,7 @@ index cb6af72..c363a45 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -183,12 +211,57 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -183,12 +216,57 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  
@@ -1805,7 +1810,7 @@ index 33a2cdd..6b783ff 100644
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..68fbf34 100644
+index 6cbd98f..7bc2ee0 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -1824,7 +1829,7 @@ index 6cbd98f..68fbf34 100644
  
  // ---- dumps of the machine (state.cpp; state.h for the parts) ----------------------------------
  void state_enable();                // the run has safe moments: a game's task switch
-@@ -112,6 +114,12 @@ void state_poll();                  // from the master's polls: dumps due, a sto
+@@ -112,10 +114,18 @@ void state_poll();                  // from the master's polls: dumps due, a sto
  void state_point(SH2Context& c);    // a safe moment: c's registers and PC are all the run needs to go on
  void state_stop(const char* why);   // the run stops at the next dump, or soon without one
  void state_finish();                // the last dump written
@@ -1837,6 +1842,12 @@ index 6cbd98f..68fbf34 100644
  void state_load(const std::string& path);   // after the boot: the machine as the dump has it
  int  sh2_active_slots();            // the modules active now (core.cpp)
  const SH2Module* sh2_active_slot(int i);
+ void sh2_set_active_slot(int i, const SH2Module* m);
++uint64_t sh2_active_head(int i);    // the slot's header at activation (native states keep it)
++void sh2_set_active_head(int i, uint64_t head);
+ 
+ // ---- the BIOS (bios.cpp) -----------------------------------------------------------
+ void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
 diff --git a/runtime/src/machine/scudsp.cpp b/runtime/src/machine/scudsp.cpp
 index ef4f660..26a52aa 100644
 --- a/runtime/src/machine/scudsp.cpp
@@ -2024,10 +2035,10 @@ index ef4f660..26a52aa 100644
              }
          }
 diff --git a/runtime/src/machine/state.cpp b/runtime/src/machine/state.cpp
-index 67ccdd3..9282525 100644
+index 67ccdd3..750a19a 100644
 --- a/runtime/src/machine/state.cpp
 +++ b/runtime/src/machine/state.cpp
-@@ -19,9 +19,23 @@
+@@ -19,13 +19,27 @@
  #include <filesystem>
  #include <map>
  #include <thread>
@@ -2052,8 +2063,25 @@ index 67ccdd3..9282525 100644
  
  // An optional part may be missing from a dump made before it existed; its fields keep their values.
  static const struct { const char* name; void (*fn)(State&); bool optional; } kParts[] = {
-@@ -56,8 +70,11 @@ void core_state(State& s) {
+-    {"machine", machine_state}, {"video", video_state},     {"core", core_state},       {"mmio", mmio_state},
++    {"machine", machine_state}, {"video", video_state},     {"core", core_state},       {"heads", core_heads_state, true}, {"mmio", mmio_state},
+     {"bios", bios_state},       {"scu", scu_state},         {"scudsp", scudsp_state},   {"onchip", onchip_state},
+     {"smpc", smpc_state},       {"cdblock", cdblock_state}, {"vdp1", vdp1_state},       {"vdp2", vdp2_state},
+     {"sound", sound_state},     {"scsp", scsp_state},       {"tasks", tasks_state},     {"cddrive", cddrive_state, true},
+@@ -54,10 +68,23 @@ void core_state(State& s) {
+     }
+ }
  
++// After core: each active slot's header at activation. A dump without this part keeps the headers
++// core_state computed from the restored memory.
++void core_heads_state(State& s) {
++    for (int i = 0; i < sh2_active_slots(); ++i) {
++        uint64_t head = sh2_active_head(i);
++        s(head);
++        if (s.loading) sh2_set_active_head(i, head);
++    }
++}
++
  // ---- writing --------------------------------------------------------------------------------
  static std::atomic<bool> g_writing;
 +static std::atomic<int> g_write_result;
@@ -2064,7 +2092,7 @@ index 67ccdd3..9282525 100644
  static uint64_t g_at_vblank = ~0ull;            // --state-at: the first safe moment from this VBlank on
  static std::chrono::steady_clock::time_point g_next;
  static bool g_points;                           // the run has safe moments (state_enable)
-@@ -75,15 +92,55 @@ static void write_file(std::vector<uint8_t> bytes, std::string path, uint64_t vb
+@@ -75,15 +102,55 @@ static void write_file(std::vector<uint8_t> bytes, std::string path, uint64_t vb
      bool ok = f && std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
      if (f) ok = std::fclose(f) == 0 && ok;
      std::error_code e;
@@ -2122,7 +2150,7 @@ index 67ccdd3..9282525 100644
      if (!g_cfg.state_at.empty()) g_at_vblank = std::stoull(g_cfg.state_at);
      if (g_cfg.state_every) g_next = std::chrono::steady_clock::now() + std::chrono::seconds(g_cfg.state_every);
  }
-@@ -96,6 +153,12 @@ void state_poll() {
+@@ -96,6 +163,12 @@ void state_poll() {
          g_next = std::chrono::steady_clock::now() + std::chrono::seconds(g_cfg.state_every);
          g_wanted = true;
      }
@@ -2135,7 +2163,7 @@ index 67ccdd3..9282525 100644
      if (g_stop_why && sat_vblanks() >= g_stop_by) {
          sat_note("state: no safe moment came, so none was written at the stop");
          sat_stop(g_stop_why);
-@@ -103,6 +166,7 @@ void state_poll() {
+@@ -103,6 +176,7 @@ void state_poll() {
  }
  
  void state_stop(const char* why) {
@@ -2143,7 +2171,7 @@ index 67ccdd3..9282525 100644
      if (g_cfg.state_out.empty() || !g_points) sat_stop(why);
      if (g_stop_why) return;
      g_stop_why = why;
-@@ -113,10 +177,15 @@ void state_stop(const char* why) {
+@@ -113,10 +187,15 @@ void state_stop(const char* why) {
  void state_point(SH2Context& c) {
      if (!g_wanted || g_writing || c.cpu != 0 || sat_in_interrupt() || state_slave_busy()) return;
      g_wanted = false;
@@ -2159,7 +2187,7 @@ index 67ccdd3..9282525 100644
      for (auto& p : kParts) {
          State s;
          p.fn(s);
-@@ -127,6 +196,9 @@ void state_point(SH2Context& c) {
+@@ -127,6 +206,9 @@ void state_point(SH2Context& c) {
          put(out, &size, sizeof size);
          put(out, s.data.data(), s.data.size());
      }
@@ -2169,7 +2197,7 @@ index 67ccdd3..9282525 100644
      if (g_writer.joinable()) g_writer.join();
      g_writing = true;
      g_writer = std::thread(write_file, std::move(out), g_cfg.state_out, sat_vblanks());
-@@ -147,13 +219,24 @@ void state_load(const std::string& path) {
+@@ -147,13 +229,24 @@ void state_load(const std::string& path) {
      if (!f) state_fail("cannot open it");
      std::vector<uint8_t> bytes;
      uint8_t buf[1 << 16];
@@ -2195,7 +2223,7 @@ index 67ccdd3..9282525 100644
      std::map<std::string, std::vector<uint8_t>> parts;
      while (at < bytes.size()) {
          uint8_t n = bytes[at++];
-@@ -163,6 +246,7 @@ void state_load(const std::string& path) {
+@@ -163,6 +256,7 @@ void state_load(const std::string& path) {
          std::memcpy(&size, bytes.data() + at + n, sizeof size);
          at += n + sizeof size;
          if (bytes.size() - at < size) state_fail("cut short");
@@ -2204,7 +2232,7 @@ index 67ccdd3..9282525 100644
          at += size;
      }
 diff --git a/runtime/src/machine/state.h b/runtime/src/machine/state.h
-index 91d606c..387ded9 100644
+index 91d606c..94c273e 100644
 --- a/runtime/src/machine/state.h
 +++ b/runtime/src/machine/state.h
 @@ -34,6 +34,7 @@ struct State {
@@ -2223,6 +2251,14 @@ index 91d606c..387ded9 100644
          if (loading) s.resize(n);
          if (n) raw(s.data(), n);
      }
+@@ -53,6 +55,7 @@ struct State {
+ // The parts, each in the file that owns the state.
+ void machine_state(State& s);
+ void core_state(State& s);
++void core_heads_state(State& s);
+ void mmio_state(State& s);
+ void bios_state(State& s);
+ void scu_state(State& s);
 diff --git a/runtime/src/machine/tasks.cpp b/runtime/src/machine/tasks.cpp
 index c37141d..6517551 100644
 --- a/runtime/src/machine/tasks.cpp
