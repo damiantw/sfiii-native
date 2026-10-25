@@ -2664,7 +2664,7 @@ index 8589d33..03ab903 100644
 +        for(int y=0;y<256;++y) for(int x=0;x<512;++x) scaled_store(p,x,y,g_fb[p][y*512+x]);
  }
 diff --git a/runtime/src/video/vdp1_raster.inc b/runtime/src/video/vdp1_raster.inc
-index 15c677f..af0a0b0 100644
+index 15c677f..4df7e8d 100644
 --- a/runtime/src/video/vdp1_raster.inc
 +++ b/runtime/src/video/vdp1_raster.inc
 @@ -9,7 +9,7 @@
@@ -2784,16 +2784,16 @@ index 15c677f..af0a0b0 100644
          Pt l{step_to(a.x, d.x, i, n), step_to(a.y, d.y, i, n)};
          Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
 -        int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
-+        int v = c.textured ? vdp1_steps::row(i, c.h, n) : 0;
++        int v = c.textured ? vdp1_steps::row(i, c.h, n, c.vflip) : 0;
          Rgb gl{}, gr{};
          if (c.gouraud) { gl = mix(c.g[0], c.g[3], i, n); gr = mix(c.g[1], c.g[2], i, n); }
          line(c, l, r, v, gl, gr);
 diff --git a/runtime/src/video/vdp1_steps.h b/runtime/src/video/vdp1_steps.h
 new file mode 100644
-index 0000000..1be7276
+index 0000000..af28d62
 --- /dev/null
 +++ b/runtime/src/video/vdp1_steps.h
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,111 @@
 +// saturn-recomp runtime — the step arithmetic of VDP1's shape drawing, kept apart from the
 +// drawing so tests can check it. Clean-room: written from Sega's VDP1 User's Manual
 +// (ST-013-R3-061694) and black-box comparison of output frames only.
@@ -2852,8 +2852,12 @@ index 0000000..1be7276
 +// major axis stepping toward -x or -y, a horizontally flipped character swapping the two).
 +inline int column_dir(int k, int w, int len, bool backward) { return stretch_sample(k, w, len, !backward); }
 +// The texture row for line i of n + 1 lines: the texel under the line's centre when shrunk,
-+// corner to corner with exact halves rounded down otherwise.
-+inline int row(int i, int h, int n) { return h > n + 1 ? shrink_sample(i, h, n) : stretch_sample(i, h, n, false); }
++// corner to corner otherwise, with exact halves rounded down, or up for a vertically flipped
++// character (counted in drawing order, before the flip the texel fetch applies). Black-box, as
++// above: flipped enlarged battle-floor tiles (Shining Force III scenarios 2 and 3).
++inline int row(int i, int h, int n, bool vflip = false) {
++    return h > n + 1 ? shrink_sample(i, h, n) : stretch_sample(i, h, n, vflip);
++}
 +
 +// High speed shrink (manual, PMOD bit 12 and FBCR EOS), applied to a line with fewer dots than
 +// the character's width: the line steps over the character's w/2 column pairs, and takes the
@@ -3804,10 +3808,10 @@ index ebaa466..c68e655 100644
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
 diff --git a/runtime/tests/CMakeLists.txt b/runtime/tests/CMakeLists.txt
-index 39eb423..ce3d050 100644
+index 39eb423..0c64c8b 100644
 --- a/runtime/tests/CMakeLists.txt
 +++ b/runtime/tests/CMakeLists.txt
-@@ -8,5 +8,8 @@ if(NOT CMAKE_BUILD_TYPE)
+@@ -8,5 +8,10 @@ if(NOT CMAKE_BUILD_TYPE)
    set(CMAKE_BUILD_TYPE Release)
  endif()
  include(${CMAKE_CURRENT_LIST_DIR}/../runtime.cmake)
@@ -3817,6 +3821,8 @@ index 39eb423..ce3d050 100644
 +# vdp1_replay: a VRAM snapshot drawn by the rasterizer alone (tools/sf3-vdp1-replay.py)
 +add_executable(vdp1_replay vdp1_replay.cpp no_modules.cpp)
 +target_link_libraries(vdp1_replay saturn_core saturn_machine saturn_host Threads::Threads)
++add_executable(vdp2_replay vdp2_replay.cpp no_modules.cpp)
++target_link_libraries(vdp2_replay saturn_core saturn_machine saturn_host Threads::Threads)
 diff --git a/runtime/tests/bup_test.cpp b/runtime/tests/bup_test.cpp
 index 6943552..0c64057 100644
 --- a/runtime/tests/bup_test.cpp
@@ -3978,10 +3984,10 @@ index 0000000..9985dee
 +}
 diff --git a/runtime/tests/vdp1_steps_test.cpp b/runtime/tests/vdp1_steps_test.cpp
 new file mode 100644
-index 0000000..badaa16
+index 0000000..121c067
 --- /dev/null
 +++ b/runtime/tests/vdp1_steps_test.cpp
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,120 @@
 +// VDP1's step arithmetic (vdp1_steps.h) against the rules of Sega's VDP1 User's Manual.
 +#include "../src/video/vdp1_steps.h"
 +#include "test.h"
@@ -4089,6 +4095,10 @@ index 0000000..badaa16
 +    CHECK_EQ(column(3, 16, 7), 7);          // shrunk columns sample centres
 +    CHECK_EQ(row(3, 16, 7), 7);             // and so do rows
 +    CHECK_EQ(row(1, 3, 4), 0);              // enlarged rows: corner to corner, halves down
++    CHECK_EQ(row(1, 3, 4, true), 1);        // a vertically flipped one rounds halves up
++    CHECK_EQ(row(3, 3, 4, true), 2);
++    CHECK_EQ(row(2, 3, 4, true), 1);
++    CHECK_EQ(row(3, 16, 7, true), 7);       // shrunk rows ignore the flip
 +    CHECK_EQ(column(1, 3, 4), 1);           // enlarged columns: halves up
 +}
 +// An anti-aliasing dot takes the next step's texel and colour, never past the line's end.
@@ -4097,6 +4107,54 @@ index 0000000..badaa16
 +    CHECK_EQ(aa_step(4, 5), 5);
 +    CHECK_EQ(aa_step(5, 5), 5);
 +    CHECK_EQ(aa_step(0, 0), 0);
++}
+diff --git a/runtime/tests/vdp2_replay.cpp b/runtime/tests/vdp2_replay.cpp
+new file mode 100644
+index 0000000..3a25230
+--- /dev/null
++++ b/runtime/tests/vdp2_replay.cpp
+@@ -0,0 +1,42 @@
++// VDP2 replay: composes one field from a snapshot of VDP2 VRAM, colour RAM and registers with the
++// sprite layer taken from a given VDP1 framebuffer, outside any game, so a reference picture of
++// the same state can be compared dot for dot (no game timing).
++//   vdp2_replay STATE.bin OUT.bin
++// STATE.bin, all 16-bit words big-endian as the bus sees them: VDP2 VRAM (512 KiB), colour RAM
++// (4 KiB), registers (512 bytes), the VDP1 framebuffer shown (512x256 words), then TVMR and FBCR
++// (one word each). OUT.bin: width and height (u32 little-endian), then 0x00RRGGBB per dot (u32
++// little-endian), top row first.
++#include "../src/video/video.h"
++#include <cstdio>
++#include <cstring>
++#include <vector>
++
++int main(int argc, char** argv) {
++    if (argc < 3) { std::fprintf(stderr, "usage: vdp2_replay STATE.bin OUT.bin\n"); return 2; }
++    const size_t fb_bytes = 512 * 256 * 2, n = sizeof g_vdp2_vram + sizeof g_vdp2_cram + sizeof g_vdp2_regs + fb_bytes + 4;
++    std::vector<uint8_t> in(n);
++    FILE* f = std::fopen(argv[1], "rb");
++    if (!f || std::fread(in.data(), 1, n, f) != n) { std::fprintf(stderr, "bad state file\n"); return 1; }
++    std::fclose(f);
++    const uint8_t* p = in.data();
++    std::memcpy(g_vdp2_vram, p, sizeof g_vdp2_vram); p += sizeof g_vdp2_vram;
++    std::memcpy(g_vdp2_cram, p, sizeof g_vdp2_cram); p += sizeof g_vdp2_cram;
++    std::memcpy(g_vdp2_regs, p, sizeof g_vdp2_regs); p += sizeof g_vdp2_regs;
++    const uint8_t* fb = p; p += fb_bytes;
++    const unsigned tvmr = p[0] << 8 | p[1], fbcr = p[2] << 8 | p[3];
++    vdp1_init();
++    vdp1_reg_write(0x00, tvmr, 2);
++    vdp1_reg_write(0x02, 0, 2);                         // one-cycle mode: the next VBlank-OUT swaps
++    for (int i = 0; i < 512 * 256; ++i) vdp1_fb_write(i * 2, fb[2 * i] << 8 | fb[2 * i + 1], 2);
++    vdp1_vblank_out();                                  // ... so the framebuffer written is shown
++    vdp1_reg_write(0x02, fbcr & ~3u, 2);
++    Frame out;
++    vdp2_compose(out);
++    FILE* o = std::fopen(argv[2], "wb");
++    if (!o) return 1;
++    uint32_t wh[2] = {(uint32_t)out.w, (uint32_t)out.h};
++    std::fwrite(wh, 4, 2, o);
++    std::fwrite(out.px.data(), 4, out.px.size(), o);
++    std::fclose(o);
++    return 0;
 +}
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
 index de3d7ec..a14fa32 100644
