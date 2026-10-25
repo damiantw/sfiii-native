@@ -7,9 +7,9 @@ assist none
 clock 2026-01-01T00:00:00
 record_sha1 a7515031fbf2ae0d
 load 3689
-binary e935eb29898c0ace
+binary 5da39adf05d54257
 end_vblank 103689
-end_ram_sha1 3b50e18da0e47724
+end_ram_sha1 34a59161cdc1a3d7
 end_flags_sha1 7aeae9bc21885be7
 reached save:Sc2-Ch6:14
 input
