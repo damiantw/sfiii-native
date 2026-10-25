@@ -454,6 +454,7 @@ def main():
     q.add_argument('--max-levels', type=int, default=400)
     q.add_argument('--max-backs', type=int, default=40)
     q.add_argument('--no-left', action='store_true', help='do not score battle id 0 as Egress/defeat (Sc2 V1.003: its map/battle bytes do not track in Ch6)')
+    q.add_argument('--resync', action='store_true', help='after each level, replay the committed pads straight from the save and continue from that run (save-state restores are not exact)')
     q.add_argument('--stall', type=int, default=8, help='stop when the best score is flat this many levels (0: never)')
     q.add_argument('-j', '--jobs', type=int, default=4)
     o = sub.add_parser('order')
