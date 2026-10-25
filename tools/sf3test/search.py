@@ -194,7 +194,9 @@ def search(a):
         rs.step()
     root = unit_hp(rs.read, units)
     root_battle = rs.read(mm['battle_id'], 1)[0]
-    leader = min(root['force'])
+    leader = getattr(a, 'leader', None)
+    if leader is None or leader not in root['force']:
+        leader = min(root['force'])
     st0 = out / 'states' / 'root.state'
     save_state(r, st0)
     base_actions, v0 = list(rs.actions), r.vblank
