@@ -493,3 +493,24 @@ class RealCoverage(unittest.TestCase):
         self.assertEqual(a['ran_bytes'], 4)
         self.assertAlmostEqual(a['pct'], 100 * 4 / a['real_bytes'])
         self.assertEqual(realcov.ran_set(['A 06001010 2 1\nA 06001012 0 0']), {('A', 0x06001010)})
+
+
+def test_search_finalize_takes_straight_replay_hashes(tmp_path, monkeypatch):
+    import subprocess
+    import types
+    from sf3test import search, story
+    header = dict(profile='p', save='s.bin', record='save:A:1', seed='search-k1-w1-l1-s1', assist='none',
+                  clock='2026-01-01T00:00:00', record_sha1='0' * 16, load=10, binary='b' * 16, end_vblank=99,
+                  end_ram_sha1='a' * 16, end_flags_sha1='f' * 16, reached='save:A:2')
+    (tmp_path / 'segment.txt').write_text(story.segment_text(header, [(20, 'pad', 'START')]))
+    line = ("seg: MISMATCH end {'units': {}, 'vblank': 99, 'ram_sha1': 'cccccccccccccccc', "
+            "'flags_sha1': 'ffffffffffffffff'} reached ['save:A:2']")
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: types.SimpleNamespace(stdout=line + '\n', stderr=''))
+    a = types.SimpleNamespace(saturn='x', cue='c', saves=['s.bin'])
+    assert search.finalize(a, tmp_path)
+    h, acts = story.parse_segment((tmp_path / 'segment.txt').read_text())
+    assert h['end_ram_sha1'] == 'c' * 16 and acts == [(20, 'pad', 'START')]
+    assert 'a' * 16 in (tmp_path / 'segment-search.txt').read_text()
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: types.SimpleNamespace(stdout='seg: run stopped\n', stderr=''))
+    (tmp_path / 'segment.txt').write_text(story.segment_text(header, [(20, 'pad', 'START')]))
+    assert not search.finalize(a, tmp_path)
