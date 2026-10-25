@@ -267,6 +267,14 @@ class BattleTurns(unittest.TestCase):
         w = dict(memory_map.assist_writes(rd, dict(force=0, enemies=0x1000), enemy_hp=1))
         self.assertEqual(w[0x1000 + mm.UNIT_HP], b'\x00\x01')
 
+    def test_scene_records_and_tile_events(self):
+        raw = bytes.fromhex('0026020000000000000000000000000000270179000000000000000000000000')
+        mm = memory_map
+        self.assertEqual(mm.scene_records(raw), [(0, 0x26, 0x200), (1, 0x27, 0x179)])
+        tiles = bytearray(4096)
+        tiles[32 * 64 + 37], tiles[29 * 64 + 38], tiles[5] = 0x11, 0x51, 0x41
+        self.assertEqual(mm.tile_events(bytes(tiles)), {(37, 32): (1, 1), (38, 29): (5, 1)})
+
     def test_live_byte_tables(self):
         mm = memory_map                                           # invented roster records
         raw = bytearray(mm.UNIT_STRIDE * mm.UNIT_COUNT)
