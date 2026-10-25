@@ -120,7 +120,10 @@ def player_tile(x_raw, z_raw, shift=21):
     return t(x_raw), t(z_raw)
 
 
-BATTLE_UNITS = {'scenario1-usa-v25_1': dict(enemies=0x0602F6F0, force=0x06032030)}
+# Round 26: Sc1 late battles (Battle 30, record 3:25) use the same tables, but the force table is the
+# whole roster there and +0x80 is stale (Wolf 0xC0 off the field); +0x98/+0x99 are 1/1 for every
+# unit on the field in Battle 1 and Battle 30 alike, so Sc1 uses the 'live' test too.
+BATTLE_UNITS = {'scenario1-usa-v25_1': dict(enemies=0x0602F6F0, force=0x06032030, live=0x98)}
 # Round 13 (sc2-2.000 58271484, sc3 0e80231f; black-box, same method: scan work RAM for named
 # records at stride 0xB0 in a Ch1 battle, then read them against the status window: Sc2 Ch1 :01
 # Campbell 12/13, Sc3 Ch1 :01 Julian 52/52). Same layout, enemies again 60 records before the
