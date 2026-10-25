@@ -314,11 +314,60 @@ index cb6af72..64f6e52 100644
      }
      if (SH2Func f = sh2_lookup(addr)) f(c);
      else sh2_call_unknown(c, addr);
+diff --git a/runtime/src/host/frame_stats.h b/runtime/src/host/frame_stats.h
+new file mode 100644
+index 0000000..00c23c1
+--- /dev/null
++++ b/runtime/src/host/frame_stats.h
+@@ -0,0 +1,35 @@
++// saturn-recomp runtime — how evenly the window shows its pictures: intervals between presents
++// and the time each field took to run, for SF3_FRAMETIME (summary at exit, optional CSV).
++#pragma once
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++#include <cstdio>
++#include <vector>
++
++struct FrameStats {
++    std::vector<double> ms;  // one sample per event, milliseconds
++
++    void add(double v) { ms.push_back(v); }
++
++    struct Summary { size_t n = 0; double mean = 0, stddev = 0, p50 = 0, p99 = 0, max = 0; size_t over = 0; };
++
++    // `limit`: samples above it count in `over` (a picture held on screen too long, a late field).
++    Summary summary(double limit) const {
++        Summary s;
++        s.n = ms.size();
++        if (!s.n) return s;
++        double sum = 0;
++        for (double v : ms) { sum += v; s.over += v > limit; s.max = std::max(s.max, v); }
++        s.mean = sum / s.n;
++        double var = 0;
++        for (double v : ms) var += (v - s.mean) * (v - s.mean);
++        s.stddev = std::sqrt(var / s.n);
++        std::vector<double> sorted = ms;
++        std::sort(sorted.begin(), sorted.end());
++        auto at = [&](double q) { return sorted[std::min(s.n - 1, (size_t)(q * (s.n - 1) + 0.5))]; };
++        s.p50 = at(0.5);
++        s.p99 = at(0.99);
++        return s;
++    }
++};
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..6942ad7 100644
+index feded39..b58ef47 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
-@@ -42,6 +42,15 @@
+@@ -33,6 +33,7 @@
+ #include "host.h"
+ #include "host_sdl.h"
+ #include "pace.h"
++#include "frame_stats.h"
+ #include "pad_slots.h"
+ #include "settings.h"
+ #include "touch_pad.h"
+@@ -42,6 +43,15 @@
  #include <chrono>
  #include <cstring>
  #include <map>
@@ -334,7 +383,7 @@ index feded39..6942ad7 100644
  
  static SDL_Window* g_win;
  static PadSlots g_slots(kHostSlots);
-@@ -50,19 +59,40 @@ static SDL_Texture* g_tex;
+@@ -50,19 +60,45 @@ static SDL_Texture* g_tex;
  static int g_tex_w, g_tex_h;
  static uint16_t g_buttons[kHostSlots];
  static const Frame* g_last;
@@ -351,11 +400,17 @@ index feded39..6942ad7 100644
  using Clock = PaceClock;
  static Clock::time_point g_base;                // host time of virtual time 0
  static bool g_paced;
+-
+-bool host_wants_frame() { return g_win && (!sat_resuming() || sat_vblanks() % 30 == 0); }
++// SF3_FRAMETIME: present-to-present intervals, the run time of each field and its wait, summary at exit
++static const char* g_ft_path = std::getenv("SF3_FRAMETIME");
++static FrameStats g_ft_present, g_ft_work, g_ft_wait;
++static Clock::time_point g_ft_last_present, g_ft_last_pace;
++static uint64_t g_ft_late;
 +static int g_game_speed = 1; // Host pacing only; never change machine clocks.
 +static void speed_set(int speed);
 +static bool gpu_offscreen() {return std::getenv("SF3_GPU_OFFSCREEN")!=nullptr;}
- 
--bool host_wants_frame() { return g_win && (!sat_resuming() || sat_vblanks() % 30 == 0); }
++
 +bool host_wants_frame() { return g_win && sat_vblanks() % (sat_resuming() ? 30 : g_game_speed) == 0; }
  uint16_t host_pad(int slot) { return g_buttons[slot]; }
 -bool host_pad_connected(int slot) { return g_win && (slot == 0 || g_slots.taken(slot)); }
@@ -377,7 +432,7 @@ index feded39..6942ad7 100644
  static std::string g_settings_path, g_settings_text;     // the file and its text, which a save writes over
  static void bind_keyboard();
  
-@@ -91,6 +121,25 @@ static void load_settings(const std::string& named) {
+@@ -91,6 +127,25 @@ static void load_settings(const std::string& named) {
              for (auto& p : problems) sat_note("%s, so its default", p.c_str());
          }
      }
@@ -403,7 +458,7 @@ index feded39..6942ad7 100644
      bind_keyboard();
  }
  
-@@ -112,7 +161,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
+@@ -112,7 +167,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
  
  bool host_window(const SaturnConfig& cfg) {
      if (g_win) return true;
@@ -417,7 +472,7 @@ index feded39..6942ad7 100644
      load_settings(cfg.settings);
      int s = cfg.scale > 0 ? cfg.scale : g_settings.number("display", "scale");
      bool full = cfg.fullscreen || g_settings.flag("display", "fullscreen");
-@@ -121,12 +176,29 @@ bool host_window(const SaturnConfig& cfg) {
+@@ -121,12 +182,29 @@ bool host_window(const SaturnConfig& cfg) {
      SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
      full = true;
  #endif
@@ -447,7 +502,7 @@ index feded39..6942ad7 100644
      ui_open(g_ren);
      // host_pace keeps real time; a present that waited for the display would stall the whole machine
      // whenever the compositor stops sending frames, as KWin does for a window that is out of sight
-@@ -150,6 +222,11 @@ bool host_open() {
+@@ -150,6 +228,11 @@ bool host_open() {
      g_touchscreen = touch_devices > 0;
      g_base = Clock::now();
      g_paced = !g_cfg.realtime;
@@ -459,7 +514,7 @@ index feded39..6942ad7 100644
      return true;
  }
  
-@@ -163,6 +240,10 @@ struct HostCall {
+@@ -163,6 +246,10 @@ struct HostCall {
  static SDL_AudioStream* g_audio;
  static const int kLead = 2205, kMax = 11025;    // frames: 50 ms ahead, 250 ms at most
  static int g_underruns, g_dropped;
@@ -470,7 +525,7 @@ index feded39..6942ad7 100644
  
  static void audio_silence(int frames) {
      std::vector<int16_t> z((size_t)frames * 2);
-@@ -174,23 +255,102 @@ bool host_audio_open() {
+@@ -174,23 +261,121 @@ bool host_audio_open() {
      SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, 44100};
      g_audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
      if (!g_audio) { sat_note("SDL audio: %s (no sound)", SDL_GetError()); return false; }
@@ -544,10 +599,29 @@ index feded39..6942ad7 100644
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    if (g_audio_buffer.ready(queued + frames)) SDL_ResumeAudioStreamDevice(g_audio);
 +#endif
++}
++
++static void frame_report() {
++    if (!g_ft_path || !g_win) return;
++    auto line = [](const char* what, const FrameStats& f, double limit) {
++        auto s = f.summary(limit);
++        std::fprintf(stderr, "  frame time %s: n=%zu mean=%.3f ms sd=%.3f p50=%.3f p99=%.3f max=%.3f; %zu over %.1f ms\n",
++                     what, s.n, s.mean, s.stddev, s.p50, s.p99, s.max, s.over, limit);
++    };
++    line("present interval", g_ft_present, 20.0);
++    line("field run (emulate+compose+present)", g_ft_work, 16.0);
++    line("pace wait", g_ft_wait, 1000.0);
++    std::fprintf(stderr, "  frame time: %llu fields behind schedule (no wait)\n", (unsigned long long)g_ft_late);
++    if (*g_ft_path) if (FILE* f = std::fopen(g_ft_path, "w")) {
++        std::fprintf(f, "present_interval_ms\n");
++        for (double v : g_ft_present.ms) std::fprintf(f, "%.4f\n", v);
++        std::fclose(f);
++    }
  }
  
  void host_audio_report() {
 -    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped\n", g_underruns, g_dropped);
++    frame_report();
 +    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped, %d producer waits\n", g_underruns, g_dropped, g_audio_waits);
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    if(g_perf_fields>1)std::fprintf(stderr,"  presentation profile: %llu fields, %.3f seconds, %.3f fields/sec; %d audio underruns in measured interval; GPU %llu draws, %llu repeated fields reused; %llu native compositions reused; %llu sampled fields\n",
@@ -577,7 +651,7 @@ index feded39..6942ad7 100644
  }
  
  // ---- the pad ----------------------------------------------------------------------------------
-@@ -281,6 +441,9 @@ static void read_pads() {
+@@ -281,6 +466,9 @@ static void read_pads() {
          if (k[key] && !(alt && key == SDL_SCANCODE_RETURN)) b[0] |= bit;   // Alt+Enter is fullscreen
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -587,7 +661,7 @@ index feded39..6942ad7 100644
          if (s >= 0) b[s] |= gamepad_buttons(p.pad, p.map);
      }
      for (int s = 0; s < kHostSlots; ++s) {
-@@ -292,6 +455,7 @@ static void read_pads() {
+@@ -292,6 +480,7 @@ static void read_pads() {
  }
  
  static void pad_added(SDL_JoystickID id) {
@@ -595,7 +669,7 @@ index feded39..6942ad7 100644
      SDL_Gamepad* pad = SDL_OpenGamepad(id);
      if (!pad) return;
      char guid[33];
-@@ -303,7 +467,11 @@ static void pad_added(SDL_JoystickID id) {
+@@ -303,7 +492,11 @@ static void pad_added(SDL_JoystickID id) {
          return;
      }
      g_pads.push_back({pad, id, bind_gamepad(guid)});
@@ -608,7 +682,7 @@ index feded39..6942ad7 100644
  }
  
  static void pad_removed(SDL_JoystickID id) {
-@@ -329,6 +497,7 @@ void host_rebind() {
+@@ -329,6 +522,7 @@ void host_rebind() {
  void host_pad_event(const SDL_Event& e) {
      if (e.type == SDL_EVENT_GAMEPAD_ADDED) pad_added(e.gdevice.which);
      if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pad_removed(e.gdevice.which);
@@ -616,7 +690,7 @@ index feded39..6942ad7 100644
  }
  
  std::vector<HostController> host_controllers() {
-@@ -336,6 +505,9 @@ std::vector<HostController> host_controllers() {
+@@ -336,6 +530,9 @@ std::vector<HostController> host_controllers() {
      std::vector<HostController> out;
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -626,7 +700,7 @@ index feded39..6942ad7 100644
          if (s >= 0) out.push_back({SDL_GetGamepadName(p.pad), s, gamepad_buttons(p.pad, p.map) != 0});
      }
      std::sort(out.begin(), out.end(), [](const HostController& a, const HostController& b) { return a.slot < b.slot; });
-@@ -438,7 +610,7 @@ static uint16_t touch_read() {
+@@ -438,7 +635,7 @@ static uint16_t touch_read() {
  // by as long as it was, so the run is the same run with or without it. A panel of two columns where
  // the screen is wide enough, the game's choices in one and the touch pad's in the other, each a row:
  // an action, a choice of a few, a slider, or a switch.
@@ -635,7 +709,7 @@ index feded39..6942ad7 100644
  enum class Control { Action, Choice, Slider, Switch };
  struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
  struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
-@@ -456,10 +628,22 @@ static void setting_change(const char* key, const char* value) {
+@@ -456,10 +653,22 @@ static void setting_change(const char* key, const char* value) {
      host_settings_save();
  }
  
@@ -660,7 +734,7 @@ index feded39..6942ad7 100644
      std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
      for (int i = 0; i < choice_count(id); ++i)
          if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
-@@ -468,6 +652,10 @@ static int choice_at(MenuId id) {
+@@ -468,6 +677,10 @@ static int choice_at(MenuId id) {
  
  static void choose(MenuId id, int i) {
      i = (i + choice_count(id)) % choice_count(id);
@@ -671,7 +745,7 @@ index feded39..6942ad7 100644
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -482,6 +670,15 @@ static const char* menu_label(MenuId id) {
+@@ -482,6 +695,15 @@ static const char* menu_label(MenuId id) {
      case M_RESUME: return "Resume";
      case M_SAVES: return "Save files";
      case M_QUIT: return "Quit";
@@ -687,7 +761,7 @@ index feded39..6942ad7 100644
      case M_PAD: return "Show pad";
      case M_SIZE: return "Size";
      case M_STYLE: return "Style";
-@@ -492,6 +689,16 @@ static const char* menu_label(MenuId id) {
+@@ -492,6 +714,16 @@ static const char* menu_label(MenuId id) {
  static MenuLayout menu_layout() {
      const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 340, between = 24;
      std::vector<std::pair<MenuId, Control>> game = {{M_RESUME, Control::Action}};
@@ -704,7 +778,7 @@ index feded39..6942ad7 100644
      if (!g_cfg.after.empty()) game.push_back({M_SAVES, Control::Action});
      game.push_back({M_QUIT, Control::Action});
      const std::vector<std::pair<MenuId, Control>> touch = {
-@@ -527,7 +734,7 @@ static MenuLayout menu_layout() {
+@@ -527,7 +759,7 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
@@ -713,7 +787,7 @@ index feded39..6942ad7 100644
      return {r.r.x + r.r.w - w - 10 * l.u, r.r.y + 9 * l.u, w, r.r.h - 18 * l.u};
  }
  
-@@ -563,12 +770,186 @@ static void menu_quit(bool to_saves) {
+@@ -563,12 +795,186 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -901,7 +975,7 @@ index feded39..6942ad7 100644
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +961,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +986,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
@@ -910,7 +984,7 @@ index feded39..6942ad7 100644
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -656,8 +1037,19 @@ static void on_event(const SDL_Event& e) {
+@@ -656,8 +1062,19 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -930,7 +1004,7 @@ index feded39..6942ad7 100644
          if (k == SDL_SCANCODE_F12 && !e.key.repeat) save_shot();
          if ((k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.mod & SDL_KMOD_ALT))) && !e.key.repeat) {
              SDL_SetWindowFullscreen(g_win, !(SDL_GetWindowFlags(g_win) & SDL_WINDOW_FULLSCREEN));
-@@ -686,10 +1078,21 @@ static void on_event(const SDL_Event& e) {
+@@ -686,10 +1103,21 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -954,7 +1028,7 @@ index feded39..6942ad7 100644
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -894,12 +1297,40 @@ static void draw_catching_up() {
+@@ -894,12 +1322,40 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -996,7 +1070,7 @@ index feded39..6942ad7 100644
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,15 +1343,16 @@ static void draw() {
+@@ -912,15 +1368,21 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -1005,6 +1079,11 @@ index feded39..6942ad7 100644
 +    if (present) {
 +        HostCall in("SDL_RenderPresent");
 +        SDL_RenderPresent(g_ren);
++        if (g_ft_path && !g_menu_open && !sat_resuming()) {
++            auto t = Clock::now();
++            if (g_ft_last_present != Clock::time_point{}) g_ft_present.add(std::chrono::duration<double, std::milli>(t - g_ft_last_present).count());
++            g_ft_last_present = t;
++        }
 +    }
  }
  
@@ -1016,7 +1095,7 @@ index feded39..6942ad7 100644
      while (g_menu_open) {
          SDL_Event e;
          {
-@@ -931,38 +1363,86 @@ static void menu_loop() {
+@@ -931,38 +1393,86 @@ static void menu_loop() {
          HostCall in("SDL_Delay");
          SDL_Delay(16);
      }
@@ -1124,7 +1203,7 @@ index feded39..6942ad7 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,12 +1453,16 @@ void host_present(const Frame& f) {
+@@ -973,14 +1483,25 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {
@@ -1140,10 +1219,19 @@ index feded39..6942ad7 100644
          return;
      }
 -    auto wait = pace_wait(g_base, now, Clock::now());
-+    auto wait = pace_wait(g_base, now, Clock::now(), g_game_speed);
++    auto entered = Clock::now();
++    auto wait = pace_wait(g_base, now, entered, g_game_speed);
++    if (g_ft_path) {
++        if (g_ft_last_pace != Clock::time_point{}) g_ft_work.add(std::chrono::duration<double, std::milli>(entered - g_ft_last_pace).count());
++        g_ft_wait.add(std::chrono::duration<double, std::milli>(wait).count());
++        if (wait == Clock::duration{}) ++g_ft_late;
++    }
      if (wait > Clock::duration{}) {
          HostCall in("SDL_DelayPrecise");
          SDL_DelayPrecise((Uint64)std::chrono::duration_cast<std::chrono::nanoseconds>(wait).count());
+     }
++    if (g_ft_path) g_ft_last_pace = Clock::now();
+ }
 diff --git a/runtime/src/host/pace.h b/runtime/src/host/pace.h
 index 80d7730..23f8231 100644
 --- a/runtime/src/host/pace.h
@@ -3675,7 +3763,7 @@ index 4c8bcb1..c5f555d 100644
 -void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
-index 88d1642..c9182c1 100644
+index 88d1642..00a1b7c 100644
 --- a/runtime/src/video/video.cpp
 +++ b/runtime/src/video/video.cpp
 @@ -21,6 +21,7 @@
@@ -3729,7 +3817,39 @@ index 88d1642..c9182c1 100644
  }
  
  static void vblank_in(uint64_t now) {
-@@ -144,6 +159,10 @@ uint32_t video_read(uint32_t a, int size) {
+@@ -76,6 +91,7 @@ static void vblank_in(uint64_t now) {
+     if (listed(g_cfg.dump, n)) dump("", g_vblanks);
+     bool shot = listed(g_cfg.shots, n);
+     bool compose = shot || host_wants_frame() || movie_on();
++    bool composed = false;
+     if (vdp1_interp_field(compose) && compose) {
+         uint8_t saved[0x30];
+         std::copy(g_vdp2_regs + 0x70, g_vdp2_regs + 0xA0, saved);
+@@ -84,16 +100,20 @@ static void vblank_in(uint64_t now) {
+         std::copy(saved, saved + 0x30, g_vdp2_regs + 0x70);
+         if (shot) write_png(g_cfg.out + "/shot-" + n + ".png", g_frame);
+         movie_frame(g_frame);
+-        host_present(g_frame);
++        composed = true;
+     } else if (compose) {
+         vdp2_compose(g_frame);
+         if (shot) write_png(g_cfg.out + "/shot-" + n + ".png", g_frame);
+         movie_frame(g_frame);
+-        host_present(g_frame);
++        composed = true;
+     }
++    // The window waits for the field's real time first and shows the picture after: the picture
++    // goes out at an even cadence whatever the field cost to run, and the pad is read as late as
++    // possible. Neither moves anything in machine time (the same field, the same VBlank).
++    host_pace(now);
++    if (composed) host_present(g_frame);
+     scu_raise(IRQ_VBLANK_IN);
+     scu_frame_event(0);
+-    host_pace(now);
+ }
+ 
+ void video_tick(uint64_t now) {
+@@ -144,6 +164,10 @@ uint32_t video_read(uint32_t a, int size) {
  
  void video_write(uint32_t a, uint32_t v, int size) {
      if (a < 0x05B01000u) { sound_write(a, v, size); return; }
@@ -3933,6 +4053,36 @@ index 0000000..6b71f96
 +    CHECK_EQ(sh2_mmio_read(0x012C0002, 1), 0xFFu);
 +    CHECK_EQ(sh2_mmio_read(0x012C0002, 2), 0xFFFFu);
 +    CHECK_EQ(sh2_mmio_read(0x01800000, 4), 0xFFFFFFFFu);
++}
+diff --git a/runtime/tests/pace_test.cpp b/runtime/tests/pace_test.cpp
+index 7bb79b6..7db24c2 100644
+--- a/runtime/tests/pace_test.cpp
++++ b/runtime/tests/pace_test.cpp
+@@ -44,3 +44,25 @@ TEST(small_lateness_preserves_the_next_due_time) {
+     CHECK_EQ(ns(base - start), 0);
+     CHECK_EQ(ns(pace_wait(base, ns(milliseconds(34)), t)), ns(milliseconds(14)));
+ }
++
++#include "../src/host/frame_stats.h"
++
++TEST(frame_stats_summarise_an_even_and_a_held_picture) {
++    FrameStats f;
++    for (int i = 0; i < 99; ++i) f.add(16.0);
++    f.add(33.0);
++    auto s = f.summary(20.0);
++    CHECK_EQ(s.n, 100u);
++    CHECK_EQ(s.over, 1u);
++    CHECK_EQ((int)std::lround(s.max * 10), 330);
++    CHECK_EQ((int)std::lround(s.p50 * 10), 160);
++    CHECK_EQ((int)std::lround(s.mean * 1000), 16170);
++    CHECK_EQ((int)std::lround(s.stddev * 1000), 1691);  // sqrt(0.99*0.17^2 + 0.01*16.83^2)
++}
++
++TEST(frame_stats_empty_is_zero) {
++    FrameStats f;
++    auto s = f.summary(20.0);
++    CHECK_EQ(s.n, 0u);
++    CHECK_EQ(s.over, 0u);
 +}
 diff --git a/runtime/tests/vdp1_replay.cpp b/runtime/tests/vdp1_replay.cpp
 new file mode 100644
