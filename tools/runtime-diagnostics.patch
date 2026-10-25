@@ -115,7 +115,7 @@ index 0000000..712a96c
 +    ~SH2CallFrame() { g_sh2_frames->pop(depth); }
 +};
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..64f6e52 100644
+index cb6af72..1097156 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,7 +3,10 @@
@@ -176,7 +176,7 @@ index cb6af72..64f6e52 100644
      return nullptr;
  }
  
-@@ -113,42 +124,64 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +124,116 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -184,6 +184,11 @@ index cb6af72..64f6e52 100644
 +static const int kSlots = 64;
  static const SH2Module* g_active[kSlots];
 +static uint64_t g_active_heads[kSlots];
++// Bumped by every change to g_active or g_active_heads: a remembered lookup holds for one generation.
++static uint64_t g_active_gen = 1;
++struct LookupEntry { uint32_t addr = 0; uint8_t n = 0; uint8_t slots[2] = {}; uint64_t gen = 0; SH2Func fn = nullptr; };
++static LookupEntry g_lookup[8192];
++static inline uint32_t lookup_index(uint32_t addr) { return ((addr >> 1) ^ (addr >> 14)) & 8191u; }
 +static uint64_t module_head(const SH2Module* m) {
 +    uint8_t* p=m ? host(m->base):nullptr;
 +    if(!p) return 0;
@@ -217,14 +222,29 @@ index cb6af72..64f6e52 100644
  int sh2_active_slots() { return kSlots; }
  const SH2Module* sh2_active_slot(int i) { return g_active[i]; }
 -void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m; }
-+void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m;g_active_heads[i]=module_head(m); }
++// module_head memoised per slot: the same 64 header bytes give the same hash, so a lookup compares
++// the bytes (a few vector compares) and hashes only when they changed. Exactly module_head(m).
++static const SH2Module* g_head_mod[kSlots];
++static uint8_t g_head_bytes[kSlots][64];
++static uint64_t g_head_hash[kSlots];
++static uint64_t module_head_cached(int slot, const SH2Module* m) {
++    uint8_t* p=m ? host(m->base):nullptr;
++    if(!p) return 0;
++    size_t n=m->size<64 ? m->size:64;
++    if(g_head_mod[slot]==m && std::memcmp(p,g_head_bytes[slot],n)==0) return g_head_hash[slot];
++    uint64_t h=module_head(m);
++    std::memcpy(g_head_bytes[slot],p,n);g_head_mod[slot]=m;g_head_hash[slot]=h;
++    return h;
++}
++void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m;g_active_heads[i]=module_head(m);++g_active_gen; }
 +// The header each slot was activated with. A native state keeps it: an overlay loaded over an active
 +// module but not yet called is told apart from that module only by this, so recomputing it from the
 +// restored memory would trust the old module's dispatch for the new image.
 +uint64_t sh2_active_head(int i) { return g_active_heads[i]; }
-+void sh2_set_active_head(int i, uint64_t head) { g_active_heads[i] = head; }
++void sh2_set_active_head(int i, uint64_t head) { g_active_heads[i] = head;++g_active_gen; }
  
  void sh2_activate(const SH2Module* m) {
++    ++g_active_gen;
      for (auto& a : g_active)
          if (a && a->base < m->base + m->size && m->base < a->base + a->size) a = nullptr;
 -    for (auto& a : g_active)
@@ -234,27 +254,59 @@ index cb6af72..64f6e52 100644
      std::fprintf(stderr, "saturn-recomp: more than %d modules active\n", kSlots);
  }
  
++static SH2Func lookup_slow(uint32_t addr);
++
  SH2Func sh2_lookup(uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;           // code run cache-through
 -    for (const SH2Module* m : g_active) {
++    LookupEntry& e = g_lookup[lookup_index(addr)];
++    if (e.addr == addr && e.gen == g_active_gen) {
++        // The slots the scan passes that hold addr: their headers must still be the ones they
++        // were activated with, as lookup_slow checks; any change takes the slow path and its effects.
++        bool same = true;
++        for (int k = 0; k < e.n && same; ++k) {
++            const SH2Module* m = g_active[e.slots[k]];
++            if (m->callable_entry) same = module_head_cached(e.slots[k], m) == g_active_heads[e.slots[k]];
++        }
++        if (same) return e.fn;
++    }
++    uint64_t gen = g_active_gen;
++    SH2Func f = lookup_slow(addr);
++    if (!f || gen != g_active_gen) return f;
++    // Remember the result with every slot the scan met that holds addr (normally one).
++    uint8_t slots[2]; int n = 0;
++    for (int slot = 0; slot < kSlots; ++slot) {
++        const SH2Module* m = g_active[slot];
++        if (!m || addr - m->base >= m->size) continue;
++        if (n == 2) return f;                            // unusual overlap: not cached
++        slots[n++] = (uint8_t)slot;
++        if (has_entry(m, addr)) break;
++    }
++    e.addr = addr; e.gen = g_active_gen; e.fn = f; e.n = (uint8_t)n; e.slots[0] = slots[0]; e.slots[1] = n > 1 ? slots[1] : 0;
++    return f;
++}
++
++// The scan over the active slots in order; the first holding addr with an entry there gives it.
++static SH2Func lookup_slow(uint32_t addr) {
 +    for (int slot=0;slot<kSlots;++slot) {
 +        const SH2Module* m=g_active[slot];
          if (!m || addr - m->base >= m->size) continue;
 +        // Overlay transitions can call an interior export already present in
 +        // the old dispatch table. A changed header triggers full-image identity
 +        // before trusting that entry. Data-only mutation retains its owner.
-+        uint64_t head=module_head(m);
++        uint64_t head=m->callable_entry ? module_head_cached(slot,m) : 0;
 +        if(m->callable_entry && head!=g_active_heads[slot]) {
 +            bool exact=false;
 +            const SH2Module* loaded=sh2_identify_containing(addr,&exact);
++            ++g_active_gen;
 +            if(!exact) {g_active[slot]=nullptr;return nullptr;}
 +            g_active_heads[slot]=head;
-+            if(exact && loaded && loaded!=m) {sh2_activate(loaded);return sh2_lookup(addr);}
++            if(exact && loaded && loaded!=m) {sh2_activate(loaded);return lookup_slow(addr);}
 +        }
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -183,12 +216,57 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -183,12 +268,57 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  
@@ -303,7 +355,7 @@ index cb6af72..64f6e52 100644
 +            for (int slot=0;slot<kSlots;++slot) {
 +                const SH2Module* active=g_active[slot];
 +                if (active && active->base == addr && active->callable_entry && has_entry(active, addr)) {
-+                    if(module_head(active)!=g_active_heads[slot]) {g_active[slot]=nullptr;continue;}
++                    if(module_head(active)!=g_active_heads[slot]) {g_active[slot]=nullptr;++g_active_gen;continue;}
 +                    m = active;
 +                    break;
 +                }
@@ -314,11 +366,60 @@ index cb6af72..64f6e52 100644
      }
      if (SH2Func f = sh2_lookup(addr)) f(c);
      else sh2_call_unknown(c, addr);
+diff --git a/runtime/src/host/frame_stats.h b/runtime/src/host/frame_stats.h
+new file mode 100644
+index 0000000..00c23c1
+--- /dev/null
++++ b/runtime/src/host/frame_stats.h
+@@ -0,0 +1,35 @@
++// saturn-recomp runtime — how evenly the window shows its pictures: intervals between presents
++// and the time each field took to run, for SF3_FRAMETIME (summary at exit, optional CSV).
++#pragma once
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++#include <cstdio>
++#include <vector>
++
++struct FrameStats {
++    std::vector<double> ms;  // one sample per event, milliseconds
++
++    void add(double v) { ms.push_back(v); }
++
++    struct Summary { size_t n = 0; double mean = 0, stddev = 0, p50 = 0, p99 = 0, max = 0; size_t over = 0; };
++
++    // `limit`: samples above it count in `over` (a picture held on screen too long, a late field).
++    Summary summary(double limit) const {
++        Summary s;
++        s.n = ms.size();
++        if (!s.n) return s;
++        double sum = 0;
++        for (double v : ms) { sum += v; s.over += v > limit; s.max = std::max(s.max, v); }
++        s.mean = sum / s.n;
++        double var = 0;
++        for (double v : ms) var += (v - s.mean) * (v - s.mean);
++        s.stddev = std::sqrt(var / s.n);
++        std::vector<double> sorted = ms;
++        std::sort(sorted.begin(), sorted.end());
++        auto at = [&](double q) { return sorted[std::min(s.n - 1, (size_t)(q * (s.n - 1) + 0.5))]; };
++        s.p50 = at(0.5);
++        s.p99 = at(0.99);
++        return s;
++    }
++};
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..6942ad7 100644
+index feded39..b58ef47 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
-@@ -42,6 +42,15 @@
+@@ -33,6 +33,7 @@
+ #include "host.h"
+ #include "host_sdl.h"
+ #include "pace.h"
++#include "frame_stats.h"
+ #include "pad_slots.h"
+ #include "settings.h"
+ #include "touch_pad.h"
+@@ -42,6 +43,15 @@
  #include <chrono>
  #include <cstring>
  #include <map>
@@ -334,7 +435,7 @@ index feded39..6942ad7 100644
  
  static SDL_Window* g_win;
  static PadSlots g_slots(kHostSlots);
-@@ -50,19 +59,40 @@ static SDL_Texture* g_tex;
+@@ -50,19 +60,45 @@ static SDL_Texture* g_tex;
  static int g_tex_w, g_tex_h;
  static uint16_t g_buttons[kHostSlots];
  static const Frame* g_last;
@@ -351,11 +452,17 @@ index feded39..6942ad7 100644
  using Clock = PaceClock;
  static Clock::time_point g_base;                // host time of virtual time 0
  static bool g_paced;
+-
+-bool host_wants_frame() { return g_win && (!sat_resuming() || sat_vblanks() % 30 == 0); }
++// SF3_FRAMETIME: present-to-present intervals, the run time of each field and its wait, summary at exit
++static const char* g_ft_path = std::getenv("SF3_FRAMETIME");
++static FrameStats g_ft_present, g_ft_work, g_ft_wait;
++static Clock::time_point g_ft_last_present, g_ft_last_pace;
++static uint64_t g_ft_late;
 +static int g_game_speed = 1; // Host pacing only; never change machine clocks.
 +static void speed_set(int speed);
 +static bool gpu_offscreen() {return std::getenv("SF3_GPU_OFFSCREEN")!=nullptr;}
- 
--bool host_wants_frame() { return g_win && (!sat_resuming() || sat_vblanks() % 30 == 0); }
++
 +bool host_wants_frame() { return g_win && sat_vblanks() % (sat_resuming() ? 30 : g_game_speed) == 0; }
  uint16_t host_pad(int slot) { return g_buttons[slot]; }
 -bool host_pad_connected(int slot) { return g_win && (slot == 0 || g_slots.taken(slot)); }
@@ -377,7 +484,7 @@ index feded39..6942ad7 100644
  static std::string g_settings_path, g_settings_text;     // the file and its text, which a save writes over
  static void bind_keyboard();
  
-@@ -91,6 +121,25 @@ static void load_settings(const std::string& named) {
+@@ -91,6 +127,25 @@ static void load_settings(const std::string& named) {
              for (auto& p : problems) sat_note("%s, so its default", p.c_str());
          }
      }
@@ -403,7 +510,7 @@ index feded39..6942ad7 100644
      bind_keyboard();
  }
  
-@@ -112,7 +161,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
+@@ -112,7 +167,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
  
  bool host_window(const SaturnConfig& cfg) {
      if (g_win) return true;
@@ -417,7 +524,7 @@ index feded39..6942ad7 100644
      load_settings(cfg.settings);
      int s = cfg.scale > 0 ? cfg.scale : g_settings.number("display", "scale");
      bool full = cfg.fullscreen || g_settings.flag("display", "fullscreen");
-@@ -121,12 +176,29 @@ bool host_window(const SaturnConfig& cfg) {
+@@ -121,12 +182,29 @@ bool host_window(const SaturnConfig& cfg) {
      SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
      full = true;
  #endif
@@ -447,7 +554,7 @@ index feded39..6942ad7 100644
      ui_open(g_ren);
      // host_pace keeps real time; a present that waited for the display would stall the whole machine
      // whenever the compositor stops sending frames, as KWin does for a window that is out of sight
-@@ -150,6 +222,11 @@ bool host_open() {
+@@ -150,6 +228,11 @@ bool host_open() {
      g_touchscreen = touch_devices > 0;
      g_base = Clock::now();
      g_paced = !g_cfg.realtime;
@@ -459,7 +566,7 @@ index feded39..6942ad7 100644
      return true;
  }
  
-@@ -163,6 +240,10 @@ struct HostCall {
+@@ -163,6 +246,10 @@ struct HostCall {
  static SDL_AudioStream* g_audio;
  static const int kLead = 2205, kMax = 11025;    // frames: 50 ms ahead, 250 ms at most
  static int g_underruns, g_dropped;
@@ -470,7 +577,7 @@ index feded39..6942ad7 100644
  
  static void audio_silence(int frames) {
      std::vector<int16_t> z((size_t)frames * 2);
-@@ -174,23 +255,102 @@ bool host_audio_open() {
+@@ -174,23 +261,121 @@ bool host_audio_open() {
      SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, 44100};
      g_audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
      if (!g_audio) { sat_note("SDL audio: %s (no sound)", SDL_GetError()); return false; }
@@ -544,10 +651,29 @@ index feded39..6942ad7 100644
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    if (g_audio_buffer.ready(queued + frames)) SDL_ResumeAudioStreamDevice(g_audio);
 +#endif
++}
++
++static void frame_report() {
++    if (!g_ft_path || !g_win) return;
++    auto line = [](const char* what, const FrameStats& f, double limit) {
++        auto s = f.summary(limit);
++        std::fprintf(stderr, "  frame time %s: n=%zu mean=%.3f ms sd=%.3f p50=%.3f p99=%.3f max=%.3f; %zu over %.1f ms\n",
++                     what, s.n, s.mean, s.stddev, s.p50, s.p99, s.max, s.over, limit);
++    };
++    line("present interval", g_ft_present, 20.0);
++    line("field run (emulate+compose+present)", g_ft_work, 16.0);
++    line("pace wait", g_ft_wait, 1000.0);
++    std::fprintf(stderr, "  frame time: %llu fields behind schedule (no wait)\n", (unsigned long long)g_ft_late);
++    if (*g_ft_path) if (FILE* f = std::fopen(g_ft_path, "w")) {
++        std::fprintf(f, "present_interval_ms\n");
++        for (double v : g_ft_present.ms) std::fprintf(f, "%.4f\n", v);
++        std::fclose(f);
++    }
  }
  
  void host_audio_report() {
 -    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped\n", g_underruns, g_dropped);
++    frame_report();
 +    if (g_audio) std::fprintf(stderr, "  audio stream: %d times empty, %d chunks dropped, %d producer waits\n", g_underruns, g_dropped, g_audio_waits);
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    if(g_perf_fields>1)std::fprintf(stderr,"  presentation profile: %llu fields, %.3f seconds, %.3f fields/sec; %d audio underruns in measured interval; GPU %llu draws, %llu repeated fields reused; %llu native compositions reused; %llu sampled fields\n",
@@ -577,7 +703,7 @@ index feded39..6942ad7 100644
  }
  
  // ---- the pad ----------------------------------------------------------------------------------
-@@ -281,6 +441,9 @@ static void read_pads() {
+@@ -281,6 +466,9 @@ static void read_pads() {
          if (k[key] && !(alt && key == SDL_SCANCODE_RETURN)) b[0] |= bit;   // Alt+Enter is fullscreen
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -587,7 +713,7 @@ index feded39..6942ad7 100644
          if (s >= 0) b[s] |= gamepad_buttons(p.pad, p.map);
      }
      for (int s = 0; s < kHostSlots; ++s) {
-@@ -292,6 +455,7 @@ static void read_pads() {
+@@ -292,6 +480,7 @@ static void read_pads() {
  }
  
  static void pad_added(SDL_JoystickID id) {
@@ -595,7 +721,7 @@ index feded39..6942ad7 100644
      SDL_Gamepad* pad = SDL_OpenGamepad(id);
      if (!pad) return;
      char guid[33];
-@@ -303,7 +467,11 @@ static void pad_added(SDL_JoystickID id) {
+@@ -303,7 +492,11 @@ static void pad_added(SDL_JoystickID id) {
          return;
      }
      g_pads.push_back({pad, id, bind_gamepad(guid)});
@@ -608,7 +734,7 @@ index feded39..6942ad7 100644
  }
  
  static void pad_removed(SDL_JoystickID id) {
-@@ -329,6 +497,7 @@ void host_rebind() {
+@@ -329,6 +522,7 @@ void host_rebind() {
  void host_pad_event(const SDL_Event& e) {
      if (e.type == SDL_EVENT_GAMEPAD_ADDED) pad_added(e.gdevice.which);
      if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pad_removed(e.gdevice.which);
@@ -616,7 +742,7 @@ index feded39..6942ad7 100644
  }
  
  std::vector<HostController> host_controllers() {
-@@ -336,6 +505,9 @@ std::vector<HostController> host_controllers() {
+@@ -336,6 +530,9 @@ std::vector<HostController> host_controllers() {
      std::vector<HostController> out;
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -626,7 +752,7 @@ index feded39..6942ad7 100644
          if (s >= 0) out.push_back({SDL_GetGamepadName(p.pad), s, gamepad_buttons(p.pad, p.map) != 0});
      }
      std::sort(out.begin(), out.end(), [](const HostController& a, const HostController& b) { return a.slot < b.slot; });
-@@ -438,7 +610,7 @@ static uint16_t touch_read() {
+@@ -438,7 +635,7 @@ static uint16_t touch_read() {
  // by as long as it was, so the run is the same run with or without it. A panel of two columns where
  // the screen is wide enough, the game's choices in one and the touch pad's in the other, each a row:
  // an action, a choice of a few, a slider, or a switch.
@@ -635,7 +761,7 @@ index feded39..6942ad7 100644
  enum class Control { Action, Choice, Slider, Switch };
  struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
  struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
-@@ -456,10 +628,22 @@ static void setting_change(const char* key, const char* value) {
+@@ -456,10 +653,22 @@ static void setting_change(const char* key, const char* value) {
      host_settings_save();
  }
  
@@ -660,7 +786,7 @@ index feded39..6942ad7 100644
      std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
      for (int i = 0; i < choice_count(id); ++i)
          if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
-@@ -468,6 +652,10 @@ static int choice_at(MenuId id) {
+@@ -468,6 +677,10 @@ static int choice_at(MenuId id) {
  
  static void choose(MenuId id, int i) {
      i = (i + choice_count(id)) % choice_count(id);
@@ -671,7 +797,7 @@ index feded39..6942ad7 100644
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -482,6 +670,15 @@ static const char* menu_label(MenuId id) {
+@@ -482,6 +695,15 @@ static const char* menu_label(MenuId id) {
      case M_RESUME: return "Resume";
      case M_SAVES: return "Save files";
      case M_QUIT: return "Quit";
@@ -687,7 +813,7 @@ index feded39..6942ad7 100644
      case M_PAD: return "Show pad";
      case M_SIZE: return "Size";
      case M_STYLE: return "Style";
-@@ -492,6 +689,16 @@ static const char* menu_label(MenuId id) {
+@@ -492,6 +714,16 @@ static const char* menu_label(MenuId id) {
  static MenuLayout menu_layout() {
      const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 340, between = 24;
      std::vector<std::pair<MenuId, Control>> game = {{M_RESUME, Control::Action}};
@@ -704,7 +830,7 @@ index feded39..6942ad7 100644
      if (!g_cfg.after.empty()) game.push_back({M_SAVES, Control::Action});
      game.push_back({M_QUIT, Control::Action});
      const std::vector<std::pair<MenuId, Control>> touch = {
-@@ -527,7 +734,7 @@ static MenuLayout menu_layout() {
+@@ -527,7 +759,7 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
@@ -713,7 +839,7 @@ index feded39..6942ad7 100644
      return {r.r.x + r.r.w - w - 10 * l.u, r.r.y + 9 * l.u, w, r.r.h - 18 * l.u};
  }
  
-@@ -563,12 +770,186 @@ static void menu_quit(bool to_saves) {
+@@ -563,12 +795,186 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -901,7 +1027,7 @@ index feded39..6942ad7 100644
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +961,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +986,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
@@ -910,7 +1036,7 @@ index feded39..6942ad7 100644
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -656,8 +1037,19 @@ static void on_event(const SDL_Event& e) {
+@@ -656,8 +1062,19 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -930,7 +1056,7 @@ index feded39..6942ad7 100644
          if (k == SDL_SCANCODE_F12 && !e.key.repeat) save_shot();
          if ((k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.mod & SDL_KMOD_ALT))) && !e.key.repeat) {
              SDL_SetWindowFullscreen(g_win, !(SDL_GetWindowFlags(g_win) & SDL_WINDOW_FULLSCREEN));
-@@ -686,10 +1078,21 @@ static void on_event(const SDL_Event& e) {
+@@ -686,10 +1103,21 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -954,7 +1080,7 @@ index feded39..6942ad7 100644
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -894,12 +1297,40 @@ static void draw_catching_up() {
+@@ -894,12 +1322,40 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -996,7 +1122,7 @@ index feded39..6942ad7 100644
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,15 +1343,16 @@ static void draw() {
+@@ -912,15 +1368,21 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -1005,6 +1131,11 @@ index feded39..6942ad7 100644
 +    if (present) {
 +        HostCall in("SDL_RenderPresent");
 +        SDL_RenderPresent(g_ren);
++        if (g_ft_path && !g_menu_open && !sat_resuming()) {
++            auto t = Clock::now();
++            if (g_ft_last_present != Clock::time_point{}) g_ft_present.add(std::chrono::duration<double, std::milli>(t - g_ft_last_present).count());
++            g_ft_last_present = t;
++        }
 +    }
  }
  
@@ -1016,7 +1147,7 @@ index feded39..6942ad7 100644
      while (g_menu_open) {
          SDL_Event e;
          {
-@@ -931,38 +1363,86 @@ static void menu_loop() {
+@@ -931,38 +1393,86 @@ static void menu_loop() {
          HostCall in("SDL_Delay");
          SDL_Delay(16);
      }
@@ -1124,7 +1255,7 @@ index feded39..6942ad7 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,12 +1453,16 @@ void host_present(const Frame& f) {
+@@ -973,14 +1483,25 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {
@@ -1140,10 +1271,19 @@ index feded39..6942ad7 100644
          return;
      }
 -    auto wait = pace_wait(g_base, now, Clock::now());
-+    auto wait = pace_wait(g_base, now, Clock::now(), g_game_speed);
++    auto entered = Clock::now();
++    auto wait = pace_wait(g_base, now, entered, g_game_speed);
++    if (g_ft_path) {
++        if (g_ft_last_pace != Clock::time_point{}) g_ft_work.add(std::chrono::duration<double, std::milli>(entered - g_ft_last_pace).count());
++        g_ft_wait.add(std::chrono::duration<double, std::milli>(wait).count());
++        if (wait == Clock::duration{}) ++g_ft_late;
++    }
      if (wait > Clock::duration{}) {
          HostCall in("SDL_DelayPrecise");
          SDL_DelayPrecise((Uint64)std::chrono::duration_cast<std::chrono::nanoseconds>(wait).count());
+     }
++    if (g_ft_path) g_ft_last_pace = Clock::now();
+ }
 diff --git a/runtime/src/host/pace.h b/runtime/src/host/pace.h
 index 80d7730..23f8231 100644
 --- a/runtime/src/host/pace.h
@@ -2046,10 +2186,10 @@ index ef4f660..26a52aa 100644
              }
          }
 diff --git a/runtime/src/machine/state.cpp b/runtime/src/machine/state.cpp
-index 67ccdd3..750a19a 100644
+index 67ccdd3..2124fa9 100644
 --- a/runtime/src/machine/state.cpp
 +++ b/runtime/src/machine/state.cpp
-@@ -19,13 +19,27 @@
+@@ -19,13 +19,48 @@
  #include <filesystem>
  #include <map>
  #include <thread>
@@ -2066,10 +2206,31 @@ index 67ccdd3..750a19a 100644
 +static const uint32_t kVersion = 2;
 +std::atomic<bool> g_state_requested{false};
 +
++// The executable/disc identity a dump carries and a load must match: SF3_STATE_ID, which the
++// player sets. A command-line --state-out/--state-in run without it (headless replays that
++// compare work RAM) is identified by the recompiled modules (names, places, image CRCs) and
++// the disc's file name, so its dumps load only into the same build with the same disc.
 +static std::string identity() {
 +    const char* id = std::getenv("SF3_STATE_ID");
-+    if (!id || !*id || std::strlen(id)>256) state_fail("missing executable/disc identity");
-+    return id;
++    if (id && *id && std::strlen(id)<=256) return id;
++    if ((!g_cfg.state_out.empty() || !g_cfg.state_in.empty()) && !g_cfg.cue.empty()) {
++        uint64_t h = 1469598103934665603ull;
++        auto mix = [&](const void* p, size_t n) {
++            for (size_t i = 0; i < n; ++i) { h ^= ((const uint8_t*)p)[i]; h *= 1099511628211ull; }
++        };
++        for (int k = 0; k < g_sh2_nmodules; ++k) {
++            const SH2Module* m = g_sh2_modules[k];
++            mix(m->name, std::strlen(m->name) + 1);
++            mix(&m->base, 4); mix(&m->size, 4); mix(&m->crc, 4); mix(&m->nfuncs, 4);
++        }
++        const size_t slash = g_cfg.cue.find_last_of("/\\");
++        char hex[17];
++        std::snprintf(hex, sizeof hex, "%016llx", (unsigned long long)h);
++        std::string name = g_cfg.cue.substr(slash == std::string::npos ? 0 : slash + 1);
++        return ("cli:" + std::string(hex) + ":" + name).substr(0, 256);
++    }
++    state_fail("missing executable/disc identity (set SF3_STATE_ID)");
++    return {};
 +}
  
  // An optional part may be missing from a dump made before it existed; its fields keep their values.
@@ -2079,7 +2240,7 @@ index 67ccdd3..750a19a 100644
      {"bios", bios_state},       {"scu", scu_state},         {"scudsp", scudsp_state},   {"onchip", onchip_state},
      {"smpc", smpc_state},       {"cdblock", cdblock_state}, {"vdp1", vdp1_state},       {"vdp2", vdp2_state},
      {"sound", sound_state},     {"scsp", scsp_state},       {"tasks", tasks_state},     {"cddrive", cddrive_state, true},
-@@ -54,10 +68,23 @@ void core_state(State& s) {
+@@ -54,10 +89,23 @@ void core_state(State& s) {
      }
  }
  
@@ -2103,7 +2264,7 @@ index 67ccdd3..750a19a 100644
  static uint64_t g_at_vblank = ~0ull;            // --state-at: the first safe moment from this VBlank on
  static std::chrono::steady_clock::time_point g_next;
  static bool g_points;                           // the run has safe moments (state_enable)
-@@ -75,15 +102,55 @@ static void write_file(std::vector<uint8_t> bytes, std::string path, uint64_t vb
+@@ -75,15 +123,55 @@ static void write_file(std::vector<uint8_t> bytes, std::string path, uint64_t vb
      bool ok = f && std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
      if (f) ok = std::fclose(f) == 0 && ok;
      std::error_code e;
@@ -2161,7 +2322,7 @@ index 67ccdd3..750a19a 100644
      if (!g_cfg.state_at.empty()) g_at_vblank = std::stoull(g_cfg.state_at);
      if (g_cfg.state_every) g_next = std::chrono::steady_clock::now() + std::chrono::seconds(g_cfg.state_every);
  }
-@@ -96,6 +163,12 @@ void state_poll() {
+@@ -96,6 +184,12 @@ void state_poll() {
          g_next = std::chrono::steady_clock::now() + std::chrono::seconds(g_cfg.state_every);
          g_wanted = true;
      }
@@ -2174,7 +2335,7 @@ index 67ccdd3..750a19a 100644
      if (g_stop_why && sat_vblanks() >= g_stop_by) {
          sat_note("state: no safe moment came, so none was written at the stop");
          sat_stop(g_stop_why);
-@@ -103,6 +176,7 @@ void state_poll() {
+@@ -103,6 +197,7 @@ void state_poll() {
  }
  
  void state_stop(const char* why) {
@@ -2182,7 +2343,7 @@ index 67ccdd3..750a19a 100644
      if (g_cfg.state_out.empty() || !g_points) sat_stop(why);
      if (g_stop_why) return;
      g_stop_why = why;
-@@ -113,10 +187,15 @@ void state_stop(const char* why) {
+@@ -113,10 +208,15 @@ void state_stop(const char* why) {
  void state_point(SH2Context& c) {
      if (!g_wanted || g_writing || c.cpu != 0 || sat_in_interrupt() || state_slave_busy()) return;
      g_wanted = false;
@@ -2198,7 +2359,7 @@ index 67ccdd3..750a19a 100644
      for (auto& p : kParts) {
          State s;
          p.fn(s);
-@@ -127,6 +206,9 @@ void state_point(SH2Context& c) {
+@@ -127,6 +227,9 @@ void state_point(SH2Context& c) {
          put(out, &size, sizeof size);
          put(out, s.data.data(), s.data.size());
      }
@@ -2208,7 +2369,7 @@ index 67ccdd3..750a19a 100644
      if (g_writer.joinable()) g_writer.join();
      g_writing = true;
      g_writer = std::thread(write_file, std::move(out), g_cfg.state_out, sat_vblanks());
-@@ -147,13 +229,24 @@ void state_load(const std::string& path) {
+@@ -147,13 +250,24 @@ void state_load(const std::string& path) {
      if (!f) state_fail("cannot open it");
      std::vector<uint8_t> bytes;
      uint8_t buf[1 << 16];
@@ -2234,7 +2395,7 @@ index 67ccdd3..750a19a 100644
      std::map<std::string, std::vector<uint8_t>> parts;
      while (at < bytes.size()) {
          uint8_t n = bytes[at++];
-@@ -163,6 +256,7 @@ void state_load(const std::string& path) {
+@@ -163,6 +277,7 @@ void state_load(const std::string& path) {
          std::memcpy(&size, bytes.data() + at + n, sizeof size);
          at += n + sizeof size;
          if (bytes.size() - at < size) state_fail("cut short");
@@ -2318,7 +2479,7 @@ index c37141d..6517551 100644
      if (mco_uninit(t->co) != MCO_SUCCESS || mco_init(t->co, &desc) != MCO_SUCCESS)
          sat_fatal("tasks: the fiber cannot start over at %08X", pc);
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..0188326 100644
+index 8589d33..9c869e0 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
 @@ -33,11 +33,13 @@
@@ -2410,10 +2571,13 @@ index 8589d33..0188326 100644
  
  static Rgb rgb_of(uint16_t v) { return {v & 0x1F, v >> 5 & 0x1F, v >> 10 & 0x1F}; }
  
-@@ -136,12 +190,66 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+@@ -135,13 +189,69 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+ }
  
  static bool g_fb8;                              // 8 bits a pixel (TVMR 1) for this draw
- 
++static bool g_reference_raster;                 // tests: the general line walk alone
++void vdp1_reference_raster(bool on) { g_reference_raster = on; }
++
 +static void hd_quad(const Cmd& c,Pt a,Pt b,Pt cc,Pt d) {
 +    g_hd_current=0;
 +    if(!g_hd_collect || g_target!=g_fb[g_draw_fb] || !c.textured || c.cmode!=5
@@ -2459,7 +2623,7 @@ index 8589d33..0188326 100644
 +    for(float value:q.shade) {uint32_t bits;std::memcpy(&bits,&value,4);hd_fingerprint(scene.fingerprint,bits);}
 +    scene.quads.push_back(std::move(q));g_hd_current=(uint16_t)scene.quads.size();
 +}
-+
+ 
  static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g);
  
  // A pixel already inside the clipping, or the framebuffer's edge.
@@ -2477,7 +2641,7 @@ index 8589d33..0188326 100644
      if (g_hi_target) {
          uint16_t& h = g_hi_target[y * 1024 + x];
          if (g_fb8) { if (!c.mon) h = pix & 0xFF; }
-@@ -156,12 +264,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
+@@ -156,12 +266,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
          return;
      }
      put(g_target[y * 512 + x], c, pix, g);
@@ -2496,7 +2660,7 @@ index 8589d33..0188326 100644
          if (in == c.outside) return;
      }
      plot_clipped(c, x, y, pix, g);
-@@ -193,7 +305,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
+@@ -193,7 +307,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
  
  static Rgb mix(const Rgb& a, const Rgb& b, int k, int n) {
      if (n <= 0) return a;
@@ -2505,7 +2669,7 @@ index 8589d33..0188326 100644
  }
  
  // A line from p0 to p1; for a texture, row v, its columns spread along the line.
-@@ -211,6 +323,7 @@ static uint64_t g_draw_steps;
+@@ -211,6 +325,7 @@ static uint64_t g_draw_steps;
  #endif
  
  static void command(const uint8_t* cmd, uint32_t a) {
@@ -2513,7 +2677,7 @@ index 8589d33..0188326 100644
      Cmd c{};
      c.ctrl = cw(cmd, 0);
      c.pmod = cw(cmd, 4);
-@@ -256,6 +369,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
+@@ -256,6 +371,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
      }
      for (Pt& q : p) { q.x += g_local_x; q.y += g_local_y; }
      draw_shape(c, cmd, comm, p);
@@ -2526,7 +2690,7 @@ index 8589d33..0188326 100644
  }
  
  // ---- the frames in between (--interp) -------------------------------------------------------
-@@ -289,6 +408,27 @@ struct RecFrame {
+@@ -289,6 +410,27 @@ struct RecFrame {
  static RecFrame g_rec_cur, g_rec_last, g_rec_prev;
  static uint16_t g_ifb[512 * 256];               // the frame in between
  static bool g_show_ifb;
@@ -2554,7 +2718,7 @@ index 8589d33..0188326 100644
  static uint64_t g_fields;
  static float g_alpha;
  static std::vector<uint64_t> g_next_keys;       // vdp1_next_draw_keys: by command address / 32
-@@ -312,6 +452,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
+@@ -312,6 +454,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
      return x & 1 ? w & 0xFF : w >> 8;
  }
  
@@ -2569,7 +2733,7 @@ index 8589d33..0188326 100644
  static void draw() {
      g_reg[EDSR] = (uint16_t)(g_reg[EDSR] >> 1 & 1);   // BEF <- CEF, CEF <- 0
      if ((g_reg[TVMR] & 3) == 3) sat_fatal("VDP1: TVMR %04X (8-bit rotation) is not done", g_reg[TVMR]);
-@@ -320,6 +468,12 @@ static void draw() {
+@@ -320,6 +470,12 @@ static void draw() {
      g_hi_on[g_draw_fb] = g_reg[FBCR] & 8;
      g_hi_target = g_hi_on[g_draw_fb] ? g_hi[g_draw_fb] : nullptr;
      g_dil = g_reg[FBCR] >> 2 & 1;
@@ -2582,7 +2746,7 @@ index 8589d33..0188326 100644
      RecDraw* rec = nullptr;
      if (g_cfg.interp) {
          g_rec_cur.draws.push_back({g_sys_x, g_sys_y, g_ux0, g_uy0, g_ux1, g_uy1, g_local_x, g_local_y, {}});
-@@ -606,7 +760,11 @@ static void erase(int which) {
+@@ -606,7 +762,11 @@ static void erase(int which) {
      int x0 = (g_reg[EWLR] >> 9 & 0x7F) * 8, y0 = g_reg[EWLR] & 0x1FF;
      int x1 = (g_reg[EWRR] >> 9 & 0x7F) * 8, y1 = g_reg[EWRR] & 0x1FF;
      for (int y = y0; y <= y1 && y < 256; ++y)
@@ -2595,7 +2759,7 @@ index 8589d33..0188326 100644
      if (!g_hi_on[which]) return;
      bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
      int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
-@@ -676,16 +834,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+@@ -676,16 +836,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
  }
  
  void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
@@ -2625,7 +2789,7 @@ index 8589d33..0188326 100644
      for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
  }
  
-@@ -707,4 +875,38 @@ void vdp1_state(State& s) {
+@@ -707,4 +877,38 @@ void vdp1_state(State& s) {
      s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
      s(g_draw_end), s(g_frame_changes), s(g_draws);
      s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
@@ -2665,10 +2829,10 @@ index 8589d33..0188326 100644
 +        for(int y=0;y<256;++y) for(int x=0;x<512;++x) scaled_store(p,x,y,g_fb[p][y*512+x]);
  }
 diff --git a/runtime/src/video/vdp1_raster.inc b/runtime/src/video/vdp1_raster.inc
-index 15c677f..4df7e8d 100644
+index 15c677f..75c395c 100644
 --- a/runtime/src/video/vdp1_raster.inc
 +++ b/runtime/src/video/vdp1_raster.inc
-@@ -9,7 +9,7 @@
+@@ -9,12 +9,132 @@
  // Bresenham's with an extra pixel wherever both coordinates step (VDP1's
  // anti-aliasing, so no holes between lines). A texture's row is the step's
  // (v = i * h / steps), its column the position along the line
@@ -2677,7 +2841,132 @@ index 15c677f..4df7e8d 100644
  // Polylines and lines are the lines alone.
  //
  
-@@ -22,21 +22,32 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+ static bool outside_clip(const Cmd& c, int x0, int y0, int x1, int y1);
+ 
++
++// floor((a * k + b) / d) for k = 0, 1, 2, ... in turn (a, b >= 0, d > 0), without a division a step.
++struct StepDiv {
++    int64_t a = 0, d = 1, q = 0, r = 0;
++    int k = 0;
++    void start(int64_t a_, int64_t b, int64_t d_) { a = a_; d = d_; q = b / d; r = b % d; k = 0; }
++    int at(int want) {                          // want >= the last k asked for
++        while (k < want) {
++            r += a; ++k;
++            if (r >= d) { if (r < 2 * d) { r -= d; ++q; } else { q += r / d; r %= d; } }
++        }
++        return (int)q;
++    }
++};
++
++// line() for the native framebuffer (16 bits a pixel, not double-density, not the scaled
++// companion): the same walk, dots, texels, end codes, Gouraud colours and clipping as the
++// general one below, with the per-dot choices (colour mode, flips, clipping, the colour
++// calculation) made once for the line and the texture column stepped without a division.
++template <int MODE>   // texel mode: -1 untextured, 0 4bpp bank, 1 4bpp table, 2 8bpp masks, 5 RGB
++static void line_native(const Cmd& c, Pt p0, int dx, int dy, int len, int v, Rgb g0, Rgb g1, bool hss, bool backward) {
++    const int adx = std::abs(dx), ady = std::abs(dy);
++    const int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
++    const bool hd_owner = g_hd_collect && g_target == g_fb[g_draw_fb];
++    const bool store_scaled = g_render_scale != 1 && !g_gpu_available
++                              && (native_sprite_grid(c) || (c.ctrl & 15) >= 5) && g_target == g_fb[g_draw_fb];
++    const bool replace = !c.mon && (c.ccb & 3) == 0;
++    const int xmax = std::min(g_sys_x, 511), ymax = std::min(g_sys_y, 255);
++    const int ux0 = g_ux0, ux1 = g_ux1, uy0 = g_uy0, uy1 = g_uy1;
++    const bool clip = c.clip, outside = c.outside, mesh = c.mesh, gouraud = c.gouraud;
++    uint16_t* const fb = g_target;
++    const int vv = c.vflip ? c.h - 1 - v : v;
++    const uint32_t rowi = (uint32_t)(vv * c.w);
++    const int w = c.w;
++    const int eos = g_reg[FBCR] >> 4 & 1;
++    // vdp1_steps::column(s, w, len): shrink_sample or stretch_sample(up), as a stepped quotient
++    StepDiv col;
++    const bool shrink = w > len + 1;
++    if (MODE >= 0 && !hss) {
++        if (shrink) col.start(2LL * w, w, 2LL * (len + 1));
++        else if (len > 0) col.start(2LL * (w - 1), len, 2LL * len);
++        else col.start(0, 0, 1);
++    }
++    uint16_t mask8 = 0;
++    if constexpr (MODE == 2) mask8 = c.cmode == 2 ? 0x3F : c.cmode == 3 ? 0x7F : 0xFF;
++    vdp1_steps::EndCodes ends;
++    int sampled_u = -1;
++    auto pixel = [&](int x, int y, int k, bool aa) {
++        const int s = aa ? vdp1_steps::aa_step(k, len) : k;
++        uint16_t pix = c.colr;
++        if constexpr (MODE >= 0) {
++            if (ends.stopped) return;
++            int u;
++            if (hss) u = vdp1_steps::hss_column(s, w, len, backward, c.hflip, eos);
++            else {
++                u = col.at(s);
++                if (shrink && u > w - 1) u = w - 1;
++            }
++            const bool first_sample = u != sampled_u;
++            sampled_u = u;
++            const uint32_t i = rowi + (uint32_t)(c.hflip ? w - 1 - u : u);
++            bool is_end, is_zero;
++            if constexpr (MODE == 0 || MODE == 1) {
++                const uint8_t b = g_tex[(c.srca + i / 2) & 0x7FFFF];
++                const uint32_t raw = (i & 1) ? (b & 0xF) : (b >> 4);
++                is_end = raw == 0xF; is_zero = raw == 0;
++                pix = MODE == 0 ? (uint16_t)((c.colr & 0xFFF0) | raw) : c.lut[raw];
++            } else if constexpr (MODE == 2) {
++                const uint32_t raw = g_tex[(c.srca + i) & 0x7FFFF];
++                is_end = raw == 0xFF; is_zero = raw == 0;
++                pix = (uint16_t)((c.colr & ~mask8) | (raw & mask8));
++            } else {
++                const uint32_t raw = tw(c.srca + i * 2);
++                is_end = raw == 0x7FFF; is_zero = raw == 0;
++                pix = (uint16_t)raw;
++            }
++            if (is_end && !c.ecd) { ends.read(true, first_sample); return; }
++            if (is_zero && !c.spd) return;
++        }
++        // plot(): system clipping, user clipping, the framebuffer's edge, mesh
++        if (x < 0 || y < 0 || x > xmax || y > ymax) return;
++        if (clip && ((x >= ux0 && x <= ux1 && y >= uy0 && y <= uy1) == outside)) return;
++        if (mesh && ((x ^ y) & 1)) return;
++        const int at = y * 512 + x;
++        if (hd_owner) g_hd_owner[g_draw_fb][at] = g_hd_current;
++        if (gouraud) { const Rgb g = mix(g0, g1, s, len); put(fb[at], c, pix, &g); }
++        else if (replace) fb[at] = pix;
++        else put(fb[at], c, pix, nullptr);
++        if (store_scaled) scaled_store(g_draw_fb, x, y, fb[at]);
++    };
++    int x = p0.x, y = p0.y;
++    if (adx >= ady) {
++        int err = 2 * ady - adx;
++        for (int k = 0; k <= len; ++k) {
++            pixel(x, y, k, false);
++            if (k == len) break;
++            if (err > 0) {
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
++                y += yi;
++                err -= 2 * adx;
++            }
++            err += 2 * ady;
++            x += xi;
++        }
++    } else {
++        int err = 2 * adx - ady;
++        for (int k = 0; k <= len; ++k) {
++            pixel(x, y, k, false);
++            if (k == len) break;
++            if (err > 0) {
++                { auto q = vdp1_steps::aa_corner(x, y, xi, yi); pixel(q.x, q.y, k, true); }
++                x += xi;
++                err -= 2 * ady;
++            }
++            err += 2 * adx;
++            y += yi;
++        }
++    }
++}
++
+ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+     if (outside_clip(c, std::min(p0.x, p1.x), std::min(p0.y, p1.y), std::max(p0.x, p1.x), std::max(p0.y, p1.y))) return;
+     int dx = p1.x - p0.x, dy = p1.y - p0.y;
+@@ -22,21 +142,42 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      int len = std::max(adx, ady);
      g_draw_steps += (uint64_t)len + 1;
      int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
@@ -2691,6 +2980,16 @@ index 15c677f..4df7e8d 100644
 +    const int eos = g_reg[FBCR] >> 4 & 1;
 +    int sampled_u = -1;
 +    const bool backward = (adx >= ady ? dx < 0 : dy < 0) != c.hflip;
++    if (!g_scaled_drawing && !g_hi_target && !g_fb8 && !g_reference_raster) {
++        if (!c.textured) line_native<-1>(c, p0, dx, dy, len, v, g0, g1, hss, backward);
++        else switch (c.cmode) {
++        case 0: line_native<0>(c, p0, dx, dy, len, v, g0, g1, hss, backward); break;
++        case 1: line_native<1>(c, p0, dx, dy, len, v, g0, g1, hss, backward); break;
++        case 2: case 3: case 4: line_native<2>(c, p0, dx, dy, len, v, g0, g1, hss, backward); break;
++        default: line_native<5>(c, p0, dx, dy, len, v, g0, g1, hss, backward); break;
++        }
++        return;
++    }
 +    // `aa` is an anti-aliasing dot: it takes the next step's texel and colour
 +    auto pixel = [&](int x, int y, int k, bool aa = false) {
 +        if (ends.stopped) return;
@@ -2717,7 +3016,7 @@ index 15c677f..4df7e8d 100644
          plot(c, x, y, pix, c.gouraud ? &g : nullptr);
      };
      int x = p0.x, y = p0.y;
-@@ -46,9 +57,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -46,9 +187,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
              pixel(x, y, k);
              if (k == len) break;
              if (err > 0) {
@@ -2729,7 +3028,7 @@ index 15c677f..4df7e8d 100644
              }
              err += 2 * ady;
              x += xi;
-@@ -59,9 +71,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -59,9 +201,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
              pixel(x, y, k);
              if (k == len) break;
              if (err > 0) {
@@ -2740,7 +3039,7 @@ index 15c677f..4df7e8d 100644
              }
              err += 2 * adx;
              y += yi;
-@@ -69,30 +81,40 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -69,30 +211,40 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      }
  }
  
@@ -3691,7 +3990,7 @@ index 4c8bcb1..e894360 100644
 -void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
-index 88d1642..c9182c1 100644
+index 88d1642..00a1b7c 100644
 --- a/runtime/src/video/video.cpp
 +++ b/runtime/src/video/video.cpp
 @@ -21,6 +21,7 @@
@@ -3745,7 +4044,39 @@ index 88d1642..c9182c1 100644
  }
  
  static void vblank_in(uint64_t now) {
-@@ -144,6 +159,10 @@ uint32_t video_read(uint32_t a, int size) {
+@@ -76,6 +91,7 @@ static void vblank_in(uint64_t now) {
+     if (listed(g_cfg.dump, n)) dump("", g_vblanks);
+     bool shot = listed(g_cfg.shots, n);
+     bool compose = shot || host_wants_frame() || movie_on();
++    bool composed = false;
+     if (vdp1_interp_field(compose) && compose) {
+         uint8_t saved[0x30];
+         std::copy(g_vdp2_regs + 0x70, g_vdp2_regs + 0xA0, saved);
+@@ -84,16 +100,20 @@ static void vblank_in(uint64_t now) {
+         std::copy(saved, saved + 0x30, g_vdp2_regs + 0x70);
+         if (shot) write_png(g_cfg.out + "/shot-" + n + ".png", g_frame);
+         movie_frame(g_frame);
+-        host_present(g_frame);
++        composed = true;
+     } else if (compose) {
+         vdp2_compose(g_frame);
+         if (shot) write_png(g_cfg.out + "/shot-" + n + ".png", g_frame);
+         movie_frame(g_frame);
+-        host_present(g_frame);
++        composed = true;
+     }
++    // The window waits for the field's real time first and shows the picture after: the picture
++    // goes out at an even cadence whatever the field cost to run, and the pad is read as late as
++    // possible. Neither moves anything in machine time (the same field, the same VBlank).
++    host_pace(now);
++    if (composed) host_present(g_frame);
+     scu_raise(IRQ_VBLANK_IN);
+     scu_frame_event(0);
+-    host_pace(now);
+ }
+ 
+ void video_tick(uint64_t now) {
+@@ -144,6 +164,10 @@ uint32_t video_read(uint32_t a, int size) {
  
  void video_write(uint32_t a, uint32_t v, int size) {
      if (a < 0x05B01000u) { sound_write(a, v, size); return; }
@@ -3757,7 +4088,7 @@ index 88d1642..c9182c1 100644
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
 diff --git a/runtime/src/video/video.h b/runtime/src/video/video.h
-index ebaa466..c68e655 100644
+index ebaa466..ee8d771 100644
 --- a/runtime/src/video/video.h
 +++ b/runtime/src/video/video.h
 @@ -6,6 +6,7 @@
@@ -3768,7 +4099,7 @@ index ebaa466..c68e655 100644
  
  // ---- VDP1 (vdp1.cpp) --------------------------------------------------------------------
  extern uint8_t g_vdp1_vram[0x80000];                 // big-endian, as the bus sees it
-@@ -17,23 +18,49 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
+@@ -17,23 +18,50 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
  void vdp1_vblank_out();                              // erase, frame change, the draw PTMR 2 asks for
  void vdp1_tick(uint64_t now);                        // the end of a draw
  uint16_t vdp1_dot(int x, int y, bool dd);           // the sprite dot VDP2 shows at x, line y (dd: double-density, 2 lines a framebuffer line)
@@ -3783,6 +4114,7 @@ index ebaa466..c68e655 100644
  uint64_t vdp1_frame_changes();
  uint64_t vdp1_draws();
 -void vdp1_dump(FILE* f);                             // VRAM, the draw framebuffer, the registers
++void vdp1_reference_raster(bool on);                 // tests: every line by the general walk, not the native-framebuffer one
 +void vdp1_dump(FILE* f, bool shown = false);          // VRAM, a framebuffer, the registers
  bool vdp1_interp_field(bool compose);                // --interp: a frame in between for this field?
  void vdp1_interp_scroll(uint8_t* regs);              // ... and VDP2's scroll registers for it
@@ -3820,7 +4152,7 @@ index ebaa466..c68e655 100644
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
 diff --git a/runtime/tests/CMakeLists.txt b/runtime/tests/CMakeLists.txt
-index 39eb423..0c64c8b 100644
+index 39eb423..ede6a60 100644
 --- a/runtime/tests/CMakeLists.txt
 +++ b/runtime/tests/CMakeLists.txt
 @@ -8,5 +8,10 @@ if(NOT CMAKE_BUILD_TYPE)
@@ -3828,7 +4160,7 @@ index 39eb423..0c64c8b 100644
  endif()
  include(${CMAKE_CURRENT_LIST_DIR}/../runtime.cmake)
 -add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp)
-+add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp vdp1_steps_test.cpp memmap_test.cpp call_frames_test.cpp)
++add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp vdp1_steps_test.cpp vdp1_raster_test.cpp memmap_test.cpp call_frames_test.cpp)
  target_link_libraries(runtime_tests saturn_core saturn_machine saturn_host Threads::Threads)
 +# vdp1_replay: a VRAM snapshot drawn by the rasterizer alone (tools/sf3-vdp1-replay.py)
 +add_executable(vdp1_replay vdp1_replay.cpp no_modules.cpp)
@@ -3951,6 +4283,126 @@ index 0000000..6b71f96
 +    CHECK_EQ(sh2_mmio_read(0x012C0002, 1), 0xFFu);
 +    CHECK_EQ(sh2_mmio_read(0x012C0002, 2), 0xFFFFu);
 +    CHECK_EQ(sh2_mmio_read(0x01800000, 4), 0xFFFFFFFFu);
++}
+diff --git a/runtime/tests/pace_test.cpp b/runtime/tests/pace_test.cpp
+index 7bb79b6..7db24c2 100644
+--- a/runtime/tests/pace_test.cpp
++++ b/runtime/tests/pace_test.cpp
+@@ -44,3 +44,25 @@ TEST(small_lateness_preserves_the_next_due_time) {
+     CHECK_EQ(ns(base - start), 0);
+     CHECK_EQ(ns(pace_wait(base, ns(milliseconds(34)), t)), ns(milliseconds(14)));
+ }
++
++#include "../src/host/frame_stats.h"
++
++TEST(frame_stats_summarise_an_even_and_a_held_picture) {
++    FrameStats f;
++    for (int i = 0; i < 99; ++i) f.add(16.0);
++    f.add(33.0);
++    auto s = f.summary(20.0);
++    CHECK_EQ(s.n, 100u);
++    CHECK_EQ(s.over, 1u);
++    CHECK_EQ((int)std::lround(s.max * 10), 330);
++    CHECK_EQ((int)std::lround(s.p50 * 10), 160);
++    CHECK_EQ((int)std::lround(s.mean * 1000), 16170);
++    CHECK_EQ((int)std::lround(s.stddev * 1000), 1691);  // sqrt(0.99*0.17^2 + 0.01*16.83^2)
++}
++
++TEST(frame_stats_empty_is_zero) {
++    FrameStats f;
++    auto s = f.summary(20.0);
++    CHECK_EQ(s.n, 0u);
++    CHECK_EQ(s.over, 0u);
++}
+diff --git a/runtime/tests/vdp1_raster_test.cpp b/runtime/tests/vdp1_raster_test.cpp
+new file mode 100644
+index 0000000..fb24b1d
+--- /dev/null
++++ b/runtime/tests/vdp1_raster_test.cpp
+@@ -0,0 +1,84 @@
++// The native-framebuffer line walk (vdp1_raster.inc, line_native) against the general one it
++// stands in for: random command tables over random VRAM, drawn both ways, dot for dot.
++#include "test.h"
++#include "video.h"
++#include <cstring>
++#include <random>
++#include <vector>
++
++namespace {
++
++void be16(uint32_t a, uint16_t v) { g_vdp1_vram[a & 0x7FFFF] = (uint8_t)(v >> 8); g_vdp1_vram[(a + 1) & 0x7FFFF] = (uint8_t)v; }
++
++std::vector<uint16_t> draw(bool reference, uint16_t fbcr) {
++    vdp1_reference_raster(reference);
++    vdp1_reg_write(0x00, 0, 2);                          // TVMR: 16 bits a pixel
++    vdp1_reg_write(0x02, fbcr & 0x10, 2);                // FBCR: EOS for high speed shrink only
++    for (int i = 0; i < 512 * 256; ++i) vdp1_fb_write(i * 2, (uint32_t)(i * 2654435761u >> 16), 2);
++    vdp1_reg_write(0x04, 1, 2);                          // PTMR 1: draw now
++    std::vector<uint16_t> fb(512 * 256);
++    for (int i = 0; i < 512 * 256; ++i) fb[i] = (uint16_t)vdp1_fb_read(i * 2, 2);
++    vdp1_reference_raster(false);
++    return fb;
++}
++
++// A table of `n` random commands after system clipping, user clipping and local coordinates.
++void random_table(std::mt19937& rng, int n) {
++    auto r = [&](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
++    // textures, colour tables and Gouraud tables: values biased toward 0 and the end codes
++    for (uint32_t a = 0x10000; a < 0x80000; a += 2) {
++        int k = r(0, 15);
++        uint16_t v = k == 0 ? 0 : k == 1 ? 0x7FFF : k == 2 ? 0xFFFF : k == 3 ? 0xF0F0 : (uint16_t)r(0, 0xFFFF);
++        be16(a, v);
++    }
++    uint32_t a = 0;
++    auto cmd = [&](uint16_t ctrl, uint16_t pmod, uint16_t colr, uint16_t srca, uint16_t size, const int* xy, uint16_t grda) {
++        be16(a, ctrl); be16(a + 2, 0); be16(a + 4, pmod); be16(a + 6, colr); be16(a + 8, srca); be16(a + 10, size);
++        for (int i = 0; i < 8; ++i) be16(a + 12 + i * 2, (uint16_t)xy[i]);
++        be16(a + 28, grda); be16(a + 30, 0);
++        a += 0x20;
++    };
++    int z[8] = {};
++    int sys[8] = {0, 0, 0, 0, r(100, 511), r(60, 255), 0, 0};
++    cmd(0x0009, 0, 0, 0, 0, sys, 0);
++    int user[8] = {r(0, 200), r(0, 120), 0, 0, r(100, 400), r(60, 250), 0, 0};
++    cmd(0x0008, 0, 0, 0, 0, user, 0);
++    int local[8] = {r(-30, 60), r(-30, 60), 0, 0, 0, 0, 0, 0};
++    cmd(0x000A, 0, 0, 0, 0, local, 0);
++    (void)z;
++    for (int i = 0; i < n; ++i) {
++        int comm = r(0, 7);
++        uint16_t ctrl = (uint16_t)(comm | (r(0, 3) << 4) | (comm == 1 ? r(0, 15) << 8 : 0));
++        int cmode = r(0, 5);
++        uint16_t pmod = (uint16_t)(r(0, 7) | cmode << 3 | r(0, 1) << 6 | r(0, 1) << 7 | (r(0, 3) == 0) << 8 |
++                                   r(0, 1) << 9 | r(0, 1) << 10 | (r(0, 7) == 0) << 15 | r(0, 1) << 12);
++        uint16_t colr = (uint16_t)(cmode == 1 ? (0x10000 + r(0, 0x1000) * 32) / 8 : r(0, 0xFFFF));
++        uint16_t srca = (uint16_t)((0x10000 + r(0, 0x6000) * 8) / 8);
++        uint16_t size = (uint16_t)(r(1, 8) << 8 | r(1, 64));
++        int xy[8];
++        for (int k = 0; k < 8; ++k) xy[k] = r(0, 9) == 0 ? r(-400, 900) : r(-40, 360);
++        if (comm == 1 && (ctrl >> 8 & 15)) { xy[2] = r(-20, 200); xy[3] = r(-20, 200); }
++        for (int& v : xy) v &= 0x1FFF;
++        cmd(ctrl, pmod, colr, srca, size, xy, (uint16_t)((0x10000 + r(0, 0x1000) * 8) / 8));
++    }
++    be16(a, 0x8000);                                     // END
++}
++
++}  // namespace
++
++TEST(native_line_walk_draws_as_the_general_one) {
++    std::mt19937 rng(20261025);
++    int differing = 0, drawn = 0;
++    for (int round = 0; round < 60; ++round) {
++        std::memset(g_vdp1_vram, 0, sizeof g_vdp1_vram);
++        random_table(rng, 40);
++        const uint16_t fbcr = (uint16_t)(round & 1 ? 0x10 : 0);
++        std::vector<uint16_t> fast = draw(false, fbcr), ref = draw(true, fbcr);
++        for (int i = 0; i < 512 * 256; ++i) {
++            differing += fast[i] != ref[i];
++            drawn += ref[i] != (uint16_t)(i * 2654435761u >> 16);
++        }
++    }
++    CHECK_EQ(differing, 0);
++    CHECK_EQ(drawn > 100000, true);
 +}
 diff --git a/runtime/tests/vdp1_replay.cpp b/runtime/tests/vdp1_replay.cpp
 new file mode 100644
