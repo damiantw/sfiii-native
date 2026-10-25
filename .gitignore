@@ -77,6 +77,7 @@
 !/tools/sf3-autoplay.py
 !/tools/sf3-coverage.py
 !/tools/sf3-diff.py
+!/tools/sf3-vdp1-replay.py
 !/tools/sf3-town-bfs.py
 __pycache__/
 *.pyc
