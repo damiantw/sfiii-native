@@ -15,6 +15,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 
 from . import autoplay, memory_map
@@ -237,7 +238,42 @@ def search(a):
                 print(f"search: {'goal ' + ','.join(best['reached']) if best.get('reached') else 'battle won'} at VBlank {best['v']}", flush=True)
                 break
     write_segment(a, out, start, load, h, levels[-1], S)
+    if done_goal:
+        finalize(a, out)
     return 0 if done_goal else 1
+
+
+def finalize(a, out):
+    """Re-derive the end hashes from a straight replay of the segment.
+
+    The search commits through restored save states, which carry the game state but not every
+    byte of work RAM a straight run would have, so the end RAM hash of the chained run can
+    differ from a replay from the save even though the inputs and the reached goal are the
+    same. The committed segment must describe the straight replay, so it is replayed here and
+    the header takes that run's end hashes (segment-search.txt keeps the search's own)."""
+    import re
+    import subprocess
+    from . import story
+    seg = out / 'segment.txt'
+    text = seg.read_text()
+    (out / 'segment-search.txt').write_text(text)
+    cmd = [sys.executable, str(Path(__file__).resolve().parents[1] / 'sf3-story.py'), 'replay', '--saturn', a.saturn,
+           '--cue', a.cue, '--saves', *a.saves, '--out', str(out / 'verify'), str(seg)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    (out / 'verify.log').write_text(r.stdout + r.stderr)
+    line = next((l for l in r.stdout.splitlines() if ' end {' in l), '')
+    ram = re.search(r"'ram_sha1': '(\w+)'", line)
+    flags = re.search(r"'flags_sha1': '(\w+)'", line)
+    h, actions = story.parse_segment(text)
+    want = [g for g in h.get('reached', '-').split(',') if g != '-']
+    if not (ram and flags) or any(g not in line for g in want):
+        print(f'search: straight replay did not reach {want}; segment left as searched', flush=True)
+        return False
+    h_old = h.get('end_ram_sha1')
+    h.update(end_ram_sha1=ram.group(1), end_flags_sha1=flags.group(1))
+    seg.write_text(story.segment_text(h, actions))
+    print(f"search: end hashes from the straight replay (ram {ram.group(1)}, search had {h_old})", flush=True)
+    return True
 
 
 def write_segment(a, out, start, load, h, lv, S):

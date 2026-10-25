@@ -2,15 +2,15 @@
 profile scenario2-v25_1-v2_000
 save ExternalBackupRAM-Sc2-Ch6.bin
 record save:Sc2-Ch6:27
-seed 1+2
+seed 1
 assist none
 clock 2026-01-01T00:00:00
 record_sha1 a7515031fbf2ae0d
 load 3689
-binary 07fbb405869068d6
-end_vblank 92100
-end_ram_sha1 9c5719f2190911ad
-end_flags_sha1 88fad279285c846b
+binary 37cb043136b970e3
+end_vblank 103689
+end_ram_sha1 2592347deea97aa2
+end_flags_sha1 7aeae9bc21885be7
 reached save:Sc2-Ch6:14
 input
 1100 pad START
@@ -55,3313 +55,3752 @@ input
 3733 pad 
 3743 pad DOWN
 3751 pad 
-3761 pad C
+3761 pad B
 3767 pad 
-3797 pad RIGHT
-3805 pad 
-3815 pad LEFT
-3823 pad 
-3833 pad UP
-3841 pad 
-3851 pad DOWN
-3859 pad 
-3869 pad C
-3875 pad 
-3905 pad UP
-3911 pad 
-3925 pad C
-3931 pad 
-3961 pad C
-3967 pad 
-4007 pad C
-4013 pad 
-4053 pad C
-4059 pad 
-4099 pad C
-4105 pad 
-4145 pad C
-4151 pad 
-4191 pad C
-4197 pad 
-4227 pad B
-4233 pad 
-4253 pad C
-4259 pad 
-4289 pad C
-4295 pad 
-4325 pad C
-4331 pad 
-4361 pad C
-4367 pad 
-4397 pad C
-4403 pad 
-4433 pad C
-4439 pad 
-4469 pad C
-4475 pad 
-4505 pad C
-4511 pad 
-4541 pad C
-4547 pad 
-4577 pad C
-4583 pad 
-4613 pad C
-4619 pad 
-4649 pad C
-4655 pad 
-4685 pad C
-4691 pad 
-4721 pad C
-4727 pad 
-4757 pad C
-4763 pad 
-4793 pad C
-4799 pad 
-4829 pad C
-4835 pad 
-4865 pad C
-4871 pad 
-4901 pad C
-4907 pad 
-4937 pad C
-4943 pad 
-4973 pad C
-4979 pad 
-5009 pad C
-5015 pad 
-5045 pad C
-5051 pad 
-5081 pad C
-5087 pad 
-5117 pad C
-5123 pad 
-5153 pad C
-5159 pad 
-5189 pad UP
-5213 pad B
-5219 pad 
-5229 pad RIGHT
-5253 pad B
-5259 pad 
-5269 pad DOWN
-5317 pad C
-5323 pad 
-5353 pad A
-5359 pad 
-5389 pad C
-5395 pad 
-5425 pad C
-5431 pad 
-5461 pad C
-5467 pad 
-5497 pad C
-5503 pad 
-5533 pad B
-5539 pad 
-5559 pad LEFT
-5607 pad B
-5613 pad 
-5623 pad UP
-5695 pad B
-5701 pad 
-5711 pad RIGHT
-5783 pad C
-5789 pad 
-5819 pad A
-5825 pad 
-5855 pad C
-5861 pad 
-5891 pad C
-5897 pad 
-5927 pad C
-5933 pad 
-5963 pad C
-5969 pad 
-5999 pad B
-6005 pad 
-6025 pad DOWN
-6121 pad B
-6127 pad 
-6137 pad LEFT
-6233 pad B
-6239 pad 
-6249 pad UP
-6369 pad C
-6375 pad 
-6405 pad A
-6411 pad 
-6441 pad C
-6447 pad 
-6477 pad C
-6483 pad 
-6513 pad C
-6519 pad 
-6549 pad C
-6555 pad 
-6585 pad B
-6591 pad 
-6611 pad RIGHT
-6731 pad B
-6737 pad 
-6747 pad DOWN
-6891 pad B
-6897 pad 
-6907 pad LEFT
-7051 pad C
-7057 pad 
-7087 pad A
-7093 pad 
-7123 pad C
-7129 pad 
-7159 pad C
-7165 pad 
-7195 pad C
-7201 pad 
-7231 pad C
-7237 pad 
-7267 pad B
-7273 pad 
-7293 pad UP
-7461 pad B
-7467 pad 
-7477 pad RIGHT
-7645 pad B
-7651 pad 
-7661 pad DOWN
-7853 pad C
-7859 pad 
-7889 pad A
-7895 pad 
-7925 pad C
-7931 pad 
-7961 pad C
-7967 pad 
-7997 pad C
-8003 pad 
-8033 pad C
-8039 pad 
-8069 pad B
-8075 pad 
-8095 pad DOWN
-8119 pad B
-8125 pad 
-8135 pad LEFT
-8159 pad B
-8165 pad 
-8175 pad UP
-8223 pad C
-8229 pad 
-8259 pad A
-8265 pad 
-8295 pad C
-8301 pad 
-8331 pad C
-8337 pad 
-8367 pad C
-8373 pad 
-8403 pad C
-8409 pad 
-8439 pad B
-8445 pad 
-8465 pad RIGHT
-8513 pad B
-8519 pad 
-8529 pad DOWN
-8601 pad B
-8607 pad 
-8617 pad LEFT
-8689 pad C
-8695 pad 
-8725 pad A
-8731 pad 
-8761 pad C
-8767 pad 
-8797 pad C
-8803 pad 
-8833 pad C
-8839 pad 
-8869 pad C
-8875 pad 
-8905 pad B
-8911 pad 
-8931 pad UP
-9027 pad B
-9033 pad 
-9043 pad RIGHT
-9139 pad B
-9145 pad 
-9155 pad DOWN
-9275 pad C
-9281 pad 
-9311 pad A
-9317 pad 
-9347 pad C
-9353 pad 
-9383 pad C
-9389 pad 
-9419 pad C
-9425 pad 
-9455 pad C
-9461 pad 
-9491 pad B
-9497 pad 
-9517 pad LEFT
-9637 pad B
-9643 pad 
-9653 pad UP
-9797 pad B
-9803 pad 
-9813 pad RIGHT
-9957 pad C
-9963 pad 
-9993 pad A
-9999 pad 
-10029 pad C
-10035 pad 
-10065 pad C
-10071 pad 
-10101 pad C
-10107 pad 
-10137 pad C
-10143 pad 
-10173 pad B
-10179 pad 
-10199 pad DOWN
-10367 pad B
-10373 pad 
-10383 pad LEFT
-10551 pad B
-10557 pad 
-10567 pad UP
-10759 pad C
-10765 pad 
-10795 pad A
-10801 pad 
-10831 pad C
-10837 pad 
-10867 pad C
-10873 pad 
-10903 pad C
-10909 pad 
-10939 pad C
-10945 pad 
-10975 pad B
-10981 pad 
-11001 pad RIGHT
-11193 pad B
-11199 pad 
-11209 pad DOWN
-11425 pad B
-11431 pad 
-11441 pad LEFT
-11657 pad C
-11663 pad 
-11693 pad A
-11699 pad 
-11729 pad C
-11735 pad 
-11765 pad C
-11771 pad 
-11801 pad C
-11807 pad 
-11837 pad C
-11843 pad 
-11873 pad B
-11879 pad 
-11899 pad UP
-12139 pad B
-12145 pad 
-12155 pad RIGHT
-12395 pad B
-12401 pad 
-12411 pad DOWN
-12675 pad C
-12681 pad 
-12711 pad A
-12717 pad 
-12747 pad C
-12753 pad 
-12783 pad C
-12789 pad 
-12819 pad C
-12825 pad 
-12855 pad C
-12861 pad 
-12891 pad B
-12897 pad 
-12917 pad LEFT
-13181 pad B
-13187 pad 
-13197 pad UP
-13485 pad B
-13491 pad 
-13501 pad RIGHT
-13789 pad C
-13795 pad 
-13825 pad A
-13831 pad 
-13861 pad C
-13867 pad 
-13897 pad C
-13903 pad 
-13933 pad C
-13939 pad 
-13969 pad C
-13975 pad 
-14005 pad B
-14011 pad 
-14031 pad UP
-14055 pad B
-14061 pad 
-14071 pad RIGHT
-14095 pad B
-14101 pad 
-14111 pad DOWN
-14159 pad C
-14165 pad 
-14195 pad A
-14201 pad 
-14231 pad C
-14237 pad 
-14267 pad C
-14273 pad 
-14303 pad C
-14309 pad 
-14339 pad C
-14345 pad 
-14375 pad B
-14381 pad 
-14401 pad LEFT
-14449 pad B
-14455 pad 
-14465 pad UP
-14537 pad B
-14543 pad 
-14553 pad RIGHT
-14625 pad C
-14631 pad 
-14661 pad A
-14667 pad 
-14697 pad C
-14703 pad 
-14733 pad C
-14739 pad 
-14769 pad C
-14775 pad 
-14805 pad C
-14811 pad 
-14841 pad B
-14847 pad 
-14867 pad DOWN
-14963 pad B
-14969 pad 
-14979 pad LEFT
-15075 pad B
-15081 pad 
-15091 pad UP
-15211 pad C
-15217 pad 
-15247 pad A
-15253 pad 
-15283 pad C
-15289 pad 
-15319 pad C
-15325 pad 
-15355 pad C
-15361 pad 
-15391 pad C
-15397 pad 
-15427 pad B
-15433 pad 
-15453 pad RIGHT
-15573 pad B
-15579 pad 
-15589 pad DOWN
-15733 pad B
-15739 pad 
-15749 pad LEFT
-15893 pad C
-15899 pad 
-15929 pad A
-15935 pad 
-15965 pad C
-15971 pad 
-16001 pad C
-16007 pad 
-16037 pad C
-16043 pad 
-16073 pad C
-16079 pad 
-16109 pad B
-16115 pad 
-16135 pad UP
-16303 pad B
-16309 pad 
-16319 pad RIGHT
-16487 pad B
-16493 pad 
-16503 pad DOWN
-16695 pad C
-16701 pad 
-16731 pad A
-16737 pad 
-16767 pad C
-16773 pad 
-16803 pad C
-16809 pad 
-16839 pad C
-16845 pad 
-16875 pad C
-16881 pad 
-16911 pad B
-16917 pad 
-16937 pad LEFT
-17129 pad B
-17135 pad 
-17145 pad UP
-17361 pad B
-17367 pad 
-17377 pad RIGHT
-17593 pad C
-17599 pad 
-17629 pad A
-17635 pad 
-17665 pad C
-17671 pad 
-17701 pad C
-17707 pad 
-17737 pad C
-17743 pad 
-17773 pad C
-17779 pad 
-17809 pad B
-17815 pad 
-17835 pad DOWN
-18075 pad B
-18081 pad 
-18091 pad LEFT
-18331 pad B
-18337 pad 
-18347 pad UP
-18611 pad C
-18617 pad 
-18647 pad A
-18653 pad 
-18683 pad C
-18689 pad 
-18719 pad C
-18725 pad 
-18755 pad C
-18761 pad 
-18791 pad C
-18797 pad 
-18827 pad B
-18833 pad 
-18853 pad RIGHT
-19117 pad B
-19123 pad 
-19133 pad DOWN
-19421 pad B
-19427 pad 
-19437 pad LEFT
-19725 pad C
-19731 pad 
-19761 pad A
-19767 pad 
-19797 pad C
-19803 pad 
-19833 pad C
-19839 pad 
-19869 pad C
-19875 pad 
-19905 pad C
-19911 pad 
-19941 pad B
-19947 pad 
-19967 pad LEFT
-19991 pad B
-19997 pad 
-20007 pad UP
-20031 pad B
-20037 pad 
-20047 pad RIGHT
-20095 pad C
-20101 pad 
-20131 pad A
-20137 pad 
-20167 pad C
-20173 pad 
-20203 pad C
-20209 pad 
-20239 pad C
-20245 pad 
-20275 pad C
-20281 pad 
-20311 pad B
-20317 pad 
-20337 pad DOWN
-20385 pad B
-20391 pad 
-20401 pad LEFT
-20473 pad B
-20479 pad 
-20489 pad UP
-20561 pad C
-20567 pad 
-20597 pad A
-20603 pad 
-20633 pad C
-20639 pad 
-20669 pad C
-20675 pad 
-20705 pad C
-20711 pad 
-20741 pad C
-20747 pad 
-20777 pad B
-20783 pad 
-20803 pad RIGHT
-20899 pad B
-20905 pad 
-20915 pad DOWN
-21011 pad B
-21017 pad 
-21027 pad LEFT
-21147 pad C
-21153 pad 
-21183 pad A
-21189 pad 
-21219 pad C
-21225 pad 
-21255 pad C
-21261 pad 
-21291 pad C
-21297 pad 
-21327 pad C
-21333 pad 
-21363 pad B
-21369 pad 
-21389 pad UP
-21509 pad B
-21515 pad 
-21525 pad RIGHT
-21669 pad B
-21675 pad 
-21685 pad DOWN
-21829 pad C
-21835 pad 
-21865 pad A
-21871 pad 
-21901 pad C
-21907 pad 
-21937 pad C
-21943 pad 
-21973 pad C
-21979 pad 
-22009 pad C
-22015 pad 
-22045 pad B
-22051 pad 
-22071 pad LEFT
-22239 pad B
-22245 pad 
-22255 pad UP
-22423 pad B
-22429 pad 
-22439 pad RIGHT
-22631 pad C
-22637 pad 
-22667 pad A
-22673 pad 
-22703 pad C
-22709 pad 
-22739 pad C
-22745 pad 
-22775 pad C
-22781 pad 
-22811 pad C
-22817 pad 
-22847 pad B
-22853 pad 
-22873 pad DOWN
-23065 pad B
-23071 pad 
-23081 pad LEFT
-23297 pad B
-23303 pad 
-23313 pad UP
-23529 pad C
-23535 pad 
-23565 pad A
-23571 pad 
-23601 pad C
-23607 pad 
-23637 pad C
-23643 pad 
-23673 pad C
-23679 pad 
-23709 pad C
-23715 pad 
-23745 pad B
-23751 pad 
-23771 pad RIGHT
-24011 pad B
-24017 pad 
-24027 pad DOWN
-24267 pad B
-24273 pad 
-24283 pad LEFT
-24547 pad C
-24553 pad 
-24583 pad A
-24589 pad 
-24619 pad C
-24625 pad 
-24655 pad C
-24661 pad 
-24691 pad C
-24697 pad 
-24727 pad C
-24733 pad 
-24763 pad B
-24769 pad 
-24789 pad UP
-25053 pad B
-25059 pad 
-25069 pad RIGHT
-25357 pad B
-25363 pad 
-25373 pad DOWN
-25661 pad C
-25667 pad 
-25697 pad A
-25703 pad 
-25733 pad C
-25739 pad 
-25769 pad C
-25775 pad 
-25805 pad C
-25811 pad 
-25841 pad C
-25847 pad 
-25877 pad B
-25883 pad 
-25903 pad LEFT
-25927 pad B
-25933 pad 
-25943 pad UP
-25967 pad B
-25973 pad 
-25983 pad RIGHT
-26031 pad C
-26037 pad 
-26067 pad A
-26073 pad 
-26103 pad C
-26109 pad 
-26139 pad C
-26145 pad 
-26175 pad C
-26181 pad 
-26211 pad C
-26217 pad 
-26247 pad B
-26253 pad 
-26273 pad DOWN
-26321 pad B
-26327 pad 
-26337 pad LEFT
-26409 pad B
-26415 pad 
-26425 pad UP
-26497 pad C
-26503 pad 
-26533 pad A
-26539 pad 
-26569 pad C
-26575 pad 
-26605 pad C
-26611 pad 
-26641 pad C
-26647 pad 
-26677 pad C
-26683 pad 
-26713 pad B
-26719 pad 
-26739 pad RIGHT
-26835 pad B
-26841 pad 
-26851 pad DOWN
-26947 pad B
-26953 pad 
-26963 pad LEFT
-27083 pad C
-27089 pad 
-27119 pad A
-27125 pad 
-27155 pad C
-27161 pad 
-27191 pad C
-27197 pad 
-27227 pad C
-27233 pad 
-27263 pad C
-27269 pad 
-27299 pad B
-27305 pad 
-27325 pad UP
-27445 pad B
-27451 pad 
-27461 pad RIGHT
-27605 pad B
-27611 pad 
-27621 pad DOWN
-27765 pad C
-27771 pad 
-27801 pad A
-27807 pad 
-27837 pad C
-27843 pad 
-27873 pad C
-27879 pad 
-27909 pad C
-27915 pad 
-27945 pad C
-27951 pad 
-27981 pad B
-27987 pad 
-28007 pad LEFT
-28175 pad B
-28181 pad 
-28191 pad UP
-28359 pad B
-28365 pad 
-28375 pad RIGHT
-28567 pad C
-28573 pad 
-28603 pad A
-28609 pad 
-28639 pad C
-28645 pad 
-28675 pad C
-28681 pad 
-28711 pad C
-28717 pad 
-28747 pad C
-28753 pad 
-28783 pad B
-28789 pad 
-28809 pad DOWN
-29001 pad B
-29007 pad 
-29017 pad LEFT
-29233 pad B
-29239 pad 
-29249 pad UP
-29465 pad C
-29471 pad 
-29501 pad A
-29507 pad 
-29537 pad C
-29543 pad 
-29573 pad C
-29579 pad 
-29609 pad C
-29615 pad 
-29645 pad C
-29651 pad 
-29681 pad B
-29687 pad 
-29707 pad RIGHT
-29947 pad B
-29953 pad 
-29963 pad DOWN
-30203 pad B
-30209 pad 
-30219 pad LEFT
-30483 pad C
-30489 pad 
-30519 pad A
-30525 pad 
-30555 pad C
-30561 pad 
-30591 pad C
-30597 pad 
-30627 pad C
-30633 pad 
-30663 pad C
-30669 pad 
-30699 pad B
-30705 pad 
-30725 pad UP
-30989 pad B
-30995 pad 
-31005 pad RIGHT
-31293 pad B
-31299 pad 
-31309 pad LEFT
-31333 pad B
-31339 pad 
-31349 pad UP
-31373 pad B
-31379 pad 
-31389 pad RIGHT
-31437 pad C
-31443 pad 
-31473 pad A
-31479 pad 
-31509 pad C
-31515 pad 
-31545 pad C
-31551 pad 
-31581 pad C
-31587 pad 
-31617 pad C
-31623 pad 
-31653 pad B
-31659 pad 
-31679 pad DOWN
-31727 pad B
-31733 pad 
-31743 pad LEFT
-31815 pad B
-31821 pad 
-31831 pad UP
-31903 pad C
-31909 pad 
-31939 pad A
-31945 pad 
-31975 pad C
-31981 pad 
-32011 pad C
-32017 pad 
-32047 pad C
-32053 pad 
-32083 pad C
-32089 pad 
-32119 pad B
-32125 pad 
-32145 pad RIGHT
-32241 pad B
-32247 pad 
-32257 pad DOWN
-32353 pad B
-32359 pad 
-32369 pad LEFT
-32489 pad C
-32495 pad 
-32525 pad A
-32531 pad 
-32561 pad C
-32567 pad 
-32597 pad C
-32603 pad 
-32633 pad C
-32639 pad 
-32669 pad C
-32675 pad 
-32705 pad B
-32711 pad 
-32731 pad UP
-32851 pad B
-32857 pad 
-32867 pad RIGHT
-33011 pad B
-33017 pad 
-33027 pad DOWN
-33171 pad C
-33177 pad 
-33207 pad A
-33213 pad 
-33243 pad C
-33249 pad 
-33279 pad C
-33285 pad 
-33315 pad C
-33321 pad 
-33351 pad C
-33357 pad 
-33387 pad B
-33393 pad 
-33413 pad LEFT
-33581 pad B
-33587 pad 
-33597 pad UP
-33765 pad B
-33771 pad 
-33781 pad RIGHT
-33973 pad C
-33979 pad 
-34009 pad A
-34015 pad 
-34045 pad C
-34051 pad 
-34081 pad C
-34087 pad 
-34117 pad C
-34123 pad 
-34153 pad C
-34159 pad 
-34189 pad B
-34195 pad 
-34215 pad DOWN
-34407 pad B
-34413 pad 
-34423 pad LEFT
-34639 pad B
-34645 pad 
-34655 pad UP
-34871 pad C
-34877 pad 
-34907 pad A
-34913 pad 
-34943 pad C
-34949 pad 
-34979 pad C
+3827 pad RIGHT
+3835 pad 
+3845 pad LEFT
+3853 pad 
+3863 pad UP
+3871 pad 
+3881 pad DOWN
+3889 pad 
+3899 pad B
+3905 pad 
+3965 pad RIGHT
+3973 pad 
+3983 pad LEFT
+3991 pad 
+4001 pad C
+4007 pad 
+4037 pad UP
+4043 pad 
+4057 pad C
+4063 pad 
+4093 pad C
+4099 pad 
+4139 pad C
+4145 pad 
+4185 pad C
+4191 pad 
+4231 pad C
+4237 pad 
+4277 pad C
+4283 pad 
+4323 pad B
+4329 pad 
+4349 pad B
+4355 pad 
+4375 pad C
+4381 pad 
+4411 pad C
+4417 pad 
+4447 pad C
+4453 pad 
+4483 pad C
+4489 pad 
+4519 pad C
+4525 pad 
+4555 pad C
+4561 pad 
+4591 pad C
+4597 pad 
+4627 pad C
+4633 pad 
+4663 pad C
+4669 pad 
+4699 pad C
+4705 pad 
+4735 pad C
+4741 pad 
+4771 pad C
+4777 pad 
+4807 pad C
+4813 pad 
+4843 pad C
+4849 pad 
+4879 pad C
+4885 pad 
+4915 pad C
+4921 pad 
+4951 pad C
+4957 pad 
+4987 pad C
+4993 pad 
+5023 pad C
+5029 pad 
+5059 pad C
+5065 pad 
+5095 pad UP
+5119 pad B
+5125 pad 
+5135 pad RIGHT
+5159 pad B
+5165 pad 
+5175 pad DOWN
+5223 pad C
+5229 pad 
+5259 pad A
+5265 pad 
+5295 pad C
+5301 pad 
+5331 pad C
+5337 pad 
+5367 pad C
+5373 pad 
+5403 pad C
+5409 pad 
+5439 pad B
+5445 pad 
+5465 pad LEFT
+5513 pad B
+5519 pad 
+5529 pad UP
+5601 pad B
+5607 pad 
+5617 pad RIGHT
+5689 pad C
+5695 pad 
+5725 pad A
+5731 pad 
+5761 pad C
+5767 pad 
+5797 pad C
+5803 pad 
+5833 pad C
+5839 pad 
+5869 pad C
+5875 pad 
+5905 pad B
+5911 pad 
+5931 pad DOWN
+6027 pad B
+6033 pad 
+6043 pad LEFT
+6139 pad B
+6145 pad 
+6155 pad UP
+6275 pad C
+6281 pad 
+6311 pad A
+6317 pad 
+6347 pad C
+6353 pad 
+6383 pad C
+6389 pad 
+6419 pad C
+6425 pad 
+6455 pad C
+6461 pad 
+6491 pad B
+6497 pad 
+6517 pad RIGHT
+6637 pad B
+6643 pad 
+6653 pad DOWN
+6797 pad B
+6803 pad 
+6813 pad LEFT
+6957 pad C
+6963 pad 
+6993 pad A
+6999 pad 
+7029 pad C
+7035 pad 
+7065 pad C
+7071 pad 
+7101 pad C
+7107 pad 
+7137 pad C
+7143 pad 
+7173 pad B
+7179 pad 
+7199 pad UP
+7367 pad B
+7373 pad 
+7383 pad RIGHT
+7551 pad B
+7557 pad 
+7567 pad DOWN
+7759 pad C
+7765 pad 
+7795 pad A
+7801 pad 
+7831 pad C
+7837 pad 
+7867 pad C
+7873 pad 
+7903 pad C
+7909 pad 
+7939 pad C
+7945 pad 
+7975 pad B
+7981 pad 
+8001 pad LEFT
+8193 pad B
+8199 pad 
+8209 pad UP
+8425 pad B
+8431 pad 
+8441 pad DOWN
+8465 pad B
+8471 pad 
+8481 pad LEFT
+8505 pad B
+8511 pad 
+8521 pad UP
+8569 pad C
+8575 pad 
+8605 pad A
+8611 pad 
+8641 pad C
+8647 pad 
+8677 pad C
+8683 pad 
+8713 pad C
+8719 pad 
+8749 pad C
+8755 pad 
+8785 pad B
+8791 pad 
+8811 pad RIGHT
+8859 pad B
+8865 pad 
+8875 pad DOWN
+8947 pad B
+8953 pad 
+8963 pad LEFT
+9035 pad C
+9041 pad 
+9071 pad A
+9077 pad 
+9107 pad C
+9113 pad 
+9143 pad C
+9149 pad 
+9179 pad C
+9185 pad 
+9215 pad C
+9221 pad 
+9251 pad B
+9257 pad 
+9277 pad UP
+9373 pad B
+9379 pad 
+9389 pad RIGHT
+9485 pad B
+9491 pad 
+9501 pad DOWN
+9621 pad C
+9627 pad 
+9657 pad A
+9663 pad 
+9693 pad C
+9699 pad 
+9729 pad C
+9735 pad 
+9765 pad C
+9771 pad 
+9801 pad C
+9807 pad 
+9837 pad B
+9843 pad 
+9863 pad LEFT
+9983 pad B
+9989 pad 
+9999 pad UP
+10143 pad B
+10149 pad 
+10159 pad RIGHT
+10303 pad C
+10309 pad 
+10339 pad A
+10345 pad 
+10375 pad C
+10381 pad 
+10411 pad C
+10417 pad 
+10447 pad C
+10453 pad 
+10483 pad C
+10489 pad 
+10519 pad B
+10525 pad 
+10545 pad DOWN
+10713 pad B
+10719 pad 
+10729 pad LEFT
+10897 pad B
+10903 pad 
+10913 pad UP
+11105 pad C
+11111 pad 
+11141 pad A
+11147 pad 
+11177 pad C
+11183 pad 
+11213 pad C
+11219 pad 
+11249 pad C
+11255 pad 
+11285 pad C
+11291 pad 
+11321 pad B
+11327 pad 
+11347 pad RIGHT
+11539 pad B
+11545 pad 
+11555 pad DOWN
+11771 pad B
+11777 pad 
+11787 pad LEFT
+12003 pad C
+12009 pad 
+12039 pad A
+12045 pad 
+12075 pad C
+12081 pad 
+12111 pad C
+12117 pad 
+12147 pad C
+12153 pad 
+12183 pad C
+12189 pad 
+12219 pad B
+12225 pad 
+12245 pad UP
+12485 pad B
+12491 pad 
+12501 pad RIGHT
+12741 pad B
+12747 pad 
+12757 pad DOWN
+13021 pad C
+13027 pad 
+13057 pad A
+13063 pad 
+13093 pad C
+13099 pad 
+13129 pad C
+13135 pad 
+13165 pad C
+13171 pad 
+13201 pad C
+13207 pad 
+13237 pad B
+13243 pad 
+13263 pad LEFT
+13527 pad B
+13533 pad 
+13543 pad UP
+13831 pad B
+13837 pad 
+13847 pad RIGHT
+14135 pad C
+14141 pad 
+14171 pad A
+14177 pad 
+14207 pad C
+14213 pad 
+14243 pad C
+14249 pad 
+14279 pad C
+14285 pad 
+14315 pad C
+14321 pad 
+14351 pad B
+14357 pad 
+14377 pad UP
+14401 pad B
+14407 pad 
+14417 pad RIGHT
+14441 pad B
+14447 pad 
+14457 pad DOWN
+14505 pad C
+14511 pad 
+14541 pad A
+14547 pad 
+14577 pad C
+14583 pad 
+14613 pad C
+14619 pad 
+14649 pad C
+14655 pad 
+14685 pad C
+14691 pad 
+14721 pad B
+14727 pad 
+14747 pad LEFT
+14795 pad B
+14801 pad 
+14811 pad UP
+14883 pad B
+14889 pad 
+14899 pad RIGHT
+14971 pad C
+14977 pad 
+15007 pad A
+15013 pad 
+15043 pad C
+15049 pad 
+15079 pad C
+15085 pad 
+15115 pad C
+15121 pad 
+15151 pad C
+15157 pad 
+15187 pad B
+15193 pad 
+15213 pad DOWN
+15309 pad B
+15315 pad 
+15325 pad LEFT
+15421 pad B
+15427 pad 
+15437 pad UP
+15557 pad C
+15563 pad 
+15593 pad A
+15599 pad 
+15629 pad C
+15635 pad 
+15665 pad C
+15671 pad 
+15701 pad C
+15707 pad 
+15737 pad C
+15743 pad 
+15773 pad B
+15779 pad 
+15799 pad RIGHT
+15919 pad B
+15925 pad 
+15935 pad DOWN
+16079 pad B
+16085 pad 
+16095 pad LEFT
+16239 pad C
+16245 pad 
+16275 pad A
+16281 pad 
+16311 pad C
+16317 pad 
+16347 pad C
+16353 pad 
+16383 pad C
+16389 pad 
+16419 pad C
+16425 pad 
+16455 pad B
+16461 pad 
+16481 pad UP
+16649 pad B
+16655 pad 
+16665 pad RIGHT
+16833 pad B
+16839 pad 
+16849 pad DOWN
+17041 pad C
+17047 pad 
+17077 pad A
+17083 pad 
+17113 pad C
+17119 pad 
+17149 pad C
+17155 pad 
+17185 pad C
+17191 pad 
+17221 pad C
+17227 pad 
+17257 pad B
+17263 pad 
+17283 pad LEFT
+17475 pad B
+17481 pad 
+17491 pad UP
+17707 pad B
+17713 pad 
+17723 pad RIGHT
+17939 pad C
+17945 pad 
+17975 pad A
+17981 pad 
+18011 pad C
+18017 pad 
+18047 pad C
+18053 pad 
+18083 pad C
+18089 pad 
+18119 pad C
+18125 pad 
+18155 pad B
+18161 pad 
+18181 pad DOWN
+18421 pad B
+18427 pad 
+18437 pad LEFT
+18677 pad B
+18683 pad 
+18693 pad UP
+18957 pad C
+18963 pad 
+18993 pad A
+18999 pad 
+19029 pad C
+19035 pad 
+19065 pad C
+19071 pad 
+19101 pad C
+19107 pad 
+19137 pad C
+19143 pad 
+19173 pad B
+19179 pad 
+19199 pad RIGHT
+19463 pad B
+19469 pad 
+19479 pad DOWN
+19767 pad B
+19773 pad 
+19783 pad LEFT
+20071 pad C
+20077 pad 
+20107 pad A
+20113 pad 
+20143 pad C
+20149 pad 
+20179 pad C
+20185 pad 
+20215 pad C
+20221 pad 
+20251 pad C
+20257 pad 
+20287 pad B
+20293 pad 
+20313 pad LEFT
+20337 pad B
+20343 pad 
+20353 pad UP
+20377 pad B
+20383 pad 
+20393 pad RIGHT
+20441 pad C
+20447 pad 
+20477 pad A
+20483 pad 
+20513 pad C
+20519 pad 
+20549 pad C
+20555 pad 
+20585 pad C
+20591 pad 
+20621 pad C
+20627 pad 
+20657 pad B
+20663 pad 
+20683 pad DOWN
+20731 pad B
+20737 pad 
+20747 pad LEFT
+20819 pad B
+20825 pad 
+20835 pad UP
+20907 pad C
+20913 pad 
+20943 pad A
+20949 pad 
+20979 pad C
+20985 pad 
+21015 pad C
+21021 pad 
+21051 pad C
+21057 pad 
+21087 pad C
+21093 pad 
+21123 pad B
+21129 pad 
+21149 pad RIGHT
+21245 pad B
+21251 pad 
+21261 pad DOWN
+21357 pad B
+21363 pad 
+21373 pad LEFT
+21493 pad C
+21499 pad 
+21529 pad A
+21535 pad 
+21565 pad C
+21571 pad 
+21601 pad C
+21607 pad 
+21637 pad C
+21643 pad 
+21673 pad C
+21679 pad 
+21709 pad B
+21715 pad 
+21735 pad UP
+21855 pad B
+21861 pad 
+21871 pad RIGHT
+22015 pad B
+22021 pad 
+22031 pad DOWN
+22175 pad C
+22181 pad 
+22211 pad A
+22217 pad 
+22247 pad C
+22253 pad 
+22283 pad C
+22289 pad 
+22319 pad C
+22325 pad 
+22355 pad C
+22361 pad 
+22391 pad B
+22397 pad 
+22417 pad LEFT
+22585 pad B
+22591 pad 
+22601 pad UP
+22769 pad B
+22775 pad 
+22785 pad RIGHT
+22977 pad C
+22983 pad 
+23013 pad A
+23019 pad 
+23049 pad C
+23055 pad 
+23085 pad C
+23091 pad 
+23121 pad C
+23127 pad 
+23157 pad C
+23163 pad 
+23193 pad B
+23199 pad 
+23219 pad DOWN
+23411 pad B
+23417 pad 
+23427 pad LEFT
+23643 pad B
+23649 pad 
+23659 pad UP
+23875 pad C
+23881 pad 
+23911 pad A
+23917 pad 
+23947 pad C
+23953 pad 
+23983 pad C
+23989 pad 
+24019 pad C
+24025 pad 
+24055 pad C
+24061 pad 
+24091 pad B
+24097 pad 
+24117 pad RIGHT
+24357 pad B
+24363 pad 
+24373 pad DOWN
+24613 pad B
+24619 pad 
+24629 pad LEFT
+24893 pad C
+24899 pad 
+24929 pad A
+24935 pad 
+24965 pad C
+24971 pad 
+25001 pad C
+25007 pad 
+25037 pad C
+25043 pad 
+25073 pad C
+25079 pad 
+25109 pad B
+25115 pad 
+25135 pad UP
+25399 pad B
+25405 pad 
+25415 pad RIGHT
+25703 pad B
+25709 pad 
+25719 pad DOWN
+26007 pad C
+26013 pad 
+26043 pad A
+26049 pad 
+26079 pad C
+26085 pad 
+26115 pad C
+26121 pad 
+26151 pad C
+26157 pad 
+26187 pad C
+26193 pad 
+26223 pad B
+26229 pad 
+26249 pad LEFT
+26273 pad B
+26279 pad 
+26289 pad UP
+26313 pad B
+26319 pad 
+26329 pad RIGHT
+26377 pad C
+26383 pad 
+26413 pad A
+26419 pad 
+26449 pad C
+26455 pad 
+26485 pad C
+26491 pad 
+26521 pad C
+26527 pad 
+26557 pad C
+26563 pad 
+26593 pad B
+26599 pad 
+26619 pad DOWN
+26667 pad B
+26673 pad 
+26683 pad LEFT
+26755 pad B
+26761 pad 
+26771 pad UP
+26843 pad C
+26849 pad 
+26879 pad A
+26885 pad 
+26915 pad C
+26921 pad 
+26951 pad C
+26957 pad 
+26987 pad C
+26993 pad 
+27023 pad C
+27029 pad 
+27059 pad B
+27065 pad 
+27085 pad RIGHT
+27181 pad B
+27187 pad 
+27197 pad DOWN
+27293 pad B
+27299 pad 
+27309 pad LEFT
+27429 pad C
+27435 pad 
+27465 pad A
+27471 pad 
+27501 pad C
+27507 pad 
+27537 pad C
+27543 pad 
+27573 pad C
+27579 pad 
+27609 pad C
+27615 pad 
+27645 pad B
+27651 pad 
+27671 pad UP
+27791 pad B
+27797 pad 
+27807 pad RIGHT
+27951 pad B
+27957 pad 
+27967 pad DOWN
+28111 pad C
+28117 pad 
+28147 pad A
+28153 pad 
+28183 pad C
+28189 pad 
+28219 pad C
+28225 pad 
+28255 pad C
+28261 pad 
+28291 pad C
+28297 pad 
+28327 pad B
+28333 pad 
+28353 pad LEFT
+28521 pad B
+28527 pad 
+28537 pad UP
+28705 pad B
+28711 pad 
+28721 pad RIGHT
+28913 pad C
+28919 pad 
+28949 pad A
+28955 pad 
+28985 pad C
+28991 pad 
+29021 pad C
+29027 pad 
+29057 pad C
+29063 pad 
+29093 pad C
+29099 pad 
+29129 pad B
+29135 pad 
+29155 pad DOWN
+29347 pad B
+29353 pad 
+29363 pad LEFT
+29579 pad B
+29585 pad 
+29595 pad UP
+29811 pad C
+29817 pad 
+29847 pad A
+29853 pad 
+29883 pad C
+29889 pad 
+29919 pad C
+29925 pad 
+29955 pad C
+29961 pad 
+29991 pad C
+29997 pad 
+30027 pad B
+30033 pad 
+30053 pad RIGHT
+30293 pad B
+30299 pad 
+30309 pad DOWN
+30549 pad B
+30555 pad 
+30565 pad LEFT
+30829 pad C
+30835 pad 
+30865 pad A
+30871 pad 
+30901 pad C
+30907 pad 
+30937 pad C
+30943 pad 
+30973 pad C
+30979 pad 
+31009 pad C
+31015 pad 
+31045 pad B
+31051 pad 
+31071 pad UP
+31335 pad B
+31341 pad 
+31351 pad RIGHT
+31639 pad B
+31645 pad 
+31655 pad DOWN
+31943 pad C
+31949 pad 
+31979 pad A
+31985 pad 
+32015 pad C
+32021 pad 
+32051 pad C
+32057 pad 
+32087 pad C
+32093 pad 
+32123 pad C
+32129 pad 
+32159 pad B
+32165 pad 
+32185 pad LEFT
+32209 pad B
+32215 pad 
+32225 pad UP
+32249 pad B
+32255 pad 
+32265 pad RIGHT
+32313 pad C
+32319 pad 
+32349 pad A
+32355 pad 
+32385 pad C
+32391 pad 
+32421 pad C
+32427 pad 
+32457 pad C
+32463 pad 
+32493 pad C
+32499 pad 
+32529 pad B
+32535 pad 
+32555 pad DOWN
+32603 pad B
+32609 pad 
+32619 pad LEFT
+32691 pad B
+32697 pad 
+32707 pad LEFT
+32731 pad B
+32737 pad 
+32747 pad UP
+32771 pad B
+32777 pad 
+32787 pad RIGHT
+32835 pad C
+32841 pad 
+32871 pad A
+32877 pad 
+32907 pad C
+32913 pad 
+32943 pad C
+32949 pad 
+32979 pad C
+32985 pad 
+33015 pad C
+33021 pad 
+33051 pad B
+33057 pad 
+33077 pad DOWN
+33125 pad B
+33131 pad 
+33141 pad LEFT
+33213 pad B
+33219 pad 
+33229 pad UP
+33301 pad C
+33307 pad 
+33337 pad A
+33343 pad 
+33373 pad C
+33379 pad 
+33409 pad C
+33415 pad 
+33445 pad C
+33451 pad 
+33481 pad C
+33487 pad 
+33517 pad B
+33523 pad 
+33543 pad RIGHT
+33639 pad B
+33645 pad 
+33655 pad DOWN
+33751 pad B
+33757 pad 
+33767 pad LEFT
+33887 pad C
+33893 pad 
+33923 pad A
+33929 pad 
+33959 pad C
+33965 pad 
+33995 pad C
+34001 pad 
+34031 pad C
+34037 pad 
+34067 pad C
+34073 pad 
+34103 pad B
+34109 pad 
+34129 pad UP
+34249 pad B
+34255 pad 
+34265 pad RIGHT
+34409 pad B
+34415 pad 
+34425 pad DOWN
+34569 pad C
+34575 pad 
+34605 pad A
+34611 pad 
+34641 pad C
+34647 pad 
+34677 pad C
+34683 pad 
+34713 pad C
+34719 pad 
+34749 pad C
+34755 pad 
+34785 pad B
+34791 pad 
+34811 pad LEFT
+34979 pad B
 34985 pad 
-35015 pad C
-35021 pad 
-35051 pad C
-35057 pad 
-35087 pad B
-35093 pad 
-35113 pad RIGHT
-35353 pad B
-35359 pad 
-35369 pad DOWN
-35609 pad B
-35615 pad 
-35625 pad LEFT
-35889 pad C
-35895 pad 
-35925 pad A
-35931 pad 
-35961 pad C
-35967 pad 
-35997 pad C
-36003 pad 
-36033 pad C
-36039 pad 
-36069 pad C
-36075 pad 
-36105 pad B
-36111 pad 
-36131 pad UP
-36395 pad B
-36401 pad 
-36411 pad RIGHT
-36699 pad B
-36705 pad 
-36715 pad DOWN
-37003 pad C
-37009 pad 
-37039 pad A
-37045 pad 
-37075 pad C
-37081 pad 
-37111 pad C
-37117 pad 
-37147 pad C
-37153 pad 
-37183 pad C
-37189 pad 
-37219 pad B
-37225 pad 
-37245 pad LEFT
-37269 pad B
-37275 pad 
-37285 pad UP
-37309 pad B
-37315 pad 
-37325 pad RIGHT
-37373 pad C
-37379 pad 
-37409 pad A
-37415 pad 
-37445 pad C
-37451 pad 
-37481 pad C
-37487 pad 
-37517 pad C
-37523 pad 
-37553 pad C
-37559 pad 
-37589 pad B
-37595 pad 
-37615 pad DOWN
-37663 pad B
-37669 pad 
-37679 pad LEFT
-37751 pad B
-37757 pad 
-37767 pad UP
-37839 pad C
-37845 pad 
-37875 pad A
-37881 pad 
-37911 pad C
-37917 pad 
-37947 pad C
-37953 pad 
-37983 pad C
-37989 pad 
-38019 pad C
-38025 pad 
-38055 pad B
-38061 pad 
-38081 pad RIGHT
-38177 pad B
-38183 pad 
-38193 pad DOWN
-38289 pad B
-38295 pad 
-38305 pad LEFT
-38425 pad C
-38431 pad 
-38461 pad A
-38467 pad 
-38497 pad C
-38503 pad 
-38533 pad C
-38539 pad 
-38569 pad C
-38575 pad 
-38605 pad C
-38611 pad 
-38641 pad B
-38647 pad 
-38667 pad UP
-38787 pad B
-38793 pad 
-38803 pad RIGHT
-38947 pad B
-38953 pad 
-38963 pad DOWN
-39107 pad C
-39113 pad 
-39143 pad A
-39149 pad 
-39179 pad C
-39185 pad 
-39215 pad C
-39221 pad 
-39251 pad C
-39257 pad 
-39287 pad C
-39293 pad 
-39323 pad B
-39329 pad 
-39349 pad LEFT
-39517 pad B
-39523 pad 
-39533 pad UP
-39701 pad B
-39707 pad 
-39717 pad RIGHT
-39909 pad C
-39915 pad 
-39945 pad A
-39951 pad 
-39981 pad C
-39987 pad 
-40017 pad C
-40023 pad 
-40053 pad C
-40059 pad 
-40089 pad C
-40095 pad 
-40125 pad B
-40131 pad 
-40151 pad DOWN
-40343 pad B
-40349 pad 
-40359 pad LEFT
-40575 pad B
-40581 pad 
-40591 pad UP
-40807 pad C
-40813 pad 
-40843 pad A
-40849 pad 
-40879 pad C
-40885 pad 
-40915 pad C
+34995 pad UP
+35163 pad B
+35169 pad 
+35179 pad RIGHT
+35371 pad C
+35377 pad 
+35407 pad A
+35413 pad 
+35443 pad C
+35449 pad 
+35479 pad C
+35485 pad 
+35515 pad C
+35521 pad 
+35551 pad C
+35557 pad 
+35587 pad B
+35593 pad 
+35613 pad DOWN
+35805 pad B
+35811 pad 
+35821 pad LEFT
+36037 pad B
+36043 pad 
+36053 pad UP
+36269 pad C
+36275 pad 
+36305 pad A
+36311 pad 
+36341 pad C
+36347 pad 
+36377 pad C
+36383 pad 
+36413 pad C
+36419 pad 
+36449 pad C
+36455 pad 
+36485 pad B
+36491 pad 
+36511 pad RIGHT
+36751 pad B
+36757 pad 
+36767 pad DOWN
+37007 pad B
+37013 pad 
+37023 pad LEFT
+37287 pad C
+37293 pad 
+37323 pad A
+37329 pad 
+37359 pad C
+37365 pad 
+37395 pad C
+37401 pad 
+37431 pad C
+37437 pad 
+37467 pad C
+37473 pad 
+37503 pad B
+37509 pad 
+37529 pad UP
+37793 pad B
+37799 pad 
+37809 pad RIGHT
+38097 pad B
+38103 pad 
+38113 pad DOWN
+38401 pad C
+38407 pad 
+38437 pad A
+38443 pad 
+38473 pad C
+38479 pad 
+38509 pad C
+38515 pad 
+38545 pad C
+38551 pad 
+38581 pad C
+38587 pad 
+38617 pad B
+38623 pad 
+38643 pad RIGHT
+38667 pad B
+38673 pad 
+38683 pad DOWN
+38707 pad B
+38713 pad 
+38723 pad LEFT
+38771 pad C
+38777 pad 
+38807 pad A
+38813 pad 
+38843 pad C
+38849 pad 
+38879 pad C
+38885 pad 
+38915 pad C
+38921 pad 
+38951 pad C
+38957 pad 
+38987 pad B
+38993 pad 
+39013 pad UP
+39061 pad B
+39067 pad 
+39077 pad RIGHT
+39149 pad B
+39155 pad 
+39165 pad DOWN
+39237 pad C
+39243 pad 
+39273 pad A
+39279 pad 
+39309 pad C
+39315 pad 
+39345 pad C
+39351 pad 
+39381 pad C
+39387 pad 
+39417 pad C
+39423 pad 
+39453 pad B
+39459 pad 
+39479 pad LEFT
+39575 pad B
+39581 pad 
+39591 pad UP
+39687 pad B
+39693 pad 
+39703 pad RIGHT
+39823 pad C
+39829 pad 
+39859 pad A
+39865 pad 
+39895 pad C
+39901 pad 
+39931 pad C
+39937 pad 
+39967 pad C
+39973 pad 
+40003 pad C
+40009 pad 
+40039 pad B
+40045 pad 
+40065 pad DOWN
+40185 pad B
+40191 pad 
+40201 pad LEFT
+40345 pad B
+40351 pad 
+40361 pad UP
+40505 pad C
+40511 pad 
+40541 pad A
+40547 pad 
+40577 pad C
+40583 pad 
+40613 pad C
+40619 pad 
+40649 pad C
+40655 pad 
+40685 pad C
+40691 pad 
+40721 pad B
+40727 pad 
+40747 pad RIGHT
+40915 pad B
 40921 pad 
-40951 pad C
-40957 pad 
-40987 pad C
-40993 pad 
-41023 pad B
-41029 pad 
-41049 pad RIGHT
-41289 pad B
-41295 pad 
-41305 pad RIGHT
-41329 pad B
-41335 pad 
-41345 pad DOWN
-41369 pad B
-41375 pad 
-41385 pad LEFT
-41433 pad C
-41439 pad 
-41469 pad A
-41475 pad 
-41505 pad C
-41511 pad 
-41541 pad C
-41547 pad 
-41577 pad C
-41583 pad 
-41613 pad C
-41619 pad 
-41649 pad B
-41655 pad 
-41675 pad UP
-41723 pad B
-41729 pad 
-41739 pad RIGHT
-41811 pad B
-41817 pad 
-41827 pad DOWN
-41899 pad C
-41905 pad 
-41935 pad A
-41941 pad 
-41971 pad C
-41977 pad 
-42007 pad C
-42013 pad 
-42043 pad C
-42049 pad 
-42079 pad C
-42085 pad 
-42115 pad B
-42121 pad 
-42141 pad LEFT
-42237 pad B
-42243 pad 
-42253 pad UP
-42349 pad B
+40931 pad DOWN
+41099 pad B
+41105 pad 
+41115 pad LEFT
+41307 pad C
+41313 pad 
+41343 pad A
+41349 pad 
+41379 pad C
+41385 pad 
+41415 pad C
+41421 pad 
+41451 pad C
+41457 pad 
+41487 pad C
+41493 pad 
+41523 pad B
+41529 pad 
+41549 pad UP
+41741 pad B
+41747 pad 
+41757 pad RIGHT
+41973 pad B
+41979 pad 
+41989 pad DOWN
+42205 pad C
+42211 pad 
+42241 pad A
+42247 pad 
+42277 pad C
+42283 pad 
+42313 pad C
+42319 pad 
+42349 pad C
 42355 pad 
-42365 pad RIGHT
-42485 pad C
-42491 pad 
-42521 pad A
-42527 pad 
-42557 pad C
-42563 pad 
-42593 pad C
-42599 pad 
-42629 pad C
-42635 pad 
-42665 pad C
-42671 pad 
-42701 pad B
-42707 pad 
-42727 pad DOWN
-42847 pad B
-42853 pad 
-42863 pad LEFT
-43007 pad B
-43013 pad 
-43023 pad UP
-43167 pad C
-43173 pad 
-43203 pad A
-43209 pad 
-43239 pad C
-43245 pad 
-43275 pad C
-43281 pad 
-43311 pad C
-43317 pad 
-43347 pad C
-43353 pad 
-43383 pad B
-43389 pad 
-43409 pad RIGHT
-43577 pad B
-43583 pad 
-43593 pad DOWN
-43761 pad B
-43767 pad 
-43777 pad LEFT
-43969 pad C
-43975 pad 
-44005 pad A
-44011 pad 
-44041 pad C
-44047 pad 
-44077 pad C
-44083 pad 
-44113 pad C
-44119 pad 
-44149 pad C
-44155 pad 
-44185 pad B
-44191 pad 
-44211 pad UP
-44403 pad B
-44409 pad 
-44419 pad RIGHT
-44635 pad B
-44641 pad 
-44651 pad DOWN
-44867 pad C
-44873 pad 
-44903 pad A
-44909 pad 
-44939 pad C
-44945 pad 
-44975 pad C
+42385 pad C
+42391 pad 
+42421 pad B
+42427 pad 
+42447 pad LEFT
+42687 pad B
+42693 pad 
+42703 pad UP
+42727 pad B
+42733 pad 
+42743 pad RIGHT
+42767 pad B
+42773 pad 
+42783 pad DOWN
+42831 pad C
+42837 pad 
+42867 pad A
+42873 pad 
+42903 pad C
+42909 pad 
+42939 pad C
+42945 pad 
+42975 pad C
+42981 pad 
+43011 pad C
+43017 pad 
+43047 pad B
+43053 pad 
+43073 pad LEFT
+43121 pad B
+43127 pad 
+43137 pad UP
+43209 pad B
+43215 pad 
+43225 pad RIGHT
+43297 pad C
+43303 pad 
+43333 pad A
+43339 pad 
+43369 pad C
+43375 pad 
+43405 pad C
+43411 pad 
+43441 pad C
+43447 pad 
+43477 pad C
+43483 pad 
+43513 pad B
+43519 pad 
+43539 pad DOWN
+43635 pad B
+43641 pad 
+43651 pad LEFT
+43747 pad B
+43753 pad 
+43763 pad UP
+43883 pad C
+43889 pad 
+43919 pad A
+43925 pad 
+43955 pad C
+43961 pad 
+43991 pad C
+43997 pad 
+44027 pad C
+44033 pad 
+44063 pad C
+44069 pad 
+44099 pad B
+44105 pad 
+44125 pad RIGHT
+44245 pad B
+44251 pad 
+44261 pad DOWN
+44405 pad B
+44411 pad 
+44421 pad LEFT
+44565 pad C
+44571 pad 
+44601 pad A
+44607 pad 
+44637 pad C
+44643 pad 
+44673 pad C
+44679 pad 
+44709 pad C
+44715 pad 
+44745 pad C
+44751 pad 
+44781 pad B
+44787 pad 
+44807 pad UP
+44975 pad B
 44981 pad 
-45011 pad C
-45017 pad 
-45047 pad C
-45053 pad 
-45083 pad B
-45089 pad 
-45109 pad LEFT
-45349 pad B
-45355 pad 
-45365 pad UP
-45605 pad B
-45611 pad 
-45621 pad RIGHT
-45885 pad C
-45891 pad 
-45921 pad A
-45927 pad 
-45957 pad C
-45963 pad 
-45993 pad C
-45999 pad 
-46029 pad C
-46035 pad 
-46065 pad C
-46071 pad 
-46101 pad B
-46107 pad 
-46127 pad DOWN
-46391 pad B
-46397 pad 
-46407 pad LEFT
-46695 pad B
-46701 pad 
-46711 pad UP
-46999 pad C
-47005 pad 
-47035 pad A
-47041 pad 
-47071 pad C
-47077 pad 
-47107 pad C
-47113 pad 
-47143 pad C
-47149 pad 
-47179 pad C
-47185 pad 
-47215 pad B
-47221 pad 
-47241 pad UP
-47265 pad B
-47271 pad 
-47281 pad RIGHT
-47305 pad B
-47311 pad 
-47321 pad DOWN
-47369 pad C
-47375 pad 
-47405 pad A
-47411 pad 
-47441 pad C
-47447 pad 
-47477 pad C
-47483 pad 
-47513 pad C
-47519 pad 
-47549 pad C
-47555 pad 
-47585 pad B
-47591 pad 
-47611 pad LEFT
-47659 pad B
-47665 pad 
-47675 pad UP
-47747 pad B
-47753 pad 
-47763 pad RIGHT
-47835 pad C
-47841 pad 
-47871 pad A
-47877 pad 
-47907 pad C
-47913 pad 
-47943 pad C
-47949 pad 
-47979 pad C
-47985 pad 
-48015 pad C
-48021 pad 
-48051 pad B
-48057 pad 
-48077 pad DOWN
-48173 pad B
-48179 pad 
-48189 pad LEFT
-48285 pad B
-48291 pad 
-48301 pad UP
-48421 pad C
-48427 pad 
-48457 pad A
-48463 pad 
-48493 pad C
-48499 pad 
-48529 pad C
-48535 pad 
-48565 pad C
-48571 pad 
-48601 pad C
-48607 pad 
-48637 pad B
-48643 pad 
-48663 pad RIGHT
-48783 pad B
-48789 pad 
-48799 pad DOWN
-48943 pad B
-48949 pad 
-48959 pad LEFT
-49103 pad C
-49109 pad 
-49139 pad A
-49145 pad 
-49175 pad C
-49181 pad 
-49211 pad C
-49217 pad 
-49247 pad C
-49253 pad 
-49283 pad C
-49289 pad 
-49319 pad B
-49325 pad 
-49345 pad UP
-49513 pad B
-49519 pad 
-49529 pad RIGHT
-49697 pad B
-49703 pad 
-49713 pad DOWN
-49905 pad C
-49911 pad 
-49941 pad A
-49947 pad 
-49977 pad C
-49983 pad 
-50013 pad C
-50019 pad 
-50049 pad C
-50055 pad 
-50085 pad C
-50091 pad 
-50121 pad B
-50127 pad 
-50147 pad LEFT
-50339 pad B
-50345 pad 
-50355 pad UP
-50571 pad B
-50577 pad 
-50587 pad RIGHT
-50803 pad C
-50809 pad 
-50839 pad A
-50845 pad 
-50875 pad C
-50881 pad 
-50911 pad C
+44991 pad RIGHT
+45159 pad B
+45165 pad 
+45175 pad DOWN
+45367 pad C
+45373 pad 
+45403 pad A
+45409 pad 
+45439 pad C
+45445 pad 
+45475 pad C
+45481 pad 
+45511 pad C
+45517 pad 
+45547 pad C
+45553 pad 
+45583 pad B
+45589 pad 
+45609 pad LEFT
+45801 pad B
+45807 pad 
+45817 pad UP
+46033 pad B
+46039 pad 
+46049 pad RIGHT
+46265 pad C
+46271 pad 
+46301 pad A
+46307 pad 
+46337 pad C
+46343 pad 
+46373 pad C
+46379 pad 
+46409 pad C
+46415 pad 
+46445 pad C
+46451 pad 
+46481 pad B
+46487 pad 
+46507 pad DOWN
+46747 pad B
+46753 pad 
+46763 pad LEFT
+47003 pad B
+47009 pad 
+47019 pad UP
+47283 pad C
+47289 pad 
+47319 pad A
+47325 pad 
+47355 pad C
+47361 pad 
+47391 pad C
+47397 pad 
+47427 pad C
+47433 pad 
+47463 pad C
+47469 pad 
+47499 pad B
+47505 pad 
+47525 pad RIGHT
+47789 pad B
+47795 pad 
+47805 pad DOWN
+48093 pad B
+48099 pad 
+48109 pad LEFT
+48397 pad C
+48403 pad 
+48433 pad A
+48439 pad 
+48469 pad C
+48475 pad 
+48505 pad C
+48511 pad 
+48541 pad C
+48547 pad 
+48577 pad C
+48583 pad 
+48613 pad B
+48619 pad 
+48639 pad LEFT
+48663 pad B
+48669 pad 
+48679 pad UP
+48703 pad B
+48709 pad 
+48719 pad RIGHT
+48767 pad C
+48773 pad 
+48803 pad A
+48809 pad 
+48839 pad C
+48845 pad 
+48875 pad C
+48881 pad 
+48911 pad C
+48917 pad 
+48947 pad C
+48953 pad 
+48983 pad B
+48989 pad 
+49009 pad DOWN
+49057 pad B
+49063 pad 
+49073 pad LEFT
+49145 pad B
+49151 pad 
+49161 pad UP
+49233 pad C
+49239 pad 
+49269 pad A
+49275 pad 
+49305 pad C
+49311 pad 
+49341 pad C
+49347 pad 
+49377 pad C
+49383 pad 
+49413 pad C
+49419 pad 
+49449 pad B
+49455 pad 
+49475 pad RIGHT
+49571 pad B
+49577 pad 
+49587 pad DOWN
+49683 pad B
+49689 pad 
+49699 pad LEFT
+49819 pad C
+49825 pad 
+49855 pad A
+49861 pad 
+49891 pad C
+49897 pad 
+49927 pad C
+49933 pad 
+49963 pad C
+49969 pad 
+49999 pad C
+50005 pad 
+50035 pad B
+50041 pad 
+50061 pad UP
+50181 pad B
+50187 pad 
+50197 pad RIGHT
+50341 pad B
+50347 pad 
+50357 pad DOWN
+50501 pad C
+50507 pad 
+50537 pad A
+50543 pad 
+50573 pad C
+50579 pad 
+50609 pad C
+50615 pad 
+50645 pad C
+50651 pad 
+50681 pad C
+50687 pad 
+50717 pad B
+50723 pad 
+50743 pad LEFT
+50911 pad B
 50917 pad 
-50947 pad C
-50953 pad 
-50983 pad C
-50989 pad 
-51019 pad B
-51025 pad 
-51045 pad DOWN
-51285 pad B
-51291 pad 
-51301 pad LEFT
-51541 pad B
-51547 pad 
-51557 pad UP
-51821 pad C
-51827 pad 
-51857 pad A
-51863 pad 
-51893 pad C
-51899 pad 
-51929 pad C
-51935 pad 
-51965 pad C
-51971 pad 
-52001 pad C
-52007 pad 
-52037 pad B
-52043 pad 
-52063 pad RIGHT
-52327 pad B
-52333 pad 
-52343 pad DOWN
-52631 pad B
-52637 pad 
-52647 pad LEFT
-52935 pad C
-52941 pad 
-52971 pad A
-52977 pad 
-53007 pad C
-53013 pad 
-53043 pad C
-53049 pad 
-53079 pad C
-53085 pad 
-53115 pad C
-53121 pad 
-53151 pad B
-53157 pad 
-53177 pad LEFT
-53201 pad B
-53207 pad 
-53217 pad UP
-53241 pad B
-53247 pad 
-53257 pad RIGHT
-53305 pad C
-53311 pad 
-53341 pad A
-53347 pad 
-53377 pad C
-53383 pad 
-53413 pad C
-53419 pad 
-53449 pad C
-53455 pad 
-53485 pad C
-53491 pad 
-53521 pad B
-53527 pad 
-53547 pad DOWN
-53595 pad B
-53601 pad 
-53611 pad LEFT
-53683 pad B
-53689 pad 
-53699 pad UP
-53771 pad C
-53777 pad 
-53807 pad A
-53813 pad 
-53843 pad C
-53849 pad 
-53879 pad C
-53885 pad 
-53915 pad C
-53921 pad 
-53951 pad C
-53957 pad 
-53987 pad B
-53993 pad 
-54013 pad RIGHT
-54109 pad B
-54115 pad 
-54125 pad DOWN
-54221 pad B
-54227 pad 
-54237 pad LEFT
-54357 pad C
-54363 pad 
-54393 pad A
-54399 pad 
-54429 pad C
-54435 pad 
-54465 pad C
-54471 pad 
-54501 pad C
-54507 pad 
-54537 pad C
-54543 pad 
-54573 pad B
-54579 pad 
-54599 pad UP
-54719 pad B
-54725 pad 
-54735 pad RIGHT
-54879 pad B
-54885 pad 
-54895 pad DOWN
-55039 pad C
-55045 pad 
-55075 pad A
-55081 pad 
-55111 pad C
-55117 pad 
-55147 pad C
-55153 pad 
-55183 pad C
-55189 pad 
-55219 pad C
-55225 pad 
-55255 pad B
-55261 pad 
-55281 pad LEFT
-55449 pad B
-55455 pad 
-55465 pad UP
-55633 pad B
-55639 pad 
-55649 pad RIGHT
-55841 pad C
-55847 pad 
-55877 pad A
-55883 pad 
-55913 pad C
-55919 pad 
-55949 pad C
-55955 pad 
-55985 pad C
-55991 pad 
-56021 pad C
-56027 pad 
-56057 pad B
-56063 pad 
-56083 pad DOWN
-56275 pad B
-56281 pad 
-56291 pad LEFT
-56507 pad B
-56513 pad 
-56523 pad UP
-56739 pad C
-56745 pad 
-56775 pad A
-56781 pad 
-56811 pad C
-56817 pad 
-56847 pad C
+50927 pad UP
+51095 pad B
+51101 pad 
+51111 pad RIGHT
+51303 pad C
+51309 pad 
+51339 pad A
+51345 pad 
+51375 pad C
+51381 pad 
+51411 pad C
+51417 pad 
+51447 pad C
+51453 pad 
+51483 pad C
+51489 pad 
+51519 pad B
+51525 pad 
+51545 pad DOWN
+51737 pad B
+51743 pad 
+51753 pad LEFT
+51969 pad B
+51975 pad 
+51985 pad UP
+52201 pad C
+52207 pad 
+52237 pad A
+52243 pad 
+52273 pad C
+52279 pad 
+52309 pad C
+52315 pad 
+52345 pad C
+52351 pad 
+52381 pad C
+52387 pad 
+52417 pad B
+52423 pad 
+52443 pad RIGHT
+52683 pad B
+52689 pad 
+52699 pad DOWN
+52939 pad B
+52945 pad 
+52955 pad LEFT
+53219 pad C
+53225 pad 
+53255 pad A
+53261 pad 
+53291 pad C
+53297 pad 
+53327 pad C
+53333 pad 
+53363 pad C
+53369 pad 
+53399 pad C
+53405 pad 
+53435 pad B
+53441 pad 
+53461 pad UP
+53725 pad B
+53731 pad 
+53741 pad RIGHT
+54029 pad B
+54035 pad 
+54045 pad DOWN
+54333 pad C
+54339 pad 
+54369 pad A
+54375 pad 
+54405 pad C
+54411 pad 
+54441 pad C
+54447 pad 
+54477 pad C
+54483 pad 
+54513 pad C
+54519 pad 
+54549 pad B
+54555 pad 
+54575 pad UP
+54599 pad B
+54605 pad 
+54615 pad RIGHT
+54639 pad B
+54645 pad 
+54655 pad DOWN
+54703 pad C
+54709 pad 
+54739 pad A
+54745 pad 
+54775 pad C
+54781 pad 
+54811 pad C
+54817 pad 
+54847 pad C
+54853 pad 
+54883 pad C
+54889 pad 
+54919 pad B
+54925 pad 
+54945 pad LEFT
+54993 pad B
+54999 pad 
+55009 pad UP
+55081 pad B
+55087 pad 
+55097 pad RIGHT
+55169 pad C
+55175 pad 
+55205 pad A
+55211 pad 
+55241 pad C
+55247 pad 
+55277 pad C
+55283 pad 
+55313 pad C
+55319 pad 
+55349 pad C
+55355 pad 
+55385 pad B
+55391 pad 
+55411 pad DOWN
+55507 pad B
+55513 pad 
+55523 pad LEFT
+55619 pad B
+55625 pad 
+55635 pad UP
+55755 pad C
+55761 pad 
+55791 pad A
+55797 pad 
+55827 pad C
+55833 pad 
+55863 pad C
+55869 pad 
+55899 pad C
+55905 pad 
+55935 pad C
+55941 pad 
+55971 pad B
+55977 pad 
+55997 pad RIGHT
+56117 pad B
+56123 pad 
+56133 pad DOWN
+56277 pad B
+56283 pad 
+56293 pad LEFT
+56437 pad C
+56443 pad 
+56473 pad A
+56479 pad 
+56509 pad C
+56515 pad 
+56545 pad C
+56551 pad 
+56581 pad C
+56587 pad 
+56617 pad C
+56623 pad 
+56653 pad B
+56659 pad 
+56679 pad UP
+56847 pad B
 56853 pad 
-56883 pad C
-56889 pad 
-56919 pad C
-56925 pad 
-56955 pad B
-56961 pad 
-56981 pad RIGHT
-57221 pad B
-57227 pad 
-57237 pad DOWN
-57477 pad B
-57483 pad 
-57493 pad LEFT
-57757 pad C
-57763 pad 
-57793 pad A
-57799 pad 
-57829 pad C
-57835 pad 
-57865 pad C
-57871 pad 
-57901 pad C
-57907 pad 
-57937 pad C
-57943 pad 
-57973 pad B
-57979 pad 
-57999 pad UP
-58023 pad B
-58029 pad 
-58039 pad RIGHT
-58063 pad B
-58069 pad 
-58079 pad DOWN
-58127 pad C
-58133 pad 
-58163 pad A
-58169 pad 
-58199 pad C
-58205 pad 
-58235 pad C
-58241 pad 
-58271 pad C
-58277 pad 
-58307 pad C
-58313 pad 
-58343 pad B
-58349 pad 
-58369 pad LEFT
-58417 pad B
-58423 pad 
-58433 pad UP
-58505 pad B
-58511 pad 
-58521 pad RIGHT
-58593 pad C
-58599 pad 
-58629 pad A
-58635 pad 
-58665 pad C
-58671 pad 
-58701 pad C
-58707 pad 
-58737 pad C
-58743 pad 
-58773 pad C
-58779 pad 
-58809 pad B
-58815 pad 
-58835 pad LEFT
-58859 pad B
-58865 pad 
-58875 pad LEFT
-58899 pad B
-58905 pad 
-58915 pad UP
-58939 pad B
-58945 pad 
-58955 pad RIGHT
-58979 pad B
-58985 pad 
-58995 pad LEFT
-59019 pad B
-59025 pad 
-59035 pad UP
-59059 pad B
-59065 pad 
-59075 pad DOWN
-59099 pad B
-59105 pad 
-59115 pad RIGHT
-59139 pad B
-59145 pad 
-59155 pad DOWN
-59179 pad B
-59185 pad 
-59195 pad LEFT
-59243 pad C
-59249 pad 
-59279 pad A
-59285 pad 
-59315 pad C
-59321 pad 
-59351 pad C
-59357 pad 
-59387 pad C
-59393 pad 
-59423 pad C
-59429 pad 
-59459 pad B
-59465 pad 
-59485 pad UP
-59509 pad B
-59515 pad 
-59525 pad DOWN
-59549 pad B
-59555 pad 
-59565 pad UP
-59589 pad B
-59595 pad 
-59605 pad RIGHT
-59629 pad B
-59635 pad 
-59645 pad UP
-59669 pad B
+56863 pad RIGHT
+57031 pad B
+57037 pad 
+57047 pad DOWN
+57239 pad C
+57245 pad 
+57275 pad A
+57281 pad 
+57311 pad C
+57317 pad 
+57347 pad C
+57353 pad 
+57383 pad C
+57389 pad 
+57419 pad C
+57425 pad 
+57455 pad B
+57461 pad 
+57481 pad LEFT
+57673 pad B
+57679 pad 
+57689 pad UP
+57905 pad B
+57911 pad 
+57921 pad RIGHT
+58137 pad C
+58143 pad 
+58173 pad A
+58179 pad 
+58209 pad C
+58215 pad 
+58245 pad C
+58251 pad 
+58281 pad C
+58287 pad 
+58317 pad C
+58323 pad 
+58353 pad B
+58359 pad 
+58379 pad DOWN
+58619 pad B
+58625 pad 
+58635 pad LEFT
+58875 pad B
+58881 pad 
+58891 pad UP
+59155 pad C
+59161 pad 
+59191 pad A
+59197 pad 
+59227 pad C
+59233 pad 
+59263 pad C
+59269 pad 
+59299 pad C
+59305 pad 
+59335 pad C
+59341 pad 
+59371 pad B
+59377 pad 
+59397 pad LEFT
+59421 pad B
+59427 pad 
+59437 pad UP
+59461 pad B
+59467 pad 
+59477 pad RIGHT
+59525 pad C
+59531 pad 
+59561 pad A
+59567 pad 
+59597 pad C
+59603 pad 
+59633 pad C
+59639 pad 
+59669 pad C
 59675 pad 
-59685 pad UP
-59709 pad B
-59715 pad 
-59725 pad RIGHT
-59749 pad B
-59755 pad 
-59765 pad UP
-59789 pad B
-59795 pad 
-59805 pad RIGHT
-59829 pad B
-59835 pad 
-59845 pad DOWN
-59893 pad C
-59899 pad 
-59929 pad A
-59935 pad 
-59965 pad C
-59971 pad 
-60001 pad C
-60007 pad 
-60037 pad C
-60043 pad 
-60073 pad C
-60079 pad 
-60109 pad B
-60115 pad 
-60135 pad LEFT
-60159 pad B
-60165 pad 
-60175 pad RIGHT
-60199 pad B
-60205 pad 
-60215 pad DOWN
-60239 pad B
-60245 pad 
-60255 pad LEFT
-60279 pad B
-60285 pad 
-60295 pad UP
-60319 pad B
-60325 pad 
-60335 pad RIGHT
-60359 pad B
-60365 pad 
-60375 pad DOWN
-60423 pad C
-60429 pad 
-60459 pad A
-60465 pad 
-60495 pad C
-60501 pad 
-60531 pad C
-60537 pad 
-60567 pad C
-60573 pad 
-60603 pad C
-60609 pad 
-60639 pad B
-60645 pad 
-60665 pad RIGHT
-60689 pad B
-60695 pad 
-60705 pad LEFT
-60729 pad B
-60735 pad 
-60745 pad LEFT
-60769 pad B
-60775 pad 
-60785 pad UP
-60809 pad B
-60815 pad 
-60825 pad RIGHT
-60873 pad C
-60879 pad 
-60909 pad A
-60915 pad 
-60945 pad C
-60951 pad 
-60981 pad C
-60987 pad 
-61017 pad C
-61023 pad 
-61053 pad C
-61059 pad 
-61089 pad B
-61095 pad 
-61115 pad DOWN
-61163 pad B
-61169 pad 
-61179 pad LEFT
-61251 pad B
-61257 pad 
-61267 pad RIGHT
-61291 pad B
+59705 pad C
+59711 pad 
+59741 pad B
+59747 pad 
+59767 pad DOWN
+59815 pad B
+59821 pad 
+59831 pad LEFT
+59903 pad B
+59909 pad 
+59919 pad UP
+59991 pad C
+59997 pad 
+60027 pad A
+60033 pad 
+60063 pad C
+60069 pad 
+60099 pad C
+60105 pad 
+60135 pad C
+60141 pad 
+60171 pad C
+60177 pad 
+60207 pad B
+60213 pad 
+60233 pad LEFT
+60257 pad B
+60263 pad 
+60273 pad UP
+60297 pad B
+60303 pad 
+60313 pad LEFT
+60337 pad B
+60343 pad 
+60353 pad UP
+60377 pad B
+60383 pad 
+60393 pad DOWN
+60417 pad B
+60423 pad 
+60433 pad LEFT
+60457 pad B
+60463 pad 
+60473 pad RIGHT
+60497 pad B
+60503 pad 
+60513 pad UP
+60537 pad B
+60543 pad 
+60553 pad RIGHT
+60577 pad B
+60583 pad 
+60593 pad DOWN
+60641 pad C
+60647 pad 
+60677 pad A
+60683 pad 
+60713 pad C
+60719 pad 
+60749 pad C
+60755 pad 
+60785 pad C
+60791 pad 
+60821 pad C
+60827 pad 
+60857 pad B
+60863 pad 
+60883 pad DOWN
+60907 pad B
+60913 pad 
+60923 pad UP
+60947 pad B
+60953 pad 
+60963 pad RIGHT
+60987 pad B
+60993 pad 
+61003 pad UP
+61027 pad B
+61033 pad 
+61043 pad UP
+61067 pad B
+61073 pad 
+61083 pad UP
+61107 pad B
+61113 pad 
+61123 pad RIGHT
+61147 pad B
+61153 pad 
+61163 pad LEFT
+61187 pad B
+61193 pad 
+61203 pad UP
+61227 pad B
+61233 pad 
+61243 pad RIGHT
+61291 pad C
 61297 pad 
-61307 pad DOWN
-61331 pad B
-61337 pad 
-61347 pad RIGHT
-61371 pad B
-61377 pad 
-61387 pad RIGHT
-61411 pad B
-61417 pad 
-61427 pad LEFT
-61451 pad B
-61457 pad 
-61467 pad DOWN
-61491 pad B
-61497 pad 
-61507 pad LEFT
-61531 pad B
-61537 pad 
-61547 pad UP
-61571 pad B
-61577 pad 
-61587 pad LEFT
-61611 pad B
-61617 pad 
-61627 pad UP
-61651 pad B
-61657 pad 
-61667 pad RIGHT
-61691 pad B
-61697 pad 
-61707 pad DOWN
-61731 pad B
-61737 pad 
-61747 pad LEFT
-61795 pad C
-61801 pad 
-61831 pad A
-61837 pad 
-61867 pad C
-61873 pad 
-61903 pad C
-61909 pad 
-61939 pad C
-61945 pad 
-61975 pad C
-61981 pad 
-62011 pad B
-62017 pad 
-62037 pad DOWN
-62061 pad B
-62067 pad 
-62077 pad LEFT
-62101 pad B
-62107 pad 
-62117 pad UP
-62141 pad B
-62147 pad 
-62157 pad DOWN
-62181 pad B
-62187 pad 
-62197 pad LEFT
-62221 pad B
-62227 pad 
-62237 pad UP
-62261 pad B
-62267 pad 
-62277 pad RIGHT
-62301 pad B
-62307 pad 
-62317 pad DOWN
-62341 pad B
-62347 pad 
-62357 pad LEFT
-62381 pad B
-62387 pad 
-62397 pad UP
-62445 pad C
-62451 pad 
-62481 pad A
-62487 pad 
-62517 pad C
-62523 pad 
-62553 pad C
-62559 pad 
-62589 pad C
-62595 pad 
-62625 pad C
-62631 pad 
-62661 pad B
-62667 pad 
-62687 pad DOWN
-62711 pad B
-62717 pad 
-62727 pad LEFT
-62751 pad B
-62757 pad 
-62767 pad UP
-62791 pad B
-62797 pad 
-62807 pad LEFT
-62831 pad B
-62837 pad 
-62847 pad UP
-62871 pad B
-62877 pad 
-62887 pad UP
-62911 pad B
-62917 pad 
-62927 pad RIGHT
-62951 pad B
-62957 pad 
-62967 pad LEFT
-62991 pad B
-62997 pad 
-63007 pad RIGHT
-63031 pad B
-63037 pad 
-63047 pad DOWN
-63071 pad B
-63077 pad 
-63087 pad LEFT
-63111 pad B
-63117 pad 
-63127 pad LEFT
-63151 pad B
-63157 pad 
-63167 pad UP
-63191 pad B
-63197 pad 
-63207 pad RIGHT
-63255 pad C
-63261 pad 
-63291 pad A
-63297 pad 
-63327 pad C
-63333 pad 
-63363 pad C
-63369 pad 
-63399 pad C
-63405 pad 
-63435 pad C
-63441 pad 
-63471 pad B
-63477 pad 
-63497 pad RIGHT
-63521 pad B
-63527 pad 
-63537 pad DOWN
-63561 pad B
-63567 pad 
-63577 pad DOWN
-63601 pad B
-63607 pad 
-63617 pad LEFT
-63641 pad B
-63647 pad 
-63657 pad UP
-63705 pad C
-63711 pad 
-63741 pad A
-63747 pad 
-63777 pad C
-63783 pad 
-63813 pad C
-63819 pad 
-63849 pad C
-63855 pad 
-63885 pad C
-63891 pad 
-63921 pad B
-63927 pad 
-63947 pad UP
-63971 pad B
-63977 pad 
-63987 pad RIGHT
-64011 pad B
-64017 pad 
-64027 pad DOWN
-64075 pad C
-64081 pad 
-64111 pad A
-64117 pad 
-64147 pad C
-64153 pad 
-64183 pad C
-64189 pad 
-64219 pad C
-64225 pad 
-64255 pad C
-64261 pad 
-64291 pad B
-64297 pad 
-64317 pad LEFT
-64341 pad B
-64347 pad 
-64357 pad UP
-64381 pad B
-64387 pad 
-64397 pad RIGHT
-64421 pad B
-64427 pad 
-64437 pad DOWN
-64485 pad C
-64491 pad 
-64521 pad A
-64527 pad 
-64557 pad C
-64563 pad 
-64593 pad C
-64599 pad 
-64629 pad C
+61327 pad A
+61333 pad 
+61363 pad C
+61369 pad 
+61399 pad C
+61405 pad 
+61435 pad C
+61441 pad 
+61471 pad C
+61477 pad 
+61507 pad B
+61513 pad 
+61533 pad RIGHT
+61557 pad B
+61563 pad 
+61573 pad LEFT
+61597 pad B
+61603 pad 
+61613 pad UP
+61637 pad B
+61643 pad 
+61653 pad UP
+61677 pad B
+61683 pad 
+61693 pad RIGHT
+61717 pad B
+61723 pad 
+61733 pad DOWN
+61757 pad B
+61763 pad 
+61773 pad LEFT
+61821 pad C
+61827 pad 
+61857 pad A
+61863 pad 
+61893 pad C
+61899 pad 
+61929 pad C
+61935 pad 
+61965 pad C
+61971 pad 
+62001 pad C
+62007 pad 
+62037 pad B
+62043 pad 
+62063 pad LEFT
+62087 pad B
+62093 pad 
+62103 pad LEFT
+62127 pad B
+62133 pad 
+62143 pad RIGHT
+62167 pad B
+62173 pad 
+62183 pad DOWN
+62207 pad B
+62213 pad 
+62223 pad LEFT
+62271 pad C
+62277 pad 
+62307 pad A
+62313 pad 
+62343 pad C
+62349 pad 
+62379 pad C
+62385 pad 
+62415 pad C
+62421 pad 
+62451 pad C
+62457 pad 
+62487 pad B
+62493 pad 
+62513 pad UP
+62561 pad B
+62567 pad 
+62577 pad RIGHT
+62649 pad B
+62655 pad 
+62665 pad DOWN
+62689 pad B
+62695 pad 
+62705 pad RIGHT
+62729 pad B
+62735 pad 
+62745 pad RIGHT
+62769 pad B
+62775 pad 
+62785 pad LEFT
+62809 pad B
+62815 pad 
+62825 pad DOWN
+62849 pad B
+62855 pad 
+62865 pad UP
+62889 pad B
+62895 pad 
+62905 pad RIGHT
+62929 pad B
+62935 pad 
+62945 pad LEFT
+62969 pad B
+62975 pad 
+62985 pad UP
+63009 pad B
+63015 pad 
+63025 pad RIGHT
+63049 pad B
+63055 pad 
+63065 pad DOWN
+63089 pad B
+63095 pad 
+63105 pad LEFT
+63129 pad B
+63135 pad 
+63145 pad UP
+63193 pad C
+63199 pad 
+63229 pad A
+63235 pad 
+63265 pad C
+63271 pad 
+63301 pad C
+63307 pad 
+63337 pad C
+63343 pad 
+63373 pad C
+63379 pad 
+63409 pad B
+63415 pad 
+63435 pad UP
+63459 pad B
+63465 pad 
+63475 pad RIGHT
+63499 pad B
+63505 pad 
+63515 pad DOWN
+63539 pad B
+63545 pad 
+63555 pad LEFT
+63579 pad B
+63585 pad 
+63595 pad UP
+63619 pad B
+63625 pad 
+63635 pad RIGHT
+63659 pad B
+63665 pad 
+63675 pad DOWN
+63699 pad B
+63705 pad 
+63715 pad DOWN
+63739 pad B
+63745 pad 
+63755 pad LEFT
+63779 pad B
+63785 pad 
+63795 pad UP
+63843 pad C
+63849 pad 
+63879 pad A
+63885 pad 
+63915 pad C
+63921 pad 
+63951 pad C
+63957 pad 
+63987 pad C
+63993 pad 
+64023 pad C
+64029 pad 
+64059 pad B
+64065 pad 
+64085 pad LEFT
+64109 pad B
+64115 pad 
+64125 pad LEFT
+64149 pad B
+64155 pad 
+64165 pad UP
+64189 pad B
+64195 pad 
+64205 pad UP
+64229 pad B
+64235 pad 
+64245 pad RIGHT
+64269 pad B
+64275 pad 
+64285 pad LEFT
+64309 pad B
+64315 pad 
+64325 pad UP
+64349 pad B
+64355 pad 
+64365 pad RIGHT
+64389 pad B
+64395 pad 
+64405 pad LEFT
+64429 pad B
+64435 pad 
+64445 pad UP
+64469 pad B
+64475 pad 
+64485 pad LEFT
+64509 pad B
+64515 pad 
+64525 pad UP
+64549 pad B
+64555 pad 
+64565 pad RIGHT
+64589 pad B
+64595 pad 
+64605 pad DOWN
+64629 pad B
 64635 pad 
-64665 pad C
-64671 pad 
-64701 pad B
-64707 pad 
-64727 pad RIGHT
-64751 pad B
-64757 pad 
-64767 pad LEFT
-64791 pad B
-64797 pad 
-64807 pad UP
-64831 pad B
-64837 pad 
-64847 pad DOWN
-64871 pad B
-64877 pad 
-64887 pad LEFT
-64911 pad B
-64917 pad 
-64927 pad UP
-64975 pad C
-64981 pad 
-65011 pad A
-65017 pad 
-65047 pad C
-65053 pad 
-65083 pad C
-65089 pad 
-65119 pad C
+64645 pad LEFT
+64693 pad C
+64699 pad 
+64729 pad A
+64735 pad 
+64765 pad C
+64771 pad 
+64801 pad C
+64807 pad 
+64837 pad C
+64843 pad 
+64873 pad C
+64879 pad 
+64909 pad B
+64915 pad 
+64935 pad DOWN
+64959 pad B
+64965 pad 
+64975 pad LEFT
+64999 pad B
+65005 pad 
+65015 pad DOWN
+65039 pad B
+65045 pad 
+65055 pad LEFT
+65079 pad B
+65085 pad 
+65095 pad UP
+65119 pad B
 65125 pad 
-65155 pad C
-65161 pad 
-65191 pad B
-65197 pad 
-65217 pad LEFT
-65241 pad B
-65247 pad 
-65257 pad UP
-65281 pad B
-65287 pad 
-65297 pad RIGHT
-65345 pad C
-65351 pad 
-65381 pad A
-65387 pad 
-65417 pad C
-65423 pad 
-65453 pad C
-65459 pad 
-65489 pad C
-65495 pad 
-65525 pad C
-65531 pad 
-65561 pad B
-65567 pad 
-65587 pad UP
-65611 pad B
-65617 pad 
-65627 pad LEFT
-65651 pad B
-65657 pad 
-65667 pad UP
-65691 pad B
-65697 pad 
-65707 pad RIGHT
-65731 pad B
-65737 pad 
-65747 pad DOWN
-65795 pad C
-65801 pad 
-65831 pad A
-65837 pad 
-65867 pad C
-65873 pad 
-65903 pad C
-65909 pad 
-65939 pad C
-65945 pad 
-65975 pad C
-65981 pad 
-66011 pad B
-66017 pad 
-66037 pad DOWN
-66061 pad B
-66067 pad 
-66077 pad LEFT
-66101 pad B
-66107 pad 
-66117 pad RIGHT
-66141 pad B
-66147 pad 
-66157 pad RIGHT
-66181 pad B
-66187 pad 
-66197 pad DOWN
-66221 pad B
-66227 pad 
-66237 pad RIGHT
-66261 pad B
-66267 pad 
-66277 pad UP
-66301 pad B
-66307 pad 
-66317 pad RIGHT
-66341 pad B
-66347 pad 
-66357 pad DOWN
-66405 pad C
-66411 pad 
-66441 pad A
-66447 pad 
-66477 pad C
-66483 pad 
-66513 pad C
-66519 pad 
-66549 pad C
-66555 pad 
-66585 pad C
-66591 pad 
-66621 pad B
-66627 pad 
-66647 pad LEFT
-66695 pad B
-66701 pad 
-66711 pad RIGHT
-66735 pad B
-66741 pad 
-66751 pad DOWN
-66775 pad B
-66781 pad 
-66791 pad LEFT
-66839 pad C
-66845 pad 
-66875 pad A
-66881 pad 
-66911 pad C
-66917 pad 
-66947 pad C
-66953 pad 
-66983 pad C
-66989 pad 
-67019 pad C
-67025 pad 
-67055 pad B
-67061 pad 
-67081 pad UP
-67129 pad B
-67135 pad 
-67145 pad RIGHT
-67217 pad B
-67223 pad 
-67233 pad DOWN
-67305 pad C
-67311 pad 
-67341 pad A
-67347 pad 
-67377 pad C
-67383 pad 
-67413 pad C
-67419 pad 
-67449 pad C
-67455 pad 
-67485 pad C
-67491 pad 
-67521 pad B
-67527 pad 
-67547 pad RIGHT
-67571 pad B
-67577 pad 
-67587 pad DOWN
-67611 pad B
-67617 pad 
-67627 pad LEFT
-67675 pad C
-67681 pad 
-67711 pad A
-67717 pad 
-67747 pad C
-67753 pad 
-67783 pad C
-67789 pad 
-67819 pad C
-67825 pad 
-67855 pad C
-67861 pad 
-67891 pad B
-67897 pad 
-67917 pad LEFT
-67941 pad B
-67947 pad 
-67957 pad UP
-67981 pad B
-67987 pad 
-67997 pad RIGHT
-68045 pad C
-68051 pad 
-68081 pad A
-68087 pad 
-68117 pad C
-68123 pad 
-68153 pad C
-68159 pad 
-68189 pad C
-68195 pad 
-68225 pad C
-68231 pad 
-68261 pad B
-68267 pad 
-68287 pad DOWN
-68311 pad B
-68317 pad 
-68327 pad LEFT
-68351 pad B
-68357 pad 
-68367 pad UP
+65135 pad RIGHT
+65159 pad B
+65165 pad 
+65175 pad DOWN
+65223 pad C
+65229 pad 
+65259 pad A
+65265 pad 
+65295 pad C
+65301 pad 
+65331 pad C
+65337 pad 
+65367 pad C
+65373 pad 
+65403 pad C
+65409 pad 
+65439 pad B
+65445 pad 
+65465 pad LEFT
+65513 pad B
+65519 pad 
+65529 pad LEFT
+65553 pad B
+65559 pad 
+65569 pad UP
+65593 pad B
+65599 pad 
+65609 pad UP
+65633 pad B
+65639 pad 
+65649 pad RIGHT
+65673 pad B
+65679 pad 
+65689 pad RIGHT
+65713 pad B
+65719 pad 
+65729 pad LEFT
+65753 pad B
+65759 pad 
+65769 pad UP
+65793 pad B
+65799 pad 
+65809 pad RIGHT
+65857 pad C
+65863 pad 
+65893 pad A
+65899 pad 
+65929 pad C
+65935 pad 
+65965 pad C
+65971 pad 
+66001 pad C
+66007 pad 
+66037 pad C
+66043 pad 
+66073 pad B
+66079 pad 
+66099 pad DOWN
+66123 pad B
+66129 pad 
+66139 pad LEFT
+66163 pad B
+66169 pad 
+66179 pad LEFT
+66203 pad B
+66209 pad 
+66219 pad UP
+66243 pad B
+66249 pad 
+66259 pad UP
+66283 pad B
+66289 pad 
+66299 pad RIGHT
+66323 pad B
+66329 pad 
+66339 pad DOWN
+66387 pad C
+66393 pad 
+66423 pad A
+66429 pad 
+66459 pad C
+66465 pad 
+66495 pad C
+66501 pad 
+66531 pad C
+66537 pad 
+66567 pad C
+66573 pad 
+66603 pad B
+66609 pad 
+66629 pad LEFT
+66653 pad B
+66659 pad 
+66669 pad UP
+66693 pad B
+66699 pad 
+66709 pad RIGHT
+66757 pad C
+66763 pad 
+66793 pad A
+66799 pad 
+66829 pad C
+66835 pad 
+66865 pad C
+66871 pad 
+66901 pad C
+66907 pad 
+66937 pad C
+66943 pad 
+66973 pad B
+66979 pad 
+66999 pad UP
+67023 pad B
+67029 pad 
+67039 pad DOWN
+67063 pad B
+67069 pad 
+67079 pad LEFT
+67103 pad B
+67109 pad 
+67119 pad UP
+67143 pad B
+67149 pad 
+67159 pad RIGHT
+67207 pad C
+67213 pad 
+67243 pad A
+67249 pad 
+67279 pad C
+67285 pad 
+67315 pad C
+67321 pad 
+67351 pad C
+67357 pad 
+67387 pad C
+67393 pad 
+67423 pad B
+67429 pad 
+67449 pad RIGHT
+67473 pad B
+67479 pad 
+67489 pad DOWN
+67513 pad B
+67519 pad 
+67529 pad RIGHT
+67553 pad B
+67559 pad 
+67569 pad RIGHT
+67593 pad B
+67599 pad 
+67609 pad UP
+67633 pad B
+67639 pad 
+67649 pad RIGHT
+67673 pad B
+67679 pad 
+67689 pad RIGHT
+67713 pad B
+67719 pad 
+67729 pad DOWN
+67753 pad B
+67759 pad 
+67769 pad LEFT
+67817 pad C
+67823 pad 
+67853 pad A
+67859 pad 
+67889 pad C
+67895 pad 
+67925 pad C
+67931 pad 
+67961 pad C
+67967 pad 
+67997 pad C
+68003 pad 
+68033 pad B
+68039 pad 
+68059 pad RIGHT
+68083 pad B
+68089 pad 
+68099 pad DOWN
+68123 pad B
+68129 pad 
+68139 pad LEFT
+68163 pad B
+68169 pad 
+68179 pad DOWN
+68203 pad B
+68209 pad 
+68219 pad LEFT
+68243 pad B
+68249 pad 
+68259 pad UP
+68307 pad C
+68313 pad 
+68343 pad A
+68349 pad 
+68379 pad C
+68385 pad 
 68415 pad C
 68421 pad 
-68451 pad A
+68451 pad C
 68457 pad 
 68487 pad C
 68493 pad 
-68523 pad C
+68523 pad B
 68529 pad 
-68559 pad C
-68565 pad 
-68595 pad C
-68601 pad 
-68631 pad B
-68637 pad 
-68657 pad RIGHT
-68705 pad B
-68711 pad 
-68721 pad DOWN
-68793 pad B
-68799 pad 
-68809 pad DOWN
-68833 pad B
-68839 pad 
-68849 pad LEFT
-68873 pad B
-68879 pad 
-68889 pad UP
-68937 pad C
-68943 pad 
-68973 pad A
-68979 pad 
-69009 pad C
-69015 pad 
-69045 pad C
-69051 pad 
-69081 pad C
-69087 pad 
-69117 pad C
-69123 pad 
-69153 pad B
-69159 pad 
-69179 pad LEFT
-69203 pad B
-69209 pad 
-69219 pad UP
-69243 pad B
-69249 pad 
-69259 pad DOWN
-69283 pad B
-69289 pad 
-69299 pad UP
-69323 pad B
-69329 pad 
-69339 pad RIGHT
-69363 pad B
-69369 pad 
-69379 pad LEFT
-69403 pad B
-69409 pad 
-69419 pad RIGHT
-69443 pad B
-69449 pad 
-69459 pad DOWN
-69483 pad B
-69489 pad 
-69499 pad LEFT
-69547 pad C
-69553 pad 
-69583 pad A
-69589 pad 
-69619 pad C
-69625 pad 
-69655 pad C
-69661 pad 
-69691 pad C
-69697 pad 
-69727 pad C
-69733 pad 
-69763 pad B
-69769 pad 
-69789 pad RIGHT
-69813 pad B
-69819 pad 
-69829 pad DOWN
-69853 pad B
-69859 pad 
-69869 pad LEFT
-69917 pad C
-69923 pad 
-69953 pad A
-69959 pad 
-69989 pad C
-69995 pad 
-70025 pad C
-70031 pad 
-70061 pad C
-70067 pad 
-70097 pad C
-70103 pad 
-70133 pad B
-70139 pad 
-70159 pad LEFT
-70183 pad B
-70189 pad 
-70199 pad UP
-70223 pad B
-70229 pad 
-70239 pad RIGHT
-70287 pad C
-70293 pad 
-70323 pad A
-70329 pad 
-70359 pad C
-70365 pad 
-70395 pad C
-70401 pad 
-70431 pad C
-70437 pad 
-70467 pad C
-70473 pad 
-70503 pad B
-70509 pad 
-70529 pad UP
-70553 pad B
-70559 pad 
-70569 pad RIGHT
-70593 pad B
-70599 pad 
-70609 pad DOWN
-70657 pad C
-70663 pad 
-70693 pad A
-70699 pad 
-70729 pad C
-70735 pad 
-70765 pad C
+68549 pad RIGHT
+68597 pad B
+68603 pad 
+68613 pad DOWN
+68685 pad B
+68691 pad 
+68701 pad DOWN
+68725 pad B
+68731 pad 
+68741 pad LEFT
+68765 pad B
+68771 pad 
+68781 pad LEFT
+68805 pad B
+68811 pad 
+68821 pad DOWN
+68845 pad B
+68851 pad 
+68861 pad LEFT
+68885 pad B
+68891 pad 
+68901 pad UP
+68949 pad C
+68955 pad 
+68985 pad A
+68991 pad 
+69021 pad C
+69027 pad 
+69057 pad C
+69063 pad 
+69093 pad C
+69099 pad 
+69129 pad C
+69135 pad 
+69165 pad B
+69171 pad 
+69191 pad UP
+69215 pad B
+69221 pad 
+69231 pad RIGHT
+69255 pad B
+69261 pad 
+69271 pad LEFT
+69295 pad B
+69301 pad 
+69311 pad UP
+69335 pad B
+69341 pad 
+69351 pad RIGHT
+69375 pad B
+69381 pad 
+69391 pad DOWN
+69415 pad B
+69421 pad 
+69431 pad RIGHT
+69455 pad B
+69461 pad 
+69471 pad DOWN
+69495 pad B
+69501 pad 
+69511 pad LEFT
+69559 pad C
+69565 pad 
+69595 pad A
+69601 pad 
+69631 pad C
+69637 pad 
+69667 pad C
+69673 pad 
+69703 pad C
+69709 pad 
+69739 pad C
+69745 pad 
+69775 pad B
+69781 pad 
+69801 pad LEFT
+69825 pad B
+69831 pad 
+69841 pad UP
+69865 pad B
+69871 pad 
+69881 pad RIGHT
+69929 pad C
+69935 pad 
+69965 pad A
+69971 pad 
+70001 pad C
+70007 pad 
+70037 pad C
+70043 pad 
+70073 pad C
+70079 pad 
+70109 pad C
+70115 pad 
+70145 pad B
+70151 pad 
+70171 pad UP
+70195 pad B
+70201 pad 
+70211 pad RIGHT
+70235 pad B
+70241 pad 
+70251 pad DOWN
+70299 pad C
+70305 pad 
+70335 pad A
+70341 pad 
+70371 pad C
+70377 pad 
+70407 pad C
+70413 pad 
+70443 pad C
+70449 pad 
+70479 pad C
+70485 pad 
+70515 pad B
+70521 pad 
+70541 pad LEFT
+70565 pad B
+70571 pad 
+70581 pad DOWN
+70605 pad B
+70611 pad 
+70621 pad LEFT
+70645 pad B
+70651 pad 
+70661 pad RIGHT
+70685 pad B
+70691 pad 
+70701 pad LEFT
+70725 pad B
+70731 pad 
+70741 pad UP
+70765 pad B
 70771 pad 
-70801 pad C
-70807 pad 
-70837 pad C
-70843 pad 
-70873 pad B
-70879 pad 
-70899 pad LEFT
-70923 pad B
-70929 pad 
-70939 pad UP
-70963 pad B
-70969 pad 
-70979 pad RIGHT
-71027 pad C
-71033 pad 
-71063 pad A
-71069 pad 
-71099 pad C
-71105 pad 
-71135 pad C
-71141 pad 
-71171 pad C
-71177 pad 
-71207 pad C
-71213 pad 
-71243 pad B
-71249 pad 
-71269 pad DOWN
-71293 pad B
-71299 pad 
-71309 pad LEFT
-71333 pad B
-71339 pad 
-71349 pad UP
-71397 pad C
-71403 pad 
-71433 pad A
-71439 pad 
-71469 pad C
-71475 pad 
-71505 pad C
-71511 pad 
-71541 pad C
-71547 pad 
-71577 pad C
-71583 pad 
-71613 pad B
-71619 pad 
-71639 pad RIGHT
-71663 pad B
-71669 pad 
-71679 pad LEFT
-71703 pad B
-71709 pad 
-71719 pad UP
-71743 pad B
-71749 pad 
-71759 pad RIGHT
-71807 pad C
+70781 pad LEFT
+70805 pad B
+70811 pad 
+70821 pad DOWN
+70845 pad B
+70851 pad 
+70861 pad LEFT
+70885 pad B
+70891 pad 
+70901 pad UP
+70949 pad C
+70955 pad 
+70985 pad A
+70991 pad 
+71021 pad C
+71027 pad 
+71057 pad C
+71063 pad 
+71093 pad C
+71099 pad 
+71129 pad C
+71135 pad 
+71165 pad B
+71171 pad 
+71191 pad RIGHT
+71239 pad B
+71245 pad 
+71255 pad DOWN
+71327 pad B
+71333 pad 
+71343 pad LEFT
+71367 pad B
+71373 pad 
+71383 pad DOWN
+71407 pad B
+71413 pad 
+71423 pad UP
+71447 pad B
+71453 pad 
+71463 pad RIGHT
+71487 pad B
+71493 pad 
+71503 pad DOWN
+71527 pad B
+71533 pad 
+71543 pad LEFT
+71567 pad B
+71573 pad 
+71583 pad UP
+71607 pad B
+71613 pad 
+71623 pad RIGHT
+71647 pad B
+71653 pad 
+71663 pad RIGHT
+71687 pad B
+71693 pad 
+71703 pad DOWN
+71727 pad B
+71733 pad 
+71743 pad RIGHT
+71767 pad B
+71773 pad 
+71783 pad RIGHT
+71807 pad B
 71813 pad 
-71843 pad A
-71849 pad 
-71879 pad C
-71885 pad 
-71915 pad C
-71921 pad 
-71951 pad C
-71957 pad 
-71987 pad C
-71993 pad 
-72023 pad B
-72029 pad 
-72049 pad LEFT
-72073 pad B
-72079 pad 
-72089 pad UP
-72113 pad B
-72119 pad 
-72129 pad DOWN
-72153 pad B
-72159 pad 
-72169 pad LEFT
-72193 pad B
-72199 pad 
-72209 pad LEFT
-72233 pad B
-72239 pad 
-72249 pad UP
-72273 pad B
-72279 pad 
-72289 pad DOWN
-72313 pad B
-72319 pad 
-72329 pad UP
-72353 pad B
+71823 pad DOWN
+71847 pad B
+71853 pad 
+71863 pad LEFT
+71911 pad C
+71917 pad 
+71947 pad A
+71953 pad 
+71983 pad C
+71989 pad 
+72019 pad C
+72025 pad 
+72055 pad C
+72061 pad 
+72091 pad C
+72097 pad 
+72127 pad B
+72133 pad 
+72153 pad UP
+72177 pad B
+72183 pad 
+72193 pad RIGHT
+72217 pad B
+72223 pad 
+72233 pad DOWN
+72281 pad C
+72287 pad 
+72317 pad A
+72323 pad 
+72353 pad C
 72359 pad 
-72369 pad DOWN
-72393 pad B
-72399 pad 
-72409 pad LEFT
-72433 pad B
-72439 pad 
-72449 pad UP
-72497 pad C
+72389 pad C
+72395 pad 
+72425 pad C
+72431 pad 
+72461 pad C
+72467 pad 
+72497 pad B
 72503 pad 
-72533 pad A
-72539 pad 
-72569 pad C
-72575 pad 
-72605 pad C
-72611 pad 
-72641 pad C
-72647 pad 
-72677 pad C
-72683 pad 
-72713 pad B
-72719 pad 
-72739 pad RIGHT
-72787 pad B
-72793 pad 
-72803 pad DOWN
-72875 pad B
+72523 pad DOWN
+72547 pad B
+72553 pad 
+72563 pad UP
+72587 pad B
+72593 pad 
+72603 pad UP
+72627 pad B
+72633 pad 
+72643 pad RIGHT
+72667 pad B
+72673 pad 
+72683 pad DOWN
+72731 pad C
+72737 pad 
+72767 pad A
+72773 pad 
+72803 pad C
+72809 pad 
+72839 pad C
+72845 pad 
+72875 pad C
 72881 pad 
-72891 pad LEFT
-72915 pad B
-72921 pad 
-72931 pad UP
-72955 pad B
-72961 pad 
-72971 pad UP
-72995 pad B
-73001 pad 
-73011 pad RIGHT
-73035 pad B
-73041 pad 
-73051 pad RIGHT
-73075 pad B
-73081 pad 
-73091 pad DOWN
-73115 pad B
-73121 pad 
-73131 pad LEFT
-73179 pad C
-73185 pad 
-73215 pad A
-73221 pad 
-73251 pad C
-73257 pad 
-73287 pad C
-73293 pad 
-73323 pad C
-73329 pad 
-73359 pad C
-73365 pad 
-73395 pad B
-73401 pad 
-73421 pad RIGHT
-73445 pad B
-73451 pad 
-73461 pad DOWN
-73485 pad B
-73491 pad 
-73501 pad LEFT
-73549 pad C
-73555 pad 
-73585 pad A
-73591 pad 
-73621 pad C
-73627 pad 
-73657 pad C
-73663 pad 
-73693 pad C
-73699 pad 
-73729 pad C
-73735 pad 
-73765 pad B
-73771 pad 
-73791 pad UP
-73839 pad B
-73845 pad 
-73855 pad RIGHT
+72911 pad C
+72917 pad 
+72947 pad B
+72953 pad 
+72973 pad UP
+72997 pad B
+73003 pad 
+73013 pad UP
+73037 pad B
+73043 pad 
+73053 pad RIGHT
+73077 pad B
+73083 pad 
+73093 pad LEFT
+73117 pad B
+73123 pad 
+73133 pad UP
+73157 pad B
+73163 pad 
+73173 pad RIGHT
+73221 pad C
+73227 pad 
+73257 pad A
+73263 pad 
+73293 pad C
+73299 pad 
+73329 pad C
+73335 pad 
+73365 pad C
+73371 pad 
+73401 pad C
+73407 pad 
+73437 pad B
+73443 pad 
+73463 pad UP
+73487 pad B
+73493 pad 
+73503 pad RIGHT
+73527 pad B
+73533 pad 
+73543 pad DOWN
+73567 pad B
+73573 pad 
+73583 pad RIGHT
+73607 pad B
+73613 pad 
+73623 pad DOWN
+73647 pad B
+73653 pad 
+73663 pad LEFT
+73711 pad C
+73717 pad 
+73747 pad A
+73753 pad 
+73783 pad C
+73789 pad 
+73819 pad C
+73825 pad 
+73855 pad C
+73861 pad 
+73891 pad C
+73897 pad 
 73927 pad B
 73933 pad 
-73943 pad DOWN
-74015 pad C
-74021 pad 
-74051 pad A
-74057 pad 
-74087 pad C
-74093 pad 
-74123 pad C
-74129 pad 
-74159 pad C
-74165 pad 
-74195 pad C
-74201 pad 
-74231 pad B
-74237 pad 
-74257 pad LEFT
-74353 pad B
-74359 pad 
-74369 pad UP
-74465 pad B
-74471 pad 
-74481 pad RIGHT
-74601 pad C
-74607 pad 
-74637 pad A
-74643 pad 
-74673 pad C
-74679 pad 
-74709 pad C
-74715 pad 
-74745 pad C
-74751 pad 
-74781 pad C
-74787 pad 
-74817 pad B
-74823 pad 
-74843 pad DOWN
-74963 pad B
-74969 pad 
-74979 pad RIGHT
-75003 pad B
-75009 pad 
-75019 pad UP
-75043 pad B
-75049 pad 
-75059 pad DOWN
-75083 pad B
-75089 pad 
-75099 pad LEFT
-75123 pad B
-75129 pad 
-75139 pad UP
-75187 pad C
-75193 pad 
-75223 pad A
-75229 pad 
-75259 pad C
-75265 pad 
-75295 pad C
-75301 pad 
-75331 pad C
-75337 pad 
-75367 pad C
-75373 pad 
-75403 pad B
-75409 pad 
-75429 pad UP
-75453 pad B
-75459 pad 
-75469 pad UP
-75493 pad B
-75499 pad 
-75509 pad RIGHT
-75533 pad B
-75539 pad 
-75549 pad DOWN
-75597 pad C
-75603 pad 
-75633 pad A
-75639 pad 
-75669 pad C
-75675 pad 
-75705 pad C
-75711 pad 
-75741 pad C
-75747 pad 
-75777 pad C
-75783 pad 
-75813 pad B
-75819 pad 
-75839 pad LEFT
-75887 pad B
-75893 pad 
-75903 pad UP
-75975 pad B
-75981 pad 
-75991 pad UP
-76015 pad B
-76021 pad 
-76031 pad UP
-76055 pad B
-76061 pad 
-76071 pad RIGHT
-76095 pad B
-76101 pad 
-76111 pad LEFT
-76135 pad B
-76141 pad 
-76151 pad UP
-76175 pad B
-76181 pad 
-76191 pad RIGHT
-76215 pad B
-76221 pad 
-76231 pad DOWN
-76279 pad C
-76285 pad 
-76315 pad A
-76321 pad 
-76351 pad C
-76357 pad 
-76387 pad C
-76393 pad 
-76423 pad C
-76429 pad 
-76459 pad C
-76465 pad 
-76495 pad B
-76501 pad 
-76521 pad DOWN
-76545 pad B
-76551 pad 
-76561 pad LEFT
-76585 pad B
-76591 pad 
-76601 pad UP
-76649 pad C
-76655 pad 
-76685 pad A
-76691 pad 
-76721 pad C
-76727 pad 
-76757 pad C
-76763 pad 
-76793 pad C
-76799 pad 
-76829 pad C
-76835 pad 
-76865 pad B
-76871 pad 
-76891 pad RIGHT
-76915 pad B
-76921 pad 
-76931 pad DOWN
-76955 pad B
-76961 pad 
-76971 pad DOWN
-76995 pad B
-77001 pad 
-77011 pad LEFT
-77035 pad B
-77041 pad 
-77051 pad UP
-77099 pad C
-77105 pad 
-77135 pad A
-77141 pad 
-77171 pad C
-77177 pad 
-77207 pad C
-77213 pad 
-77243 pad C
-77249 pad 
-77279 pad C
-77285 pad 
-77315 pad B
-77321 pad 
-77341 pad RIGHT
-77389 pad B
-77395 pad 
-77405 pad UP
-77429 pad B
-77435 pad 
-77445 pad RIGHT
-77469 pad B
-77475 pad 
-77485 pad DOWN
-77509 pad B
-77515 pad 
-77525 pad LEFT
-77573 pad C
-77579 pad 
-77609 pad A
-77615 pad 
-77645 pad C
-77651 pad 
-77681 pad C
-77687 pad 
-77717 pad C
-77723 pad 
-77753 pad C
-77759 pad 
-77789 pad B
-77795 pad 
-77815 pad DOWN
-77839 pad B
-77845 pad 
-77855 pad DOWN
-77879 pad B
-77885 pad 
-77895 pad LEFT
-77919 pad B
-77925 pad 
-77935 pad UP
-77983 pad C
-77989 pad 
-78019 pad A
-78025 pad 
-78055 pad C
-78061 pad 
-78091 pad C
-78097 pad 
-78127 pad C
-78133 pad 
-78163 pad C
+73953 pad UP
+74001 pad B
+74007 pad 
+74017 pad RIGHT
+74089 pad B
+74095 pad 
+74105 pad DOWN
+74177 pad C
+74183 pad 
+74213 pad A
+74219 pad 
+74249 pad C
+74255 pad 
+74285 pad C
+74291 pad 
+74321 pad C
+74327 pad 
+74357 pad C
+74363 pad 
+74393 pad B
+74399 pad 
+74419 pad LEFT
+74515 pad B
+74521 pad 
+74531 pad UP
+74627 pad B
+74633 pad 
+74643 pad RIGHT
+74763 pad C
+74769 pad 
+74799 pad A
+74805 pad 
+74835 pad C
+74841 pad 
+74871 pad C
+74877 pad 
+74907 pad C
+74913 pad 
+74943 pad C
+74949 pad 
+74979 pad B
+74985 pad 
+75005 pad DOWN
+75029 pad B
+75035 pad 
+75045 pad LEFT
+75069 pad B
+75075 pad 
+75085 pad UP
+75133 pad C
+75139 pad 
+75169 pad A
+75175 pad 
+75205 pad C
+75211 pad 
+75241 pad C
+75247 pad 
+75277 pad C
+75283 pad 
+75313 pad C
+75319 pad 
+75349 pad B
+75355 pad 
+75375 pad RIGHT
+75423 pad B
+75429 pad 
+75439 pad DOWN
+75511 pad B
+75517 pad 
+75527 pad LEFT
+75599 pad C
+75605 pad 
+75635 pad A
+75641 pad 
+75671 pad C
+75677 pad 
+75707 pad C
+75713 pad 
+75743 pad C
+75749 pad 
+75779 pad C
+75785 pad 
+75815 pad B
+75821 pad 
+75841 pad UP
+75937 pad B
+75943 pad 
+75953 pad UP
+75977 pad B
+75983 pad 
+75993 pad RIGHT
+76017 pad B
+76023 pad 
+76033 pad DOWN
+76081 pad C
+76087 pad 
+76117 pad A
+76123 pad 
+76153 pad C
+76159 pad 
+76189 pad C
+76195 pad 
+76225 pad C
+76231 pad 
+76261 pad C
+76267 pad 
+76297 pad B
+76303 pad 
+76323 pad LEFT
+76371 pad B
+76377 pad 
+76387 pad RIGHT
+76411 pad B
+76417 pad 
+76427 pad DOWN
+76451 pad B
+76457 pad 
+76467 pad DOWN
+76491 pad B
+76497 pad 
+76507 pad UP
+76531 pad B
+76537 pad 
+76547 pad RIGHT
+76571 pad B
+76577 pad 
+76587 pad DOWN
+76635 pad C
+76641 pad 
+76671 pad A
+76677 pad 
+76707 pad C
+76713 pad 
+76743 pad C
+76749 pad 
+76779 pad C
+76785 pad 
+76815 pad C
+76821 pad 
+76851 pad B
+76857 pad 
+76877 pad RIGHT
+76901 pad B
+76907 pad 
+76917 pad DOWN
+76941 pad B
+76947 pad 
+76957 pad LEFT
+77005 pad C
+77011 pad 
+77041 pad A
+77047 pad 
+77077 pad C
+77083 pad 
+77113 pad C
+77119 pad 
+77149 pad C
+77155 pad 
+77185 pad C
+77191 pad 
+77221 pad B
+77227 pad 
+77247 pad UP
+77295 pad B
+77301 pad 
+77311 pad RIGHT
+77383 pad B
+77389 pad 
+77399 pad RIGHT
+77423 pad B
+77429 pad 
+77439 pad DOWN
+77463 pad B
+77469 pad 
+77479 pad LEFT
+77527 pad C
+77533 pad 
+77563 pad A
+77569 pad 
+77599 pad C
+77605 pad 
+77635 pad C
+77641 pad 
+77671 pad C
+77677 pad 
+77707 pad C
+77713 pad 
+77743 pad B
+77749 pad 
+77769 pad DOWN
+77793 pad B
+77799 pad 
+77809 pad LEFT
+77833 pad B
+77839 pad 
+77849 pad UP
+77897 pad C
+77903 pad 
+77933 pad A
+77939 pad 
+77969 pad C
+77975 pad 
+78005 pad C
+78011 pad 
+78041 pad C
+78047 pad 
+78077 pad C
+78083 pad 
+78113 pad B
+78119 pad 
+78139 pad RIGHT
+78163 pad B
 78169 pad 
-78199 pad B
-78205 pad 
-78225 pad RIGHT
-78273 pad B
-78279 pad 
-78289 pad UP
-78313 pad B
-78319 pad 
-78329 pad RIGHT
-78353 pad B
-78359 pad 
-78369 pad DOWN
-78393 pad B
-78399 pad 
-78409 pad LEFT
-78457 pad C
-78463 pad 
-78493 pad A
-78499 pad 
-78529 pad C
-78535 pad 
-78565 pad C
-78571 pad 
-78601 pad C
-78607 pad 
-78637 pad C
-78643 pad 
-78673 pad B
-78679 pad 
-78699 pad RIGHT
-78723 pad B
-78729 pad 
-78739 pad DOWN
-78763 pad B
-78769 pad 
-78779 pad LEFT
-78827 pad C
-78833 pad 
-78863 pad A
-78869 pad 
-78899 pad C
-78905 pad 
-78935 pad C
-78941 pad 
-78971 pad C
-78977 pad 
-79007 pad C
-79013 pad 
-79043 pad B
-79049 pad 
-79069 pad DOWN
-79093 pad B
-79099 pad 
-79109 pad LEFT
-79133 pad B
-79139 pad 
-79149 pad UP
-79197 pad C
-79203 pad 
-79233 pad A
-79239 pad 
-79269 pad C
-79275 pad 
-79305 pad C
-79311 pad 
-79341 pad C
-79347 pad 
-79377 pad C
-79383 pad 
-79413 pad B
-79419 pad 
-79439 pad RIGHT
-79463 pad B
+78179 pad DOWN
+78203 pad B
+78209 pad 
+78219 pad DOWN
+78243 pad B
+78249 pad 
+78259 pad LEFT
+78283 pad B
+78289 pad 
+78299 pad UP
+78347 pad C
+78353 pad 
+78383 pad A
+78389 pad 
+78419 pad C
+78425 pad 
+78455 pad C
+78461 pad 
+78491 pad C
+78497 pad 
+78527 pad C
+78533 pad 
+78563 pad B
+78569 pad 
+78589 pad LEFT
+78613 pad B
+78619 pad 
+78629 pad UP
+78653 pad B
+78659 pad 
+78669 pad DOWN
+78693 pad B
+78699 pad 
+78709 pad LEFT
+78733 pad B
+78739 pad 
+78749 pad UP
+78797 pad C
+78803 pad 
+78833 pad A
+78839 pad 
+78869 pad C
+78875 pad 
+78905 pad C
+78911 pad 
+78941 pad C
+78947 pad 
+78977 pad C
+78983 pad 
+79013 pad B
+79019 pad 
+79039 pad RIGHT
+79087 pad B
+79093 pad 
+79103 pad LEFT
+79127 pad B
+79133 pad 
+79143 pad LEFT
+79167 pad B
+79173 pad 
+79183 pad UP
+79207 pad B
+79213 pad 
+79223 pad RIGHT
+79247 pad B
+79253 pad 
+79263 pad UP
+79287 pad B
+79293 pad 
+79303 pad RIGHT
+79327 pad B
+79333 pad 
+79343 pad DOWN
+79391 pad C
+79397 pad 
+79427 pad A
+79433 pad 
+79463 pad C
 79469 pad 
-79479 pad DOWN
-79503 pad B
-79509 pad 
-79519 pad LEFT
-79567 pad C
-79573 pad 
-79603 pad A
-79609 pad 
-79639 pad C
-79645 pad 
-79675 pad C
-79681 pad 
-79711 pad C
-79717 pad 
-79747 pad C
-79753 pad 
-79783 pad B
-79789 pad 
-79809 pad DOWN
-79833 pad B
-79839 pad 
-79849 pad DOWN
-79873 pad B
-79879 pad 
-79889 pad LEFT
-79913 pad B
-79919 pad 
-79929 pad LEFT
-79953 pad B
-79959 pad 
-79969 pad UP
-79993 pad B
-79999 pad 
-80009 pad RIGHT
-80057 pad C
-80063 pad 
-80093 pad A
-80099 pad 
-80129 pad C
-80135 pad 
-80165 pad C
-80171 pad 
-80201 pad C
-80207 pad 
-80237 pad C
-80243 pad 
-80273 pad B
-80279 pad 
-80299 pad DOWN
-80347 pad B
-80353 pad 
-80363 pad LEFT
-80435 pad B
-80441 pad 
-80451 pad UP
-80523 pad C
-80529 pad 
-80559 pad A
-80565 pad 
-80595 pad C
-80601 pad 
-80631 pad C
-80637 pad 
-80667 pad C
-80673 pad 
-80703 pad C
-80709 pad 
-80739 pad B
-80745 pad 
-80765 pad DOWN
-80789 pad B
-80795 pad 
-80805 pad LEFT
-80829 pad B
-80835 pad 
-80845 pad UP
-80869 pad B
-80875 pad 
-80885 pad START
+79499 pad C
+79505 pad 
+79535 pad C
+79541 pad 
+79571 pad C
+79577 pad 
+79607 pad B
+79613 pad 
+79633 pad LEFT
+79681 pad B
+79687 pad 
+79697 pad UP
+79769 pad B
+79775 pad 
+79785 pad RIGHT
+79857 pad C
+79863 pad 
+79893 pad A
+79899 pad 
+79929 pad C
+79935 pad 
+79965 pad C
+79971 pad 
+80001 pad C
+80007 pad 
+80037 pad C
+80043 pad 
+80073 pad B
+80079 pad 
+80099 pad DOWN
+80123 pad B
+80129 pad 
+80139 pad LEFT
+80163 pad B
+80169 pad 
+80179 pad UP
+80227 pad C
+80233 pad 
+80263 pad A
+80269 pad 
+80299 pad C
+80305 pad 
+80335 pad C
+80341 pad 
+80371 pad C
+80377 pad 
+80407 pad C
+80413 pad 
+80443 pad B
+80449 pad 
+80469 pad LEFT
+80493 pad B
+80499 pad 
+80509 pad UP
+80533 pad B
+80539 pad 
+80549 pad RIGHT
+80597 pad C
+80603 pad 
+80633 pad A
+80639 pad 
+80669 pad C
+80675 pad 
+80705 pad C
+80711 pad 
+80741 pad C
+80747 pad 
+80777 pad C
+80783 pad 
+80813 pad B
+80819 pad 
+80839 pad DOWN
+80887 pad B
 80893 pad 
-80965 pad C
-80973 pad 
-81045 pad START
-81053 pad 
-81125 pad C
-81133 pad 
-81205 pad START
+80903 pad LEFT
+80975 pad B
+80981 pad 
+80991 pad UP
+81063 pad C
+81069 pad 
+81099 pad A
+81105 pad 
+81135 pad C
+81141 pad 
+81171 pad C
+81177 pad 
+81207 pad C
 81213 pad 
-81285 pad C
-81293 pad 
-81365 pad START
-81373 pad 
-81445 pad C
-81453 pad 
-81525 pad START
-81533 pad 
-81605 pad C
-81613 pad 
-81685 pad START
-81693 pad 
-81765 pad C
-81773 pad 
-81845 pad START
-81853 pad 
-81925 pad C
-81933 pad 
-82005 pad START
-82013 pad 
-82085 pad C
-82093 pad 
-82165 pad START
-82173 pad 
-82245 pad C
-82253 pad 
-82325 pad START
-82333 pad 
-82405 pad C
-82413 pad 
-82485 pad START
-82493 pad 
-82565 pad C
-82573 pad 
-82645 pad START
-82653 pad 
-82725 pad C
-82733 pad 
-82805 pad START
-82813 pad 
-82885 pad C
-82893 pad 
-82965 pad START
-82973 pad 
-83045 pad C
-83053 pad 
-83125 pad START
-83133 pad 
-83205 pad C
-83213 pad 
-83285 pad START
-83293 pad 
-83365 pad C
-83373 pad 
-83445 pad START
-83453 pad 
-83525 pad C
-83533 pad 
-83605 pad START
-83613 pad 
-83685 pad C
-83693 pad 
-83765 pad START
-83773 pad 
-83845 pad C
-83853 pad 
-83925 pad START
-83933 pad 
-84005 pad C
-84013 pad 
-84085 pad START
-84093 pad 
-84165 pad C
-84173 pad 
-84245 pad START
-84253 pad 
-84325 pad C
-84333 pad 
-84405 pad START
-84413 pad 
-84485 pad C
-84493 pad 
-84565 pad START
+81243 pad C
+81249 pad 
+81279 pad B
+81285 pad 
+81305 pad RIGHT
+81401 pad B
+81407 pad 
+81417 pad DOWN
+81513 pad B
+81519 pad 
+81529 pad DOWN
+81553 pad B
+81559 pad 
+81569 pad LEFT
+81593 pad B
+81599 pad 
+81609 pad UP
+81633 pad B
+81639 pad 
+81649 pad RIGHT
+81697 pad C
+81703 pad 
+81733 pad A
+81739 pad 
+81769 pad C
+81775 pad 
+81805 pad C
+81811 pad 
+81841 pad C
+81847 pad 
+81877 pad C
+81883 pad 
+81913 pad B
+81919 pad 
+81939 pad DOWN
+81987 pad B
+81993 pad 
+82003 pad LEFT
+82075 pad B
+82081 pad 
+82091 pad UP
+82163 pad C
+82169 pad 
+82199 pad A
+82205 pad 
+82235 pad C
+82241 pad 
+82271 pad C
+82277 pad 
+82307 pad C
+82313 pad 
+82343 pad C
+82349 pad 
+82379 pad B
+82385 pad 
+82405 pad RIGHT
+82429 pad B
+82435 pad 
+82445 pad DOWN
+82469 pad B
+82475 pad 
+82485 pad DOWN
+82509 pad B
+82515 pad 
+82525 pad LEFT
+82549 pad B
+82555 pad 
+82565 pad UP
+82613 pad C
+82619 pad 
+82649 pad A
+82655 pad 
+82685 pad C
+82691 pad 
+82721 pad C
+82727 pad 
+82757 pad C
+82763 pad 
+82793 pad C
+82799 pad 
+82829 pad B
+82835 pad 
+82855 pad UP
+82879 pad B
+82885 pad 
+82895 pad DOWN
+82919 pad B
+82925 pad 
+82935 pad LEFT
+82959 pad B
+82965 pad 
+82975 pad UP
+83023 pad C
+83029 pad 
+83059 pad A
+83065 pad 
+83095 pad C
+83101 pad 
+83131 pad C
+83137 pad 
+83167 pad C
+83173 pad 
+83203 pad C
+83209 pad 
+83239 pad B
+83245 pad 
+83265 pad RIGHT
+83289 pad B
+83295 pad 
+83305 pad DOWN
+83329 pad B
+83335 pad 
+83345 pad LEFT
+83393 pad C
+83399 pad 
+83429 pad A
+83435 pad 
+83465 pad C
+83471 pad 
+83501 pad C
+83507 pad 
+83537 pad C
+83543 pad 
+83573 pad C
+83579 pad 
+83609 pad B
+83615 pad 
+83635 pad LEFT
+83659 pad B
+83665 pad 
+83675 pad UP
+83699 pad B
+83705 pad 
+83715 pad RIGHT
+83763 pad C
+83769 pad 
+83799 pad A
+83805 pad 
+83835 pad C
+83841 pad 
+83871 pad C
+83877 pad 
+83907 pad C
+83913 pad 
+83943 pad C
+83949 pad 
+83979 pad B
+83985 pad 
+84005 pad DOWN
+84053 pad B
+84059 pad 
+84069 pad LEFT
+84141 pad B
+84147 pad 
+84157 pad UP
+84229 pad C
+84235 pad 
+84265 pad A
+84271 pad 
+84301 pad C
+84307 pad 
+84337 pad C
+84343 pad 
+84373 pad C
+84379 pad 
+84409 pad C
+84415 pad 
+84445 pad B
+84451 pad 
+84471 pad RIGHT
+84567 pad B
 84573 pad 
-84645 pad C
-84653 pad 
-84725 pad START
-84733 pad 
-84805 pad C
-84813 pad 
-84885 pad START
+84583 pad DOWN
+84679 pad B
+84685 pad 
+84695 pad LEFT
+84815 pad C
+84821 pad 
+84851 pad A
+84857 pad 
+84887 pad C
 84893 pad 
-84965 pad C
-84973 pad 
-85045 pad START
-85053 pad 
-85125 pad C
-85133 pad 
-85205 pad START
-85213 pad 
-85285 pad C
-85293 pad 
-85365 pad START
-85373 pad 
-85445 pad C
-85453 pad 
-85525 pad START
-85533 pad 
-85605 pad C
-85613 pad 
-85685 pad START
-85693 pad 
-85765 pad C
-85773 pad 
-85845 pad START
-85853 pad 
-85925 pad C
+84923 pad C
+84929 pad 
+84959 pad C
+84965 pad 
+84995 pad C
+85001 pad 
+85031 pad B
+85037 pad 
+85057 pad UP
+85177 pad B
+85183 pad 
+85193 pad UP
+85217 pad B
+85223 pad 
+85233 pad RIGHT
+85257 pad B
+85263 pad 
+85273 pad DOWN
+85321 pad C
+85327 pad 
+85357 pad A
+85363 pad 
+85393 pad C
+85399 pad 
+85429 pad C
+85435 pad 
+85465 pad C
+85471 pad 
+85501 pad C
+85507 pad 
+85537 pad B
+85543 pad 
+85563 pad RIGHT
+85587 pad B
+85593 pad 
+85603 pad DOWN
+85627 pad B
+85633 pad 
+85643 pad UP
+85667 pad B
+85673 pad 
+85683 pad LEFT
+85707 pad B
+85713 pad 
+85723 pad UP
+85747 pad B
+85753 pad 
+85763 pad RIGHT
+85787 pad B
+85793 pad 
+85803 pad DOWN
+85827 pad B
+85833 pad 
+85843 pad LEFT
+85891 pad C
+85897 pad 
+85927 pad A
 85933 pad 
-86005 pad START
-86013 pad 
-86085 pad C
-86093 pad 
-86165 pad START
-86173 pad 
-86245 pad C
-86253 pad 
-86325 pad START
-86333 pad 
-86405 pad C
-86413 pad 
-86485 pad START
-86493 pad 
-86565 pad C
-86573 pad 
-86645 pad START
-86653 pad 
-86725 pad C
-86733 pad 
-86805 pad START
+85963 pad C
+85969 pad 
+85999 pad C
+86005 pad 
+86035 pad C
+86041 pad 
+86071 pad C
+86077 pad 
+86107 pad B
+86113 pad 
+86133 pad UP
+86181 pad B
+86187 pad 
+86197 pad RIGHT
+86269 pad B
+86275 pad 
+86285 pad DOWN
+86357 pad C
+86363 pad 
+86393 pad A
+86399 pad 
+86429 pad C
+86435 pad 
+86465 pad C
+86471 pad 
+86501 pad C
+86507 pad 
+86537 pad C
+86543 pad 
+86573 pad B
+86579 pad 
+86599 pad LEFT
+86695 pad B
+86701 pad 
+86711 pad UP
+86807 pad B
 86813 pad 
-86885 pad C
-86893 pad 
-86965 pad START
-86973 pad 
-87045 pad C
-87053 pad 
-87125 pad START
-87133 pad 
-87205 pad C
-87213 pad 
-87285 pad START
-87293 pad 
-87365 pad C
-87373 pad 
-87385 pad C
+86823 pad RIGHT
+86943 pad C
+86949 pad 
+86979 pad A
+86985 pad 
+87015 pad C
+87021 pad 
+87051 pad C
+87057 pad 
+87087 pad C
+87093 pad 
+87123 pad C
+87129 pad 
+87159 pad B
+87165 pad 
+87185 pad DOWN
+87305 pad B
+87311 pad 
+87321 pad UP
+87345 pad B
+87351 pad 
+87361 pad RIGHT
+87385 pad B
 87391 pad 
-87421 pad C
-87427 pad 
-87457 pad C
-87463 pad 
-87493 pad C
-87499 pad 
-87529 pad C
-87535 pad 
-87565 pad C
-87571 pad 
-87601 pad C
-87607 pad 
-87637 pad C
-87643 pad 
-87673 pad C
-87679 pad 
-87709 pad C
-87715 pad 
-87745 pad C
-87751 pad 
-87781 pad C
-87787 pad 
-87817 pad C
-87823 pad 
-87853 pad C
-87859 pad 
-87889 pad C
-87895 pad 
-87925 pad C
-87931 pad 
-87961 pad C
-87967 pad 
-87997 pad C
-88003 pad 
-88033 pad C
-88039 pad 
-88069 pad C
-88075 pad 
-88105 pad UP
-88129 pad B
-88135 pad 
-88145 pad RIGHT
-88169 pad B
-88175 pad 
-88185 pad DOWN
-88233 pad C
-88239 pad 
-88269 pad A
-88275 pad 
-88305 pad C
-88311 pad 
-88341 pad C
-88347 pad 
-88377 pad C
-88383 pad 
-88413 pad C
-88419 pad 
-88449 pad B
-88455 pad 
-88475 pad LEFT
-88523 pad B
-88529 pad 
-88539 pad UP
-88611 pad B
-88617 pad 
-88627 pad RIGHT
-88699 pad C
-88705 pad 
-88735 pad A
-88741 pad 
-88771 pad C
-88777 pad 
-88807 pad C
-88813 pad 
-88843 pad C
-88849 pad 
-88879 pad C
-88885 pad 
-88915 pad B
-88921 pad 
-88941 pad DOWN
-89037 pad B
-89043 pad 
-89053 pad LEFT
-89149 pad B
-89155 pad 
-89165 pad UP
-89285 pad C
-89291 pad 
-89321 pad A
-89327 pad 
-89357 pad C
-89363 pad 
-89393 pad C
-89399 pad 
-89429 pad C
-89435 pad 
-89465 pad C
-89471 pad 
-89501 pad B
-89507 pad 
-89527 pad RIGHT
-89647 pad B
-89653 pad 
-89663 pad DOWN
-89807 pad B
-89813 pad 
-89823 pad LEFT
-89967 pad C
-89973 pad 
-90003 pad A
-90009 pad 
-90039 pad C
-90045 pad 
-90075 pad C
-90081 pad 
-90111 pad C
-90117 pad 
-90147 pad C
-90153 pad 
-90183 pad B
-90189 pad 
-90209 pad UP
-90377 pad B
-90383 pad 
-90393 pad RIGHT
-90561 pad B
-90567 pad 
-90577 pad DOWN
-90769 pad C
-90775 pad 
-90805 pad A
-90811 pad 
-90841 pad C
-90847 pad 
-90877 pad C
-90883 pad 
-90913 pad C
-90919 pad 
-90949 pad C
-90955 pad 
-90985 pad B
-90991 pad 
-91011 pad UP
-91035 pad B
-91041 pad 
-91051 pad RIGHT
-91075 pad B
-91081 pad 
-91091 pad DOWN
-91139 pad C
-91145 pad 
-91175 pad A
-91181 pad 
-91211 pad C
-91217 pad 
-91247 pad C
-91253 pad 
-91283 pad C
-91289 pad 
-91319 pad C
-91325 pad 
-91355 pad B
-91361 pad 
-91381 pad DOWN
-91405 pad B
-91411 pad 
-91421 pad LEFT
-91445 pad B
-91451 pad 
-91461 pad UP
-91509 pad C
-91515 pad 
-91545 pad A
-91551 pad 
-91581 pad C
-91587 pad 
-91617 pad C
-91623 pad 
-91653 pad C
-91659 pad 
-91689 pad C
-91695 pad 
-91725 pad B
-91731 pad 
-91751 pad RIGHT
-91799 pad B
-91805 pad 
-91815 pad DOWN
-91887 pad B
-91893 pad 
-91903 pad LEFT
-91975 pad C
-91981 pad 
-92011 pad A
-92017 pad 
-92047 pad C
-92053 pad 
-92083 pad C
-92089 pad 
+87401 pad DOWN
+87449 pad C
+87455 pad 
+87485 pad A
+87491 pad 
+87521 pad C
+87527 pad 
+87557 pad C
+87563 pad 
+87593 pad C
+87599 pad 
+87629 pad C
+87635 pad 
+87665 pad B
+87671 pad 
+87691 pad LEFT
+87739 pad B
+87745 pad 
+87755 pad UP
+87827 pad B
+87833 pad 
+87843 pad RIGHT
+87915 pad C
+87921 pad 
+87951 pad A
+87957 pad 
+87987 pad C
+87993 pad 
+88023 pad C
+88029 pad 
+88059 pad C
+88065 pad 
+88095 pad C
+88101 pad 
+88131 pad B
+88137 pad 
+88157 pad DOWN
+88253 pad B
+88259 pad 
+88269 pad LEFT
+88365 pad B
+88371 pad 
+88381 pad UP
+88501 pad C
+88507 pad 
+88537 pad A
+88543 pad 
+88573 pad C
+88579 pad 
+88609 pad C
+88615 pad 
+88645 pad C
+88651 pad 
+88681 pad C
+88687 pad 
+88717 pad B
+88723 pad 
+88743 pad RIGHT
+88863 pad B
+88869 pad 
+88879 pad DOWN
+89023 pad B
+89029 pad 
+89039 pad LEFT
+89183 pad C
+89189 pad 
+89219 pad A
+89225 pad 
+89255 pad C
+89261 pad 
+89291 pad C
+89297 pad 
+89327 pad C
+89333 pad 
+89363 pad C
+89369 pad 
+89399 pad B
+89405 pad 
+89425 pad UP
+89593 pad B
+89599 pad 
+89609 pad RIGHT
+89777 pad B
+89783 pad 
+89793 pad DOWN
+89985 pad C
+89991 pad 
+90021 pad A
+90027 pad 
+90057 pad C
+90063 pad 
+90093 pad C
+90099 pad 
+90129 pad C
+90135 pad 
+90165 pad C
+90171 pad 
+90201 pad B
+90207 pad 
+90227 pad LEFT
+90419 pad B
+90425 pad 
+90435 pad UP
+90651 pad B
+90657 pad 
+90667 pad RIGHT
+90883 pad C
+90889 pad 
+90919 pad A
+90925 pad 
+90955 pad C
+90961 pad 
+90991 pad C
+90997 pad 
+91027 pad C
+91033 pad 
+91063 pad C
+91069 pad 
+91099 pad B
+91105 pad 
+91125 pad DOWN
+91365 pad B
+91371 pad 
+91381 pad LEFT
+91621 pad B
+91627 pad 
+91637 pad UP
+91901 pad C
+91907 pad 
+91937 pad A
+91943 pad 
+91973 pad C
+91979 pad 
+92009 pad C
+92015 pad 
+92045 pad C
+92051 pad 
+92081 pad C
+92087 pad 
+92117 pad B
+92123 pad 
+92143 pad RIGHT
+92407 pad B
+92413 pad 
+92423 pad DOWN
+92711 pad B
+92717 pad 
+92727 pad LEFT
+93015 pad C
+93021 pad 
+93051 pad A
+93057 pad 
+93087 pad C
+93093 pad 
+93123 pad C
+93129 pad 
+93159 pad C
+93165 pad 
+93195 pad C
+93201 pad 
+93231 pad B
+93237 pad 
+93257 pad RIGHT
+93281 pad B
+93287 pad 
+93297 pad DOWN
+93321 pad B
+93327 pad 
+93337 pad LEFT
+93385 pad C
+93391 pad 
+93421 pad A
+93427 pad 
+93457 pad C
+93463 pad 
+93493 pad C
+93499 pad 
+93529 pad C
+93535 pad 
+93565 pad C
+93571 pad 
+93601 pad B
+93607 pad 
+93627 pad UP
+93675 pad B
+93681 pad 
+93691 pad RIGHT
+93763 pad B
+93769 pad 
+93779 pad DOWN
+93851 pad C
+93857 pad 
+93887 pad A
+93893 pad 
+93923 pad C
+93929 pad 
+93959 pad C
+93965 pad 
+93995 pad C
+94001 pad 
+94031 pad C
+94037 pad 
+94067 pad B
+94073 pad 
+94093 pad LEFT
+94189 pad B
+94195 pad 
+94205 pad UP
+94301 pad B
+94307 pad 
+94317 pad RIGHT
+94437 pad C
+94443 pad 
+94473 pad A
+94479 pad 
+94509 pad C
+94515 pad 
+94545 pad C
+94551 pad 
+94581 pad C
+94587 pad 
+94617 pad C
+94623 pad 
+94653 pad B
+94659 pad 
+94679 pad DOWN
+94799 pad B
+94805 pad 
+94815 pad LEFT
+94959 pad B
+94965 pad 
+94975 pad UP
+95119 pad C
+95125 pad 
+95155 pad A
+95161 pad 
+95191 pad C
+95197 pad 
+95227 pad C
+95233 pad 
+95263 pad C
+95269 pad 
+95299 pad C
+95305 pad 
+95335 pad B
+95341 pad 
+95361 pad LEFT
+95385 pad B
+95391 pad 
+95401 pad LEFT
+95425 pad B
+95431 pad 
+95441 pad RIGHT
+95465 pad B
+95471 pad 
+95481 pad DOWN
+95505 pad B
+95511 pad 
+95521 pad LEFT
+95569 pad C
+95575 pad 
+95605 pad A
+95611 pad 
+95641 pad C
+95647 pad 
+95677 pad C
+95683 pad 
+95713 pad C
+95719 pad 
+95749 pad C
+95755 pad 
+95785 pad B
+95791 pad 
+95811 pad START
+95819 pad 
+95891 pad C
+95899 pad 
+95971 pad START
+95979 pad 
+96051 pad C
+96059 pad 
+96131 pad START
+96139 pad 
+96211 pad C
+96219 pad 
+96291 pad START
+96299 pad 
+96371 pad C
+96379 pad 
+96451 pad START
+96459 pad 
+96531 pad C
+96539 pad 
+96611 pad START
+96619 pad 
+96691 pad C
+96699 pad 
+96771 pad START
+96779 pad 
+96830 pad LEFT
+96854 pad B
+96860 pad 
+96870 pad UP
+96894 pad B
+96900 pad 
+96910 pad RIGHT
+96958 pad C
+96964 pad 
+96994 pad A
+97000 pad 
+97030 pad C
+97036 pad 
+97066 pad C
+97072 pad 
+97102 pad C
+97108 pad 
+97138 pad C
+97144 pad 
+97174 pad B
+97180 pad 
+97200 pad DOWN
+97248 pad B
+97254 pad 
+97264 pad LEFT
+97336 pad B
+97342 pad 
+97352 pad UP
+97424 pad C
+97430 pad 
+97460 pad A
+97466 pad 
+97496 pad C
+97502 pad 
+97532 pad C
+97538 pad 
+97568 pad C
+97574 pad 
+97604 pad C
+97610 pad 
+97640 pad B
+97646 pad 
+97666 pad START
+97674 pad 
+97746 pad C
+97754 pad 
+97785 pad RIGHT
+97881 pad B
+97887 pad 
+97897 pad DOWN
+97993 pad B
+97999 pad 
+98009 pad LEFT
+98129 pad C
+98135 pad 
+98165 pad A
+98171 pad 
+98201 pad C
+98207 pad 
+98237 pad C
+98243 pad 
+98273 pad C
+98279 pad 
+98309 pad C
+98315 pad 
+98345 pad B
+98351 pad 
+98371 pad UP
+98491 pad B
+98497 pad 
+98507 pad RIGHT
+98651 pad B
+98657 pad 
+98667 pad DOWN
+98811 pad C
+98817 pad 
+98847 pad A
+98853 pad 
+98883 pad C
+98889 pad 
+98919 pad C
+98925 pad 
+98955 pad C
+98961 pad 
+98991 pad C
+98997 pad 
+99027 pad B
+99033 pad 
+99053 pad LEFT
+99221 pad B
+99227 pad 
+99237 pad UP
+99405 pad B
+99411 pad 
+99421 pad RIGHT
+99613 pad C
+99619 pad 
+99649 pad A
+99655 pad 
+99685 pad C
+99691 pad 
+99721 pad C
+99727 pad 
+99757 pad C
+99763 pad 
+99793 pad C
+99799 pad 
+99829 pad B
+99835 pad 
+99855 pad DOWN
+100047 pad B
+100053 pad 
+100063 pad LEFT
+100279 pad B
+100285 pad 
+100295 pad UP
+100511 pad C
+100517 pad 
+100547 pad A
+100553 pad 
+100583 pad C
+100589 pad 
+100619 pad C
+100625 pad 
+100655 pad C
+100661 pad 
+100691 pad C
+100697 pad 
+100727 pad B
+100733 pad 
+100753 pad RIGHT
+100993 pad B
+100999 pad 
+101009 pad DOWN
+101249 pad B
+101255 pad 
+101265 pad LEFT
+101529 pad C
+101535 pad 
+101565 pad A
+101571 pad 
+101601 pad C
+101607 pad 
+101637 pad C
+101643 pad 
+101673 pad C
+101679 pad 
+101709 pad C
+101715 pad 
+101745 pad B
+101751 pad 
+101771 pad UP
+102035 pad B
+102041 pad 
+102051 pad RIGHT
+102339 pad B
+102345 pad 
+102355 pad DOWN
+102643 pad C
+102649 pad 
+102679 pad A
+102685 pad 
+102715 pad C
+102721 pad 
+102751 pad C
+102757 pad 
+102787 pad C
+102793 pad 
+102823 pad C
+102829 pad 
+102859 pad B
+102865 pad 
+102885 pad RIGHT
+102909 pad B
+102915 pad 
+102925 pad DOWN
+102949 pad B
+102955 pad 
+102965 pad START
+102973 pad 
+103045 pad C
+103053 pad 
+103084 pad UP
+103108 pad B
+103114 pad 
+103124 pad RIGHT
+103148 pad B
+103154 pad 
+103164 pad DOWN
+103212 pad C
+103218 pad 
+103248 pad A
+103254 pad 
+103284 pad C
+103290 pad 
+103320 pad C
+103326 pad 
+103356 pad C
+103362 pad 
+103392 pad C
+103398 pad 
+103428 pad B
+103434 pad 
+103454 pad LEFT
+103502 pad B
+103508 pad 
+103518 pad UP
+103590 pad B
+103596 pad 
+103606 pad RIGHT
+103678 pad C
+103684 pad 
