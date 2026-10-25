@@ -1,8 +1,8 @@
 diff --git a/runtime/include/saturn/sh2.h b/runtime/include/saturn/sh2.h
-index 1219a02..cb01c42 100644
+index 1219a02..9bbb945 100644
 --- a/runtime/include/saturn/sh2.h
 +++ b/runtime/include/saturn/sh2.h
-@@ -11,6 +11,7 @@
+@@ -11,9 +11,11 @@
  // Semantics are src/saturnrecomp/sh2emu.py's, instruction for instruction: the
  // self-test (runtime/src/app/selftest.cpp) holds the two together.
  #pragma once
@@ -10,7 +10,11 @@ index 1219a02..cb01c42 100644
  #include <cstddef>
  #include <cstdint>
  #include <cstring>
-@@ -22,7 +23,7 @@ struct SH2Context {
++#include <cstdlib>
+ 
+ #define SH2_UNLIKELY(x) __builtin_expect(!!(x), 0)
+ 
+@@ -22,7 +24,7 @@ struct SH2Context {
      uint32_t t, s, q, m, imask;         // SR, a field each
      uint32_t gbr, vbr, mach, macl, pr;
      uint32_t pc;                        // where the last rts/rte went: the caller checks it
@@ -19,7 +23,7 @@ index 1219a02..cb01c42 100644
      int      cpu;                       // 0 master, 1 slave
  };
  
-@@ -59,7 +60,20 @@ uint32_t sh2_mmio_read(uint32_t a, int size);           // what sh2_io_* does no
+@@ -59,7 +61,22 @@ uint32_t sh2_mmio_read(uint32_t a, int size);           // what sh2_io_* does no
  void     sh2_mmio_write(uint32_t a, uint32_t v, int size);
  
  // A safe point: loop back-edges, calls, and `ldc ...,sr` (the mask may drop).
@@ -32,7 +36,9 @@ index 1219a02..cb01c42 100644
 +#define SH2_POLL(c) do { if (SH2_UNLIKELY(((c).budget -= 46) < 0)) sh2_poll(c); } while (0)
 +// A block's cost: n issue cycles and m memory accesses (each g_sh2_mem_q
 +// quarter cycles: the average wait the cache and the bus add).
-+extern int32_t g_sh2_mem_q;
++// SF3_MEM_Q=N overrides it (default 8: two cycles of average wait per access,
++// fitted to Beetle's Sc1 battle-start counter plateaus). Larger is a slower CPU.
++inline int32_t g_sh2_mem_q = [] { const char* v = std::getenv("SF3_MEM_Q"); return v ? (int32_t)std::atol(v) : 8; }();
 +#define SH2_CYC(c, n, m) ((c).budget -= (n) * 4 + (m) * g_sh2_mem_q)
 +extern std::atomic<bool> g_state_requested;
 +extern const bool g_sh2_native_states;
@@ -1775,7 +1781,7 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..e9dd41b 100644
+index a17d926..5720321 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
 @@ -1,11 +1,11 @@
@@ -1803,7 +1809,7 @@ index a17d926..e9dd41b 100644
  #include <atomic>
  #include <chrono>
  #include <condition_variable>
-@@ -46,13 +47,31 @@
+@@ -46,13 +47,26 @@
  #include <mutex>
  #include <thread>
  #include <vector>
@@ -1820,24 +1826,19 @@ index a17d926..e9dd41b 100644
 +// memory accesses (g_sh2_mem_q each); a device register access adds its bus's
 +// wait (mmio.cpp). A poll turns what was spent into virtual time.
 +static const int32_t kBudget = 4 * 2932;        // between polls: ~102 us, as 256 safe points of 400 ns were
-+// SF3_PS_PER_CYCLE=N: the clock (default 34921 ps, 28.6364 MHz); SF3_MEM_Q=N:
-+// quarter cycles per memory access (default 8: two cycles of average wait per
-+// access, fitted to Beetle's Sc1 battle-start counter plateaus). Larger is a slower CPU.
++// SF3_PS_PER_CYCLE=N: the clock (default 34921 ps, 28.6364 MHz); the
++// quarter cycles per memory access are g_sh2_mem_q (SF3_MEM_Q, sh2.h).
 +static const uint64_t kPsPerCycle = [] {
 +    const char* v = std::getenv("SF3_PS_PER_CYCLE");
 +    const long n = v ? std::atol(v) : 0;
 +    return n > 0 ? (uint64_t)n : 34921ull;
-+}();
-+int32_t g_sh2_mem_q = [] {
-+    const char* v = std::getenv("SF3_MEM_Q");
-+    return v ? (int32_t)std::atol(v) : 8;
 +}();
 +// Virtual ns for q quarter cycles (the sub-ns rest is dropped: no state to keep).
 +static uint64_t quarters_ns(int64_t q) { return q > 0 ? (uint64_t)q * kPsPerCycle / 4000 : 0; }
  static const uint32_t kIntPC = 0xFFFFFFE4u;     // the PC an interrupt pushes: where rte must go
  static const int kSlaveSlice = 64;              // polls the slave runs before it gives the CPU back
  
-@@ -72,9 +91,26 @@ uint64_t sat_now() {
+@@ -72,9 +86,26 @@ uint64_t sat_now() {
  }
  
  static void vprint(const char* tag, const char* fmt, va_list ap) {
@@ -1867,7 +1868,7 @@ index a17d926..e9dd41b 100644
  }
  
  void sat_trace(const char* fmt, ...) {
-@@ -302,6 +338,36 @@ void sat_fatal(const char* fmt, ...) {
+@@ -302,6 +333,36 @@ void sat_fatal(const char* fmt, ...) {
      va_start(ap, fmt);
      vprint("FATAL", fmt, ap);
      va_end(ap);
@@ -1904,7 +1905,7 @@ index a17d926..e9dd41b 100644
      SH2Context& c = *g_cpu;
      std::fprintf(stderr, "  cpu %d  pr %08X  pc %08X  sr %03X\n", c.cpu, c.pr, c.pc, sh2_get_sr(c));
      for (int i = 0; i < 16; ++i) std::fprintf(stderr, "  r%-2d %08X%s", i, c.r[i], i % 4 == 3 ? "\n" : "");
-@@ -316,6 +382,7 @@ void sat_fatal(const char* fmt, ...) {
+@@ -316,6 +377,7 @@ void sat_fatal(const char* fmt, ...) {
          sound_close();                          // a run that ends in an error is the one most worth watching
          movie_finish();
      }
@@ -1912,7 +1913,7 @@ index a17d926..e9dd41b 100644
      std::fflush(stderr);
      std::_Exit(1);
  }
-@@ -333,6 +400,8 @@ static std::condition_variable g_cv;
+@@ -333,6 +395,8 @@ static std::condition_variable g_cv;
  static int g_turn;                  // 0 the master runs, 1 the slave
  static bool g_slave_on, g_slave_idle = true, g_slave_reset, g_slave_thread;
  static int g_slave_polls;
@@ -1921,7 +1922,7 @@ index a17d926..e9dd41b 100644
  
  static void give(int to) {          // hand the CPU over and wait until it comes back
      std::unique_lock<std::mutex> lk(g_mu);
-@@ -366,6 +435,14 @@ static void slave_main() {
+@@ -366,6 +430,14 @@ static void slave_main() {
              // the BIOS's slave boot: its own vector table, interrupts masked,
              // its stack, then the entry the program set as vector 0x94
              SH2Context& s = g_slave;
@@ -1936,7 +1937,7 @@ index a17d926..e9dd41b 100644
              s = SH2Context{};
              s.cpu = 1;
              s.vbr = 0x06000400u;
-@@ -421,7 +498,29 @@ static void watch_for_stalls() {
+@@ -421,7 +493,29 @@ static void watch_for_stalls() {
      }
  }
  
@@ -1967,7 +1968,7 @@ index a17d926..e9dd41b 100644
  
  void slave_on() {
      if (!g_slave_thread) {
-@@ -446,7 +545,7 @@ void slave_off() {
+@@ -446,7 +540,7 @@ void slave_off() {
  void slave_idle_check(uint32_t ftcsr) {
      if (g_cpu->cpu != 1 || (ftcsr & 0x80)) return;
      g_slave_idle = true;
@@ -1976,7 +1977,7 @@ index a17d926..e9dd41b 100644
  }
  
  // SINIT: the master pulses the slave's FRT input capture
-@@ -460,16 +559,26 @@ void slave_kick() {
+@@ -460,16 +554,26 @@ void slave_kick() {
  // The clock and the multitap are the run's own settings, but a dump goes on with the ones it was made with.
  void machine_state(State& s) {
      uint8_t ip[16];
@@ -2006,7 +2007,7 @@ index a17d926..e9dd41b 100644
  }
  
  // --coverage FILE: "MODULE ADDRESS INSTRUCTIONS RAN" for every recompiled function, RAN 1 or 0.
-@@ -490,6 +599,30 @@ static void write_coverage(const std::string& path) {
+@@ -490,6 +594,30 @@ static void write_coverage(const std::string& path) {
      if (e) sat_note("coverage: cannot replace %s: %s", path.c_str(), e.message().c_str());
  }
  
@@ -2037,7 +2038,7 @@ index a17d926..e9dd41b 100644
  // --checkpoint SECONDS: coverage written again every SECONDS of the host's time, so a run that is
  // killed rather than stopped still leaves what it ran.
  static void checkpoint_due() {
-@@ -512,6 +645,7 @@ static void checkpoint_due() {
+@@ -512,6 +640,7 @@ static void checkpoint_due() {
  static const int kModemLine = 12;
  
  void master_poll_devices() {
@@ -2045,7 +2046,7 @@ index a17d926..e9dd41b 100644
      uint64_t now = sat_now();
      video_tick(now);
      writes_due();
-@@ -529,13 +663,16 @@ void master_poll_devices() {
+@@ -529,13 +658,16 @@ void master_poll_devices() {
  }
  
  void sh2_poll(SH2Context& c) {
@@ -2064,7 +2065,7 @@ index a17d926..e9dd41b 100644
      master_poll_devices();
      scu_deliver(c);
      onchip_deliver(c);
-@@ -555,6 +692,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -555,6 +687,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
      c.r[15] -= 4; st32(c.r[15], sh2_get_sr(c));
      c.r[15] -= 4; st32(c.r[15], kIntPC);
      c.imask = level;
@@ -2072,7 +2073,7 @@ index a17d926..e9dd41b 100644
      if (bios_is_dispatcher(vec, target)) {
          bios_dispatch(c, vec);
      } else {
-@@ -570,7 +708,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -570,7 +703,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
  void sh2_sleep(SH2Context& c, uint32_t pc) {
      // wait for an interrupt: time passes until one is taken
      for (int i = 0; i < 100000; ++i) {
@@ -2081,7 +2082,7 @@ index a17d926..e9dd41b 100644
          master_poll_devices();
          if (scu_deliver(c) | onchip_deliver(c)) return;
      }
-@@ -584,6 +722,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
+@@ -584,6 +717,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
  
  void sh2_bad_return(SH2Context& c, uint32_t expected) {
      if (tasks_pending()) { tasks_route(c, expected); return; }
@@ -2093,7 +2094,7 @@ index a17d926..e9dd41b 100644
      sat_fatal("returned to %08X, expected %08X", c.pc, expected);
  }
  
-@@ -658,7 +801,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -658,7 +796,7 @@ int saturn_main(const SaturnConfig& cfg) {
      else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
      for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
      bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
