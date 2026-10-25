@@ -145,6 +145,35 @@ class Diff(unittest.TestCase):
         self.assertEqual(diff.dots_over(ours, theirs, 100), 0)
 
 
+class TownBfs(unittest.TestCase):
+    def load(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('town_bfs', Path(__file__).resolve().parents[1] / 'sf3-town-bfs.py')
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    def test_diagonal_moves_press_two_buttons(self):
+        m = self.load()
+        self.assertEqual(m.buttons('UP+LEFT'), ('UP', 'LEFT'))
+        self.assertEqual(m.buttons('DOWN'), ('DOWN',))
+        self.assertEqual(m.buttons(''), ())
+        self.assertEqual(len(set(m.DIRS + m.DIAGONALS)), 8)
+        self.assertTrue(all(len(m.buttons(d)) == 2 for d in m.DIAGONALS))
+
+    def test_player_obj_uses_given_caller(self):
+        import tempfile
+        m = self.load()
+        with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as f:
+            f.write('trace 060552F0 pr=06055120 r3=060FA000\ntrace 06056DF0 pr=06056C20 r3=06044444\n')
+        try:
+            self.assertEqual(m.player_obj(f.name, 1, 0x06055120), 0x060FA000)
+            self.assertEqual(m.player_obj(f.name, 1), 0x06044444)
+            self.assertEqual(m.player_obj(f.name, 7, 0x01234567), 7)
+        finally:
+            Path(f.name).unlink()
+
+
 if __name__ == '__main__':
     unittest.main()
 
