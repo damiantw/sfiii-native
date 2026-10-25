@@ -444,10 +444,33 @@ index 0000000..00c23c1
 +    }
 +};
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..b58ef47 100644
+index feded39..56047a0 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
-@@ -33,6 +33,7 @@
+@@ -2,8 +2,8 @@
+ // field VDP2 composes, the pad from the keyboard and a gamepad, the pace
+ // and the audio stream.
+ //
+-// The frame is shown at VBlank-IN (video.cpp), scaled to a 4:3 picture as
+-// large as the window allows; for a PAL disc the screen is 256 lines tall,
++// The frame is shown at VBlank-IN (video.cpp), under the button bar, scaled to a 4:3 picture as
++// large as the window allows (or, with [display] integer_scale, whole multiples of its pixels); for a PAL disc the screen is 256 lines tall,
+ // and a 224-line picture sits in the middle of it, as on a European TV. Time stays virtual (a run with the same pad
+ // is the same run); with a window, each VBlank-IN waits until the host's
+ // clock has caught up with it, so the game runs at the Saturn's speed, and
+@@ -13,8 +13,9 @@
+ // The pads (standard Saturn pads; smpc.cpp numbers the players across the ports):
+ //   keyboard  player 1: arrows, Enter START, Z X C = A B C, A S D = X Y Z, Q W = L R
+ //   gamepads  a player each, in the order they connect (pad_slots.h), the first
+-//             player 1 beside the keyboard: d-pad or left stick, Start, south A,
+-//             east B, right shoulder C, west X, north Y, left shoulder Z, triggers L and R
++//             player 1 beside the keyboard: d-pad or left stick, Start, west A,
++//             south B, east C (the Saturn's A B C row), north X, triggers Y and Z,
++//             shoulders L and R
+ // unless the settings (settings.h) bind them otherwise.
+ // The touchscreen has a Saturn pad of its own for player 1 (touch_pad.h). Android's Back, Escape, a
+ // gamepad's Back or Guide, or the menu button at the top of a touchscreen opens a menu that pauses
+@@ -33,6 +34,7 @@
  #include "host.h"
  #include "host_sdl.h"
  #include "pace.h"
@@ -455,8 +478,12 @@ index feded39..b58ef47 100644
  #include "pad_slots.h"
  #include "settings.h"
  #include "touch_pad.h"
-@@ -42,6 +43,15 @@
+@@ -40,8 +42,19 @@
+ #include <SDL3/SDL.h>
+ #include <algorithm>
  #include <chrono>
++#include <cmath>
++#include <cstdlib>
  #include <cstring>
  #include <map>
 +#ifdef SF3_CONTROLLER_SUPPORT
@@ -471,7 +498,7 @@ index feded39..b58ef47 100644
  
  static SDL_Window* g_win;
  static PadSlots g_slots(kHostSlots);
-@@ -50,19 +60,45 @@ static SDL_Texture* g_tex;
+@@ -50,19 +63,45 @@ static SDL_Texture* g_tex;
  static int g_tex_w, g_tex_h;
  static uint16_t g_buttons[kHostSlots];
  static const Frame* g_last;
@@ -520,7 +547,7 @@ index feded39..b58ef47 100644
  static std::string g_settings_path, g_settings_text;     // the file and its text, which a save writes over
  static void bind_keyboard();
  
-@@ -91,6 +127,25 @@ static void load_settings(const std::string& named) {
+@@ -91,6 +130,25 @@ static void load_settings(const std::string& named) {
              for (auto& p : problems) sat_note("%s, so its default", p.c_str());
          }
      }
@@ -546,7 +573,7 @@ index feded39..b58ef47 100644
      bind_keyboard();
  }
  
-@@ -112,7 +167,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
+@@ -112,7 +170,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
  
  bool host_window(const SaturnConfig& cfg) {
      if (g_win) return true;
@@ -560,12 +587,14 @@ index feded39..b58ef47 100644
      load_settings(cfg.settings);
      int s = cfg.scale > 0 ? cfg.scale : g_settings.number("display", "scale");
      bool full = cfg.fullscreen || g_settings.flag("display", "fullscreen");
-@@ -121,12 +182,29 @@ bool host_window(const SaturnConfig& cfg) {
+@@ -121,16 +185,38 @@ bool host_window(const SaturnConfig& cfg) {
      SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
      full = true;
  #endif
 +#ifdef SF3_CONTROLLER_SUPPORT
-+    g_win=SDL_CreateWindow("saturn-recomp",320*s,240*s,SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY|(full?SDL_WINDOW_FULLSCREEN:0)|(gpu_offscreen()?SDL_WINDOW_HIDDEN:0));
++    // the button bar goes above the picture, so the picture itself is 320x240 times the scale
++    int bar=(int)std::ceil(36*std::min(1.0f,320.0f*s/(630.0f+58.0f*4)));
++    g_win=SDL_CreateWindow("saturn-recomp",320*s,240*s+bar,SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY|(full?SDL_WINDOW_FULLSCREEN:0)|(gpu_offscreen()?SDL_WINDOW_HIDDEN:0));
 +    if(g_win && std::strcmp(SDL_GetCurrentVideoDriver(),"dummy")) g_ren=g_gpu.create_renderer(g_win);
 +    if(g_win && !g_ren) {sat_note("GPU shader renderer unavailable (%s); using standard SDL presentation",SDL_GetError());g_ren=SDL_CreateRenderer(g_win,nullptr);}
 +    if(!g_win || !g_ren) {
@@ -590,7 +619,15 @@ index feded39..b58ef47 100644
      ui_open(g_ren);
      // host_pace keeps real time; a present that waited for the display would stall the whole machine
      // whenever the compositor stops sending frames, as KWin does for a window that is out of sight
-@@ -150,6 +228,11 @@ bool host_open() {
+-    SDL_SetRenderVSync(g_ren, 0);
++    // (settings vsync = true asks for it anyway; host_pace still keeps the clock)
++    bool vsync=g_settings.flag("display","vsync");
++    if(!SDL_SetRenderVSync(g_ren, vsync?1:0) && vsync) sat_note("SDL: no vsync here (%s)",SDL_GetError());
++    else if(vsync) sat_note("SDL: presenting with vsync");
+     return true;
+ }
+ 
+@@ -150,6 +236,11 @@ bool host_open() {
      g_touchscreen = touch_devices > 0;
      g_base = Clock::now();
      g_paced = !g_cfg.realtime;
@@ -602,7 +639,7 @@ index feded39..b58ef47 100644
      return true;
  }
  
-@@ -163,6 +246,10 @@ struct HostCall {
+@@ -163,6 +254,10 @@ struct HostCall {
  static SDL_AudioStream* g_audio;
  static const int kLead = 2205, kMax = 11025;    // frames: 50 ms ahead, 250 ms at most
  static int g_underruns, g_dropped;
@@ -613,7 +650,7 @@ index feded39..b58ef47 100644
  
  static void audio_silence(int frames) {
      std::vector<int16_t> z((size_t)frames * 2);
-@@ -174,23 +261,121 @@ bool host_audio_open() {
+@@ -174,23 +269,121 @@ bool host_audio_open() {
      SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, 44100};
      g_audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
      if (!g_audio) { sat_note("SDL audio: %s (no sound)", SDL_GetError()); return false; }
@@ -739,7 +776,7 @@ index feded39..b58ef47 100644
  }
  
  // ---- the pad ----------------------------------------------------------------------------------
-@@ -281,6 +466,9 @@ static void read_pads() {
+@@ -281,6 +474,9 @@ static void read_pads() {
          if (k[key] && !(alt && key == SDL_SCANCODE_RETURN)) b[0] |= bit;   // Alt+Enter is fullscreen
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -749,7 +786,7 @@ index feded39..b58ef47 100644
          if (s >= 0) b[s] |= gamepad_buttons(p.pad, p.map);
      }
      for (int s = 0; s < kHostSlots; ++s) {
-@@ -292,6 +480,7 @@ static void read_pads() {
+@@ -292,6 +488,7 @@ static void read_pads() {
  }
  
  static void pad_added(SDL_JoystickID id) {
@@ -757,7 +794,7 @@ index feded39..b58ef47 100644
      SDL_Gamepad* pad = SDL_OpenGamepad(id);
      if (!pad) return;
      char guid[33];
-@@ -303,7 +492,11 @@ static void pad_added(SDL_JoystickID id) {
+@@ -303,7 +500,11 @@ static void pad_added(SDL_JoystickID id) {
          return;
      }
      g_pads.push_back({pad, id, bind_gamepad(guid)});
@@ -770,7 +807,7 @@ index feded39..b58ef47 100644
  }
  
  static void pad_removed(SDL_JoystickID id) {
-@@ -329,6 +522,7 @@ void host_rebind() {
+@@ -329,6 +530,7 @@ void host_rebind() {
  void host_pad_event(const SDL_Event& e) {
      if (e.type == SDL_EVENT_GAMEPAD_ADDED) pad_added(e.gdevice.which);
      if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pad_removed(e.gdevice.which);
@@ -778,7 +815,7 @@ index feded39..b58ef47 100644
  }
  
  std::vector<HostController> host_controllers() {
-@@ -336,6 +530,9 @@ std::vector<HostController> host_controllers() {
+@@ -336,6 +538,9 @@ std::vector<HostController> host_controllers() {
      std::vector<HostController> out;
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -788,7 +825,117 @@ index feded39..b58ef47 100644
          if (s >= 0) out.push_back({SDL_GetGamepadName(p.pad), s, gamepad_buttons(p.pad, p.map) != 0});
      }
      std::sort(out.begin(), out.end(), [](const HostController& a, const HostController& b) { return a.slot < b.slot; });
-@@ -438,7 +635,7 @@ static uint16_t touch_read() {
+@@ -351,45 +556,83 @@ static void save_shot() {
+ }
+ 
+ // --virtual-input: SDL virtual gamepads, plugged in a player each in order, pressed by a script, so a
+-// test reaches the game through SDL and the slots as a player's controllers do
++// test reaches the game through SDL and the slots as a player's controllers do. Two test switches:
++//   SF3_VIRTUAL_STICK=PERCENT   the script's directions push the left stick that far instead of the d-pad
++//   SF3_VIRTUAL_UNPLUG=A-B      player 1's pad is unplugged at VBlank A and plugged in again at B
+ static std::vector<SDL_Joystick*> g_virtual;
+ static std::vector<PadStep> g_virtual_steps;
++static std::vector<uint16_t> g_virtual_held;
+ static size_t g_virtual_pos;
++static int g_virtual_stick = -1;
++static uint64_t g_virtual_unplug, g_virtual_replug;
++
++static void virtual_set(SDL_Joystick* j, uint16_t pressed) {
++    static const struct { uint16_t bit; SDL_GamepadButton btn; } kButtons[] = {
++        {B_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT}, {B_LEFT, SDL_GAMEPAD_BUTTON_DPAD_LEFT},
++        {B_DOWN, SDL_GAMEPAD_BUTTON_DPAD_DOWN}, {B_UP, SDL_GAMEPAD_BUTTON_DPAD_UP},
++        {B_START, SDL_GAMEPAD_BUTTON_START}, {B_A, SDL_GAMEPAD_BUTTON_WEST}, {B_B, SDL_GAMEPAD_BUTTON_SOUTH},
++        {B_C, SDL_GAMEPAD_BUTTON_EAST}, {B_X, SDL_GAMEPAD_BUTTON_NORTH},
++        {B_L, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER}, {B_R, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER}};
++    const uint16_t dirs = B_UP | B_DOWN | B_LEFT | B_RIGHT;
++    for (auto& m : kButtons)
++        SDL_SetJoystickVirtualButton(j, m.btn, (pressed & m.bit) && !(g_virtual_stick >= 0 && (m.bit & dirs)));
++    if (g_virtual_stick >= 0) {
++        int v = SDL_JOYSTICK_AXIS_MAX * g_virtual_stick / 100;
++        SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_LEFTX, (Sint16)(pressed & B_RIGHT ? v : pressed & B_LEFT ? -v : 0));
++        SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_LEFTY, (Sint16)(pressed & B_DOWN ? v : pressed & B_UP ? -v : 0));
++    }
++    // a trigger at rest is the axis's minimum: 0 is half pulled
++    SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, pressed & B_Y ? SDL_JOYSTICK_AXIS_MAX : SDL_JOYSTICK_AXIS_MIN);
++    SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, pressed & B_Z ? SDL_JOYSTICK_AXIS_MAX : SDL_JOYSTICK_AXIS_MIN);
++}
++
++static SDL_Joystick* virtual_attach() {
++    SDL_VirtualJoystickDesc d;
++    SDL_INIT_INTERFACE(&d);
++    d.type = SDL_JOYSTICK_TYPE_GAMEPAD;
++    d.naxes = SDL_GAMEPAD_AXIS_COUNT;
++    d.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
++    d.name = "saturn-recomp virtual pad";
++    SDL_JoystickID id = SDL_AttachVirtualJoystick(&d);
++    if (!id) sat_fatal("--virtual-input: %s", SDL_GetError());
++    SDL_Joystick* j = SDL_OpenJoystick(id);
++    virtual_set(j, 0);
++    return j;
++}
+ 
+ static void virtual_open() {
+     g_virtual_steps = smpc_parse_script(g_cfg.virtual_input);
++    if (const char* s = std::getenv("SF3_VIRTUAL_STICK")) g_virtual_stick = std::clamp(std::atoi(s), 0, 100);
++    if (const char* s = std::getenv("SF3_VIRTUAL_UNPLUG")) {
++        char* end = nullptr;
++        g_virtual_unplug = std::strtoull(s, &end, 10);
++        g_virtual_replug = end && *end == '-' ? std::strtoull(end + 1, nullptr, 10) : 0;
++    }
+     int n = 0;
+     for (auto& s : g_virtual_steps) n = std::max(n, s.pad + 1);
+-    for (int k = 0; k < n; ++k) {
+-        SDL_VirtualJoystickDesc d;
+-        SDL_INIT_INTERFACE(&d);
+-        d.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+-        d.naxes = SDL_GAMEPAD_AXIS_COUNT;
+-        d.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+-        d.name = "saturn-recomp virtual pad";
+-        SDL_JoystickID id = SDL_AttachVirtualJoystick(&d);
+-        if (!id) sat_fatal("--virtual-input: %s", SDL_GetError());
+-        SDL_Joystick* j = SDL_OpenJoystick(id);
+-        SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
+-        SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
+-        g_virtual.push_back(j);
+-    }
++    for (int k = 0; k < n; ++k) g_virtual.push_back(virtual_attach());
++    g_virtual_held.assign((size_t)n, 0);
+ }
+ 
+ static void virtual_press() {
+-    static const struct { uint16_t bit; SDL_GamepadButton btn; } kButtons[] = {
+-        {B_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT}, {B_LEFT, SDL_GAMEPAD_BUTTON_DPAD_LEFT},
+-        {B_DOWN, SDL_GAMEPAD_BUTTON_DPAD_DOWN}, {B_UP, SDL_GAMEPAD_BUTTON_DPAD_UP},
+-        {B_START, SDL_GAMEPAD_BUTTON_START}, {B_A, SDL_GAMEPAD_BUTTON_WEST}, {B_B, SDL_GAMEPAD_BUTTON_SOUTH},
+-        {B_C, SDL_GAMEPAD_BUTTON_EAST}, {B_X, SDL_GAMEPAD_BUTTON_NORTH},
+-        {B_L, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER}, {B_R, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER}};
++    if (g_virtual_unplug && sat_vblanks() >= g_virtual_unplug && g_virtual[0]) {
++        SDL_JoystickID id = SDL_GetJoystickID(g_virtual[0]);
++        SDL_CloseJoystick(g_virtual[0]);
++        SDL_DetachVirtualJoystick(id);
++        g_virtual[0] = nullptr;
++        g_virtual_unplug = 0;
++        sat_note("--virtual-input: player 1's pad unplugged at VBlank %llu", (unsigned long long)sat_vblanks());
++    }
++    if (!g_virtual_unplug && g_virtual_replug && sat_vblanks() >= g_virtual_replug && !g_virtual[0]) {
++        g_virtual[0] = virtual_attach();
++        virtual_set(g_virtual[0], g_virtual_held[0]);
++        g_virtual_replug = 0;
++        sat_note("--virtual-input: player 1's pad plugged in again at VBlank %llu", (unsigned long long)sat_vblanks());
++    }
+     for (; g_virtual_pos < g_virtual_steps.size() && g_virtual_steps[g_virtual_pos].vblank <= sat_vblanks(); ++g_virtual_pos) {
+         const PadStep& s = g_virtual_steps[g_virtual_pos];
+-        SDL_Joystick* j = g_virtual[s.pad];
+-        for (auto& m : kButtons) SDL_SetJoystickVirtualButton(j, m.btn, (s.pressed & m.bit) != 0);
+-        // a trigger at rest is the axis's minimum: 0 is half pulled
+-        SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, s.pressed & B_Y ? SDL_JOYSTICK_AXIS_MAX : SDL_JOYSTICK_AXIS_MIN);
+-        SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, s.pressed & B_Z ? SDL_JOYSTICK_AXIS_MAX : SDL_JOYSTICK_AXIS_MIN);
++        g_virtual_held[s.pad] = s.pressed;
++        if (g_virtual[s.pad]) virtual_set(g_virtual[s.pad], s.pressed);
+     }
+ }
+ 
+@@ -438,7 +681,7 @@ static uint16_t touch_read() {
  // by as long as it was, so the run is the same run with or without it. A panel of two columns where
  // the screen is wide enough, the game's choices in one and the touch pad's in the other, each a row:
  // an action, a choice of a few, a slider, or a switch.
@@ -797,7 +944,7 @@ index feded39..b58ef47 100644
  enum class Control { Action, Choice, Slider, Switch };
  struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
  struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
-@@ -456,10 +653,22 @@ static void setting_change(const char* key, const char* value) {
+@@ -456,10 +699,22 @@ static void setting_change(const char* key, const char* value) {
      host_settings_save();
  }
  
@@ -822,7 +969,7 @@ index feded39..b58ef47 100644
      std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
      for (int i = 0; i < choice_count(id); ++i)
          if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
-@@ -468,6 +677,10 @@ static int choice_at(MenuId id) {
+@@ -468,6 +723,10 @@ static int choice_at(MenuId id) {
  
  static void choose(MenuId id, int i) {
      i = (i + choice_count(id)) % choice_count(id);
@@ -833,7 +980,7 @@ index feded39..b58ef47 100644
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -482,6 +695,15 @@ static const char* menu_label(MenuId id) {
+@@ -482,6 +741,15 @@ static const char* menu_label(MenuId id) {
      case M_RESUME: return "Resume";
      case M_SAVES: return "Save files";
      case M_QUIT: return "Quit";
@@ -849,7 +996,7 @@ index feded39..b58ef47 100644
      case M_PAD: return "Show pad";
      case M_SIZE: return "Size";
      case M_STYLE: return "Style";
-@@ -492,6 +714,16 @@ static const char* menu_label(MenuId id) {
+@@ -492,6 +760,16 @@ static const char* menu_label(MenuId id) {
  static MenuLayout menu_layout() {
      const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 340, between = 24;
      std::vector<std::pair<MenuId, Control>> game = {{M_RESUME, Control::Action}};
@@ -866,7 +1013,7 @@ index feded39..b58ef47 100644
      if (!g_cfg.after.empty()) game.push_back({M_SAVES, Control::Action});
      game.push_back({M_QUIT, Control::Action});
      const std::vector<std::pair<MenuId, Control>> touch = {
-@@ -527,7 +759,7 @@ static MenuLayout menu_layout() {
+@@ -527,7 +805,7 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
@@ -875,7 +1022,7 @@ index feded39..b58ef47 100644
      return {r.r.x + r.r.w - w - 10 * l.u, r.r.y + 9 * l.u, w, r.r.h - 18 * l.u};
  }
  
-@@ -563,12 +795,186 @@ static void menu_quit(bool to_saves) {
+@@ -563,12 +841,186 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -1063,7 +1210,7 @@ index feded39..b58ef47 100644
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +986,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +1032,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
@@ -1072,7 +1219,7 @@ index feded39..b58ef47 100644
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -656,8 +1062,19 @@ static void on_event(const SDL_Event& e) {
+@@ -656,11 +1108,23 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -1091,8 +1238,13 @@ index feded39..b58ef47 100644
 +#endif
          if (k == SDL_SCANCODE_F12 && !e.key.repeat) save_shot();
          if ((k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.mod & SDL_KMOD_ALT))) && !e.key.repeat) {
-             SDL_SetWindowFullscreen(g_win, !(SDL_GetWindowFlags(g_win) & SDL_WINDOW_FULLSCREEN));
-@@ -686,10 +1103,21 @@ static void on_event(const SDL_Event& e) {
+-            SDL_SetWindowFullscreen(g_win, !(SDL_GetWindowFlags(g_win) & SDL_WINDOW_FULLSCREEN));
++            bool full=!(SDL_GetWindowFlags(g_win) & SDL_WINDOW_FULLSCREEN);
++            if(SDL_SetWindowFullscreen(g_win, full)) {g_settings.set("display","fullscreen",full?"true":"false");host_settings_save();}
+             break;
+         }
+         bool back = k == SDL_SCANCODE_AC_BACK || (k == SDL_SCANCODE_ESCAPE && !escape_is_a_button());
+@@ -686,10 +1150,21 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -1116,7 +1268,15 @@ index feded39..b58ef47 100644
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -894,12 +1322,40 @@ static void draw_catching_up() {
+@@ -876,6 +1351,7 @@ static void draw_menu() {
+ }
+ 
+ static SDL_FRect g_dst;                         // where the picture goes
++static bool g_integer=false;                    // [display] integer_scale, while it applies
+ 
+ // While --resume plays its presses: the game going by at speed, dimmed, under a card saying what the
+ // run is getting to and how far it has got.
+@@ -894,12 +1370,49 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -1134,15 +1294,25 @@ index feded39..b58ef47 100644
 +        if (sh>height) { sh=height; sw=sh*aw/ah; }
 +        int tv=bios_pal() ? std::max(256,g_last->h) : g_last->h;
 +        int ph=sh*g_last->h/tv;
-+        g_dst={(float)((g_out_w-sw)/2),(float)(bar+(height-ph)/2),(float)sw,(float)ph};
++        g_integer=!wide && g_settings.flag("display","integer_scale");
++        if(g_integer) {                         // whole multiples of the game's own pixels
++            int k=std::max(1,std::min(g_out_w/std::max(1,g_last->w),height/g_last->h));
++            sw=k*g_last->w; ph=k*g_last->h;
++        }
++        SDL_FRect dst={(float)((g_out_w-sw)/2),(float)(bar+(height-ph)/2),(float)sw,(float)ph};
++        if(dst.x!=g_dst.x || dst.y!=g_dst.y || dst.w!=g_dst.w || dst.h!=g_dst.h)
++            sat_note("display: %dx%d picture at %d,%d in %dx%d pixels (%dx%d game pixels%s)",sw,ph,(int)dst.x,(int)dst.y,g_out_w,g_out_h,
++                     g_last->w,g_last->h,g_integer?", whole multiples":"");
++        g_dst=dst;
 +    }
      SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 255);
      SDL_RenderClear(g_ren);
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND);
+-    if (g_tex) SDL_RenderTexture(g_ren, g_tex, nullptr, &g_dst);
 +    if(int result=state_write_result()) SDL_SetWindowTitle(g_win,result>0 ? "SFIII native - Native state saved (F9 to load)" : "SFIII native - Native state save failed; previous state retained");
-     if (g_tex) SDL_RenderTexture(g_ren, g_tex, nullptr, &g_dst);
++    if (g_tex) {SDL_SetTextureScaleMode(g_tex,g_integer?SDL_SCALEMODE_NEAREST:SDL_SCALEMODE_LINEAR);SDL_RenderTexture(g_ren, g_tex, nullptr, &g_dst);}
 +#ifdef SF3_CONTROLLER_SUPPORT
-+    if(vdp1_gpu_active() && g_gpu_tex) SDL_RenderTexture(g_ren,g_gpu_tex,nullptr,&g_dst);
++    if(vdp1_gpu_active() && g_gpu_tex) {SDL_SetTextureScaleMode(g_gpu_tex,g_integer?SDL_SCALEMODE_NEAREST:SDL_SCALEMODE_LINEAR);SDL_RenderTexture(g_ren,g_gpu_tex,nullptr,&g_dst);}
 +#endif
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    ui_fill_rounded({0, 0, (float)g_out_w, replay_bar_height()}, 0, rgba(0.07f, 0.08f, 0.11f, 1));
@@ -1158,7 +1328,7 @@ index feded39..b58ef47 100644
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,15 +1368,21 @@ static void draw() {
+@@ -912,15 +1425,21 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -1183,7 +1353,7 @@ index feded39..b58ef47 100644
      while (g_menu_open) {
          SDL_Event e;
          {
-@@ -931,38 +1393,86 @@ static void menu_loop() {
+@@ -931,38 +1450,86 @@ static void menu_loop() {
          HostCall in("SDL_Delay");
          SDL_Delay(16);
      }
@@ -1291,7 +1461,7 @@ index feded39..b58ef47 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,14 +1483,25 @@ void host_present(const Frame& f) {
+@@ -973,14 +1540,25 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {
@@ -1337,13 +1507,23 @@ index 80d7730..23f8231 100644
          base += t - due;
          return {};
 diff --git a/runtime/src/host/settings.cpp b/runtime/src/host/settings.cpp
-index 15eaa96..520c1ba 100644
+index 15eaa96..b4bce6b 100644
 --- a/runtime/src/host/settings.cpp
 +++ b/runtime/src/host/settings.cpp
-@@ -16,6 +16,12 @@ static const char kDefaults[] = R"(; saturn-recomp's settings, read when a game
+@@ -13,9 +13,21 @@ static const char kDefaults[] = R"(; saturn-recomp's settings, read when a game
+ ; win over this file.
+ 
+ [display]
++; F11 or Alt+Enter switches, and the choice is kept here
  fullscreen = false
- ; the window is 320x240 times this
+-; the window is 320x240 times this
++; the picture is 320x240 times this when the window opens (the button bar goes above it)
  scale = 3
++; true: whole multiples of the game's pixels, square and sharp, black borders round them (4:3 only)
++integer_scale = false
++; true: present in step with the display; false keeps pacing to the clock alone, which never
++; stalls when a compositor stops sending frames to a hidden window
++vsync = false
 +; VDP1 geometry: 1 (original), 2, 4 or 5. Separate from window size and HD artwork.
 +internal_scale = 1
 +; 16:9 expands supported world views; game culling at new edges is experimental.
@@ -1353,7 +1533,7 @@ index 15eaa96..520c1ba 100644
  
  [audio]
  ; percent
-@@ -80,8 +86,8 @@ multitap = 0
+@@ -80,8 +92,8 @@ multitap = 0
  )";
  
  // The values a word may take, by key.
@@ -1408,10 +1588,23 @@ index 8f7fc01..04f303d 100644
          else say("error no command " + cmd);
      }
 diff --git a/runtime/src/machine/bios.cpp b/runtime/src/machine/bios.cpp
-index 5b42ace..2c288f5 100644
+index 5b42ace..6c3c482 100644
 --- a/runtime/src/machine/bios.cpp
 +++ b/runtime/src/machine/bios.cpp
-@@ -272,15 +272,17 @@ bool bios_call(SH2Context& c, uint32_t addr) {
+@@ -28,6 +28,12 @@
+ #include <map>
+ #include <string>
+ #include <vector>
++#if defined(_WIN32)
++#include <io.h>
++#else
++#include <fcntl.h>
++#include <unistd.h>
++#endif
+ 
+ static const uint32_t kSlotBase = 0x00001000u;       // master table slots
+ static const uint32_t kSlaveSlotBase = 0x00001400u;  // slave table slots
+@@ -272,15 +278,17 @@ bool bios_call(SH2Context& c, uint32_t addr) {
  // ---- the backup memory -----------------------------------------------------------------
  // SBL's BUP interface: BUP_Init (0x06000358) sets 0x06000354 to a table of the
  // library's functions: +4 SelPart, +8 Format, +12 Stat, +16 Write, +20 Read,
@@ -1437,7 +1630,7 @@ index 5b42ace..2c288f5 100644
  
  // The user's data directory, by the platform's convention; empty if the environment names none.
  std::string sat_data_dir() {
-@@ -310,11 +312,12 @@ static std::string default_save(const uint8_t* ip) {
+@@ -310,11 +318,12 @@ static std::string default_save(const uint8_t* ip) {
  }
  
  void bios_select_save(const uint8_t* ip) {
@@ -1455,7 +1648,7 @@ index 5b42ace..2c288f5 100644
  }
  
  static std::string gstr(uint32_t a, int max) {
-@@ -327,7 +330,8 @@ static std::string gstr(uint32_t a, int max) {
+@@ -327,7 +336,8 @@ static std::string gstr(uint32_t a, int max) {
      return s;
  }
  
@@ -1465,7 +1658,7 @@ index 5b42ace..2c288f5 100644
      if (g_bup_loaded) return;
      g_bup_loaded = true;
      if (g_bup_path.empty()) return;
-@@ -338,8 +342,9 @@ static void bup_load() {
+@@ -338,8 +348,9 @@ static void bup_load() {
      uint32_t date, size;
      while (std::fread(name, 1, 12, f) == 12 && std::fread(comment, 1, 11, f) == 11 &&
             std::fread(&lang, 1, 1, f) == 1 && std::fread(&date, 4, 1, f) == 1 && std::fread(&size, 4, 1, f) == 1) {
@@ -1476,11 +1669,36 @@ index 5b42ace..2c288f5 100644
              sat_note("backup memory: %s is damaged after %zu saves; the rest are left out", g_bup_path.c_str(), g_bup.size());
              break;
          }
-@@ -349,9 +354,9 @@ static void bup_load() {
+@@ -348,10 +359,33 @@ static void bup_load() {
+     std::fclose(f);
  }
  
- // Written beside the file and renamed over it, so a run that ends partway through leaves the last whole one.
+-// Written beside the file and renamed over it, so a run that ends partway through leaves the last whole one.
 -void bios_save() {
++// The file's bytes on the disk itself, not only in the system's cache, so a save the game has made
++// survives the power going or the system failing as well as the app being killed.
++static bool bup_flush(FILE* f) {
++    if (std::fflush(f) != 0) return false;
++#if defined(_WIN32)
++    return _commit(_fileno(f)) == 0;
++#else
++    return fsync(fileno(f)) == 0;
++#endif
++}
++
++// The rename itself: the directory's entry, on the disk (POSIX; Windows' rename is on the disk once done).
++static void bup_flush_dir(const std::filesystem::path& file) {
++#if !defined(_WIN32)
++    std::filesystem::path dir = file.has_parent_path() ? file.parent_path() : std::filesystem::path(".");
++    int fd = ::open(dir.c_str(), O_RDONLY);
++    if (fd >= 0) { (void)fsync(fd); ::close(fd); }
++#else
++    (void)file;
++#endif
++}
++
++// Written beside the file, flushed to the disk and renamed over it, at the game's every BUP Write and
++// Delete, so a run that ends partway through, by a kill or a crash, leaves the last whole one.
 +static void bup_save_device(BupDevice& device, int id) {
 +    auto& g_bup = device.files; auto& g_bup_changed = device.changed; auto& g_bup_path = device.path;
      if (!g_bup_changed || g_bup_path.empty()) return;
@@ -1488,9 +1706,15 @@ index 5b42ace..2c288f5 100644
      namespace fs = std::filesystem;
      std::error_code ec;
      if (fs::path(g_bup_path).has_parent_path()) fs::create_directories(fs::path(g_bup_path).parent_path(), ec);
-@@ -371,49 +376,66 @@ void bios_save() {
+@@ -367,53 +401,71 @@ void bios_save() {
+         std::fwrite(&b.date, 4, 1, f); std::fwrite(&size, 4, 1, f);
+         std::fwrite(b.data.data(), 1, size, f);
+     }
+-    bool ok = !std::ferror(f);
++    bool ok = !std::ferror(f) && bup_flush(f);
      ok = std::fclose(f) == 0 && ok;
      if (ok) fs::rename(tmp, g_bup_path, ec);
++    if (ok && !ec) bup_flush_dir(g_bup_path);
      if (!ok || ec) sat_note("backup memory: cannot write %s", g_bup_path.c_str());
 +    else { device.changed = false; }
 +    if (ok && !ec && !sat_resuming() && g_cfg.out != "." && !g_cfg.out.empty()) {
@@ -1567,7 +1791,7 @@ index 5b42ace..2c288f5 100644
          c.r[0] = 0;
          return true;
      }
-@@ -422,10 +444,12 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+@@ -422,10 +474,12 @@ static bool bup_call(SH2Context& c, uint32_t k) {
          BupFile b{gstr(r5 + 12, 10), (uint8_t)ld8(r5 + 23), ld32(r5 + 24), {}};
          uint32_t size = ld32(r5 + 28);
          if (g_bup.count(name) && r7 != 0) { c.r[0] = 6; return true; }   // exists, and r7 asks to keep it
@@ -1581,7 +1805,7 @@ index 5b42ace..2c288f5 100644
          g_bup_changed = true;
          bios_save();
          c.r[0] = 0;
-@@ -433,7 +457,7 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+@@ -433,7 +487,7 @@ static bool bup_call(SH2Context& c, uint32_t k) {
      }
      case 5: {                                   // Read(device, name, data*)
          auto it = g_bup.find(gstr(r5, 11));
@@ -1590,7 +1814,7 @@ index 5b42ace..2c288f5 100644
          for (size_t i = 0; i < it->second.data.size(); ++i) st8(r6 + (uint32_t)i, it->second.data[i]);
          c.r[0] = 0;
          return true;
-@@ -449,10 +473,10 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+@@ -449,10 +503,10 @@ static bool bup_call(SH2Context& c, uint32_t k) {
          int n = 0;
          for (auto& [name, b] : g_bup)
              if (!name.compare(0, pre.size(), pre)) {
@@ -1603,7 +1827,7 @@ index 5b42ace..2c288f5 100644
          return true;
      }
      case 8: {                                   // Verify(device, name, data*)
-@@ -495,16 +519,23 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+@@ -495,16 +549,23 @@ static bool bup_call(SH2Context& c, uint32_t k) {
  // The saves as the game has them; the file is written as usual when they change.
  void bios_state(State& s) {
      s(g_first_read), s(g_pal), s(g_uint), s(g_uipr), s(g_sem);

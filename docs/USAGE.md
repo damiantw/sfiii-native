@@ -16,6 +16,35 @@ Keyboard defaults: arrows for movement, Enter for Start, Z/X/C for A/B/C, A/S/D 
 
 Host keys: Escape opens the menu, F11 or Alt+Enter toggles fullscreen, F6 cycles game speed, F5/F9 save/load the native state (or replay checkpoint on older builds), F8 captures an issue. Gamepads can be connected or removed while the game runs; a removed pad's buttons are released.
 
+### Gamepads and rebinding
+
+Gamepads go through SDL's gamepad layer: the bundled community `gamecontrollerdb.txt` maps Xbox, PlayStation, 8BitDo and most other pads to a positional Xbox-style layout, and **Controller Setup** writes `controller-mappings.txt` for a pad that is missing or wrong (it is loaded after the bundled database, so it wins). Without any settings, every gamepad plays as:
+
+| Saturn | Gamepad position (Xbox / PlayStation label) |
+|---|---|
+| D-pad | d-pad, or the left stick pushed past half way |
+| A / B / C | west / south / east (X / A / B; Square / Cross / Circle) |
+| X | north (Y; Triangle) |
+| Y / Z | left / right trigger |
+| L / R | left / right shoulder |
+| Start | Start (Menu; Options) |
+
+Each pad that connects becomes the next free player (the first one is player 1, beside the keyboard). Pads can be plugged in and pulled out while the game runs: a removed pad's buttons are released and its player is freed for the next pad, and a pad that comes back gets its player again.
+
+The keyboard and gamepad bindings live in `settings.ini` (written with its defaults and comments on first run; the desktop package keeps it in its `work` folder, `--settings FILE` names another), `[keyboard]` with SDL key names and `[gamepad]` with the positions above. `stick` and `trigger` in `[gamepad]` set how far (in percent) the left stick or a trigger must move to press. A `[gamepad GUID]` section holds one model's own bindings; the log gives the GUID when the pad connects. Edits are kept across runs. For example:
+
+```ini
+[keyboard]
+start = Return, Space
+
+[gamepad]
+stick = 35
+```
+
+A Saturn-style pad such as the 8BitDo M30 has two rows of three face buttons; the database lists it under positional names that do not match the Saturn's A B C / X Y Z rows, so run **Controller Setup** once and press the Saturn labels it asks for (not checked on a physical M30).
+
+For tests, `--virtual-input SCRIPT` (windowed runs) plays an input script on SDL virtual gamepads through the same path as a real pad. `SF3_VIRTUAL_STICK=PERCENT` presses directions with the left stick at that deflection instead of the d-pad, and `SF3_VIRTUAL_UNPLUG=A-B` pulls player 1's pad out at VBlank A and plugs it back in at VBlank B.
+
 ## Frame pacing
 
 The window waits for each field's real-time due point first and shows the picture afterwards, so pictures go out at an even ~59.83 Hz cadence even when the cost of running fields varies, and the pad is read as late as possible before the next field. This changes host timing only: the same fields, VBlanks and inputs run in machine time, and a fixed-input run produces bit-identical pictures, sound, machine state and backup memory.
@@ -41,6 +70,16 @@ At normal speed, gameplay and audio keep the original roughly 59.8 Hz NTSC clock
 
 **Menu > Aspect ratio (beta) > 16:9** adds horizontal scenery; choose **4:3** for original framing. HUD/dialogue remain centered. The rotation-floor viewport window expands horizontally, retaining its vertical limits. Game-side object culling still uses original assumptions, so missing objects or pop-in at new edges can remain. Higher resolution and widescreen are experimental presentation features, not a claim of exact hardware output.
 
+### Window, fullscreen and scaling
+
+The window opens with the picture at 320x240 times `[display] scale` (default 3) and the button bar above it, so `scale = 1` shows the game's 320-pixel lines one to one. It can be resized freely; the picture keeps 4:3 (or 16:9) and stays centred. **F11** or **Alt+Enter** switches fullscreen, and the choice is saved as `[display] fullscreen` for the next start (`--fullscreen` and `--scale` on the command line win over the file). On a HiDPI display (Retina Macs, scaled Windows/Linux desktops) the picture is drawn at the display's full pixel density, and the button bar scales with it.
+
+`[display] integer_scale = true` draws the picture at the largest whole multiple of the game's pixels that fits, with sharp (nearest) pixels and black borders, instead of filling the window smoothly; it applies to 4:3. `[display] vsync = true` presents in step with the display. It is off by default: the game paces itself to the clock, so a compositor that stops sending frames to a hidden window (KWin does) cannot stall it, and with vsync on, a hitch can only be made up at the display's rate, so the game can fall a little behind at 60 Hz. The log notes each picture size (`display: 960x720 picture at 0,36 ...`).
+
+### Quitting
+
+Close the window, choose **Quit** in the menu, or send the process SIGTERM: the run stops at the next field, also in the middle of a CD read or with audio playing, and exits cleanly. Progress saved in the game is already on disk (see Game saves).
+
 ## Game speed
 
 Choose **Menu > Game speed (F6) > 1× / 2× / 3×**, click the **Speed** toolbar button, or press **F6** to cycle speeds. Each new process starts at 1×. Game speed is separate from rendering resolution: 5× resolution can stay selected while playing at 2× speed.
@@ -59,7 +98,7 @@ The filter uses known geometry ownership to preserve ordinary sprite/text paths 
 
 ## Game saves
 
-Use the game's save command for ordinary persistent progress. The external files are `experimental-backup.bin` (32 KiB internal capacity) and `experimental-backup.bin.cartridge` (512 KiB cartridge capacity). They contain native backup records, **not raw emulator memory images**. Back them up before changing versions or importing saves. The full game's save behavior has not been validated.
+Use the game's save command for ordinary persistent progress. The external files are `experimental-backup.bin` (32 KiB internal capacity) and `experimental-backup.bin.cartridge` (512 KiB cartridge capacity). They contain native backup records, **not raw emulator memory images**. Each in-game save is written to disk the moment the game saves (written beside the file, flushed, then renamed over it, and the folder flushed), not when the app exits, so a crash, a killed process or a power cut after the game says it has saved keeps the save. Back them up before changing versions or importing saves. The full game's save behavior has not been validated.
 
 **Import Saturn Saves.cmd** accepts per-save raw `SFORCE31_XX.BIN` (12904 bytes), `SFORCE32_XX.BIN` (16248 bytes), and version-1 JSON `.ysbak` exports with matching filename, size and checksum. Development builds also accept `SFORCE33_XX.BIN` (24344 bytes) and matching YSBAK exports. Scenario 2 gameplay requires the experimental translated-v24 profile; Scenario 3 development uses the registered Translation Project v25.1 disc. Accepting a save format does not validate every scene it can load. The published Windows v0.3.0 and Linux/macOS v0.4.0-preview1 packages predate Scenario 3 support.
 
