@@ -176,7 +176,7 @@ def prepare_beetle(work, cue, rec, bios):
 
 
 def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, tick=None, tol=24, bios=None,
-        dump_wram=False):
+        dump_wram=False, accurate_drive=False):
     """`bios`: a directory of the user's own BIOS dumps (Mednafen names); given, the core is driven as
     Beetle Saturn booting that BIOS, otherwise as the patched HLE Yabause."""
     """Play one save on both and compare; writes work/diff.json and side-by-side pictures.
@@ -208,7 +208,8 @@ def run(saturn, cue, profile, core_so, record, work, vblanks, seed, every=250, t
         os.environ.setdefault('SF3_AGENT_LINE', '262')
     # ours: the boot ticks at our START presses, the load, then seeded inputs and sync points by tick
     with agent.start(str(saturn), ['--headless', '--cue', str(cue), '--save', str(work / 'backup.bin'),
-                                   '--settings', '-'], str(work / 'ours')) as r:
+                                   '--settings', '-'] + (['--accurate-drive'] if accurate_drive else []),
+                     str(work / 'ours')) as r:
         ours = OurSide(r)
         start_ticks = []
         our_load = drive_to_load(ours, tick, start_ticks, vblanks, start_frames=(1100, 1308))

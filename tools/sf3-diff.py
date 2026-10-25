@@ -33,13 +33,15 @@ def main():
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--bios', help='directory of your own BIOS dumps (Mednafen names): drive --core as Beetle Saturn')
     ap.add_argument('--tick', type=lambda s: int(s, 16), help='frame tick address (default: the profile\'s)')
+    ap.add_argument('--accurate-drive', action='store_true',
+                    help="run ours with the runtime's --accurate-drive (seek before each read, double-speed reads)")
     a = ap.parse_args()
     mm = memory_map.lookup(a.profile)
     recs = [t for t in sweep.targets_from_saves([a.save], mm['scenario']) if t['id'].endswith(':' + a.record)]
     if not recs:
         sys.exit(f'no SFORCE3{mm["scenario"]}_{a.record} record in {a.save}')
     out = diff.run(a.saturn, a.cue, a.profile, a.core, recs[0]['record'], a.out, a.vblanks, a.seed,
-                   a.every, a.tick, bios=a.bios)
+                   a.every, a.tick, bios=a.bios, accurate_drive=a.accurate_drive)
     print(json.dumps(dict(out['summary'], unreached=out['unreached'], our_load=out['our_load_vblank'],
                      core_load=out['core_load_frame'], core_frames=out['core_frames'])))
 

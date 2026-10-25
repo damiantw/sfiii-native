@@ -122,21 +122,28 @@ def keep(side, path, limit=4):
     point of the frame and the draw runs at another:
       same  VRAM and registers at the end of this frame, with this frame's draw framebuffer;
       next  VRAM and registers at the end of the last frame before the next frame change (a game
-            drawing at 30 Hz swaps every other frame), with the draw framebuffer after it."""
+            drawing at 30 Hz swaps every other frame), with the framebuffer drawn after it, taken
+            at the last frame before the change after that: the reference's draw can take more
+            than one frame, so the framebuffer right after the first change can be part-drawn."""
     def part(st, fb_of):
         fb = np.frombuffer(fb_of['&FB[0][0]'], '<u2').reshape(2, 256, 512)[fb_of['FBDrawWhich'][0] & 1]
         return (np.frombuffer(st['VRAM'], '<u2').astype('>u2'),
                 np.array([int.from_bytes(st[k], 'little') for k in REGS]), fb)
-    first = prev = vdp1_state(side.c)
-    for _ in range(limit):
-        side.step()
-        cur = vdp1_state(side.c)
-        if cur['FBDrawWhich'] != prev['FBDrawWhich']:
-            break
-        prev = cur
-    else:
+
+    def to_change(prev):
+        for _ in range(limit):
+            side.step()
+            cur = vdp1_state(side.c)
+            if cur['FBDrawWhich'] != prev['FBDrawWhich']:
+                return prev, cur
+            prev = cur
+        return prev, None
+    first = vdp1_state(side.c)
+    prev, cur = to_change(first)
+    if cur is None:
         raise SystemExit('no frame change')
-    pairs = [part(first, first), part(prev, cur)]
+    drawn, after = to_change(cur)
+    pairs = [part(first, first), part(prev, drawn if after is not None else cur)]
     np.savez_compressed(path, vram=np.stack([p[0] for p in pairs]), regs=np.stack([p[1] for p in pairs]),
                         ref=np.stack([p[2] for p in pairs]))
 

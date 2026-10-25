@@ -275,7 +275,7 @@ int main(int argc,char** argv){
         {"effects",{945,20,310,20}},
         {"clipping",{615,20,301,20}},
         {"priority",{297,20,91,20}},
-        {"replay-a",{2203,54,1118,23}},
+        {"replay-a",{2621,65,1486,34}},   // r5: CPU texel/Gouraud/side-walk rules (Lavapipe 2001/35, 1128/11)
         {"replay-b",{2788,279,1447,36}},
         {"replay-c",{1291,24,612,22}},
     };
