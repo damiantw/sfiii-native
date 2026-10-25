@@ -1863,10 +1863,18 @@ index 5b42ace..6c3c482 100644
      }
  }
 diff --git a/runtime/src/machine/cdblock.cpp b/runtime/src/machine/cdblock.cpp
-index cd80763..b0504cb 100644
+index cd80763..2685fc2 100644
 --- a/runtime/src/machine/cdblock.cpp
 +++ b/runtime/src/machine/cdblock.cpp
-@@ -58,6 +58,7 @@ static bool g_is_cdrom = true;                  // the report's CD-ROM bit
+@@ -19,6 +19,7 @@
+ // noted here.
+ #include "saturn.h"
+ #include "state.h"
++#include <cstdlib>
+ #include <cstring>
+ #include <deque>
+ #include <string>
+@@ -58,6 +59,7 @@ static bool g_is_cdrom = true;                  // the report's CD-ROM bit
  static uint64_t g_cdrom_clear_at, g_fs_data_at;
  static const uint64_t kCdromClearNs = 500ull * 1000000000ull / (44100 * 256);
  static uint64_t g_play_t0, g_play_done;         // time the play began, sectors read since
@@ -1874,7 +1882,7 @@ index cd80763..b0504cb 100644
  static uint64_t g_seek_from, g_seek_until;      // --accurate-drive: a play's seek, BUSY then SEEK, until PLAY
  static int g_getlen = 2048;
  static std::deque<int16_t> g_cdda;              // the audio played, not yet taken by the SCSP (L, R)
-@@ -207,6 +208,15 @@ static void play_ended() {
+@@ -207,6 +209,15 @@ static void play_ended() {
          g_play_done = 0;
          return;
      }
@@ -1890,7 +1898,7 @@ index cd80763..b0504cb 100644
      g_status = ST_PAUSE;
      g_hirq |= PEND;
      sat_trace("CD: play ended at FAD %u", g_fad);
-@@ -238,6 +248,7 @@ void cd_tick() {
+@@ -238,6 +249,7 @@ void cd_tick() {
      } else if (g_fs_done && now >= g_seek_from) {
          g_status = ST_SEEK;
      }
@@ -1898,7 +1906,7 @@ index cd80763..b0504cb 100644
      if (g_status == ST_BUSY && g_seek_until && now >= g_seek_from) g_status = ST_SEEK;
      if (g_status == ST_SEEK && g_seek_until && now >= g_seek_until) {
          g_status = ST_PLAY;
-@@ -261,7 +272,13 @@ void cd_tick() {
+@@ -261,7 +273,13 @@ void cd_tick() {
          }
      }
      if (now >= g_next_peri) {                   // the periodic report
@@ -1913,7 +1921,7 @@ index cd80763..b0504cb 100644
          g_hirq |= SCDQ;
          if (!g_cmd_busy) {
              report();
-@@ -329,7 +346,7 @@ static void fs_read(uint32_t fad, uint32_t size) {
+@@ -329,7 +347,7 @@ static void fs_read(uint32_t fad, uint32_t size) {
      g_seek_from = now + busy;
      g_seek_until = 0;
      g_fad = fad + n;
@@ -1922,7 +1930,7 @@ index cd80763..b0504cb 100644
      g_cdrom_clear_at = now + kCdromClearNs;
      g_fs_data_at = g_fs_done - n * (1000000000ull / cd_data_rate());
  }
-@@ -363,9 +380,14 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
+@@ -363,9 +381,18 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
      g_play_done = 0;
      g_seek_until = 0;
      g_fs_done = 0;
@@ -1930,14 +1938,18 @@ index cd80763..b0504cb 100644
      if (g_cfg.accurate_drive) {
          uint64_t busy;
          g_seek_until = g_play_t0 + cd_seek_ns(head, g_fad, g_audio_play ? 75 : 150, &busy);
-+        // A data read's first sector comes 3 ms later than the seek model says: fitted to
-+        // Mednafen (black box) on Sc1's first battle load (battle counter start 358 vs 357)
-+        // and the church load's fade-in (within a VBlank); 2 ms and 4 ms each miss one of them.
-+        if (!g_audio_play) g_seek_until += 3000000;
++        // A data read's first sector comes 1.5 ms later than the seek model says: fitted to
++        // Mednafen (black box) on 7 battle loads' counter starts (sum of misses 14 frames, against
++        // 18 at 0 ms and 31 at 3 ms) with the CPU at φ's rate and slices ending at VBlank edges.
++        // SF3_CD_FIRST_US=N: N us instead.
++        static const int64_t first_ns = [] {
++            const char* v = std::getenv("SF3_CD_FIRST_US"); return (v ? std::atoll(v) : 1500) * 1000;
++        }();
++        if (!g_audio_play) g_seek_until += first_ns;
          g_seek_from = g_play_t0 + busy;
          g_status = ST_BUSY;
      }
-@@ -410,7 +432,7 @@ static void command() {
+@@ -410,7 +437,7 @@ static void command() {
          g_hirq |= CMOK;
          break;
      case 0x04:                                  // Initialize CD System
@@ -1946,7 +1958,7 @@ index cd80763..b0504cb 100644
          if (cr1 & 0x10) sat_trace("CD: 1x speed asked for (kept at 2x)");
          report();
          g_hirq |= CMOK | ESEL;
-@@ -431,12 +453,12 @@ static void command() {
+@@ -431,12 +458,12 @@ static void command() {
          break;
      case 0x11: {                                // Seek Disc
          uint32_t pos = (uint32_t)(cr1 & 0xFF) << 16 | cr2;
@@ -1961,7 +1973,7 @@ index cd80763..b0504cb 100644
          }
          report();
          g_hirq |= CMOK;
-@@ -587,7 +609,7 @@ static void command() {
+@@ -587,7 +614,7 @@ static void command() {
          report(); g_hirq |= CMOK;
          break;
      }
@@ -1970,7 +1982,7 @@ index cd80763..b0504cb 100644
      case 0xE0: report(); g_hirq |= CMOK | EFLS | CSCT; break;                 // Authenticate Device
      case 0xE1: answer(status_hi(), 4, 0, 0); g_hirq |= CMOK; break;                 // a Saturn disc
      default:
-@@ -615,7 +637,7 @@ static uint16_t next_word() {
+@@ -615,7 +642,7 @@ static uint16_t next_word() {
  void cd_init() {
      reset_all();
      g_cddev = 0;                                // as the BIOS leaves it after reading the boot files
@@ -1979,7 +1991,7 @@ index cd80763..b0504cb 100644
      g_fad = 150;
      g_seek_until = 0;
      g_fs_done = 0;
-@@ -680,5 +702,6 @@ void cdblock_state(State& s) {
+@@ -680,5 +707,6 @@ void cdblock_state(State& s) {
  }
  
  void cddrive_state(State& s) { s(g_seek_from), s(g_seek_until); }
@@ -2016,7 +2028,7 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..e173de7 100644
+index a17d926..cf44701 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
 @@ -1,11 +1,11 @@
@@ -2044,7 +2056,7 @@ index a17d926..e173de7 100644
  #include <atomic>
  #include <chrono>
  #include <condition_variable>
-@@ -46,13 +47,26 @@
+@@ -46,13 +47,29 @@
  #include <mutex>
  #include <thread>
  #include <vector>
@@ -2061,19 +2073,42 @@ index a17d926..e173de7 100644
 +// memory accesses (g_sh2_mem_q each); a device register access adds its bus's
 +// wait (mmio.cpp). A poll turns what was spent into virtual time.
 +static const int32_t kBudget = 4 * 2932;        // between polls: ~102 us, as 256 safe points of 400 ns were
-+// SF3_PS_PER_CYCLE=N: the clock (default 34921 ps, 28.6364 MHz); the
-+// quarter cycles per memory access are g_sh2_mem_q (SF3_MEM_Q, sh2.h).
-+static const uint64_t kPsPerCycle = [] {
++// The SH-2s run at φ: 26.87 MHz after a reset and SMPC's CKCHG320, 28.64 MHz after CKCHG352
++// (onchip_set_clock). SF3_PS_PER_CYCLE=N fixes the cycle at N ps instead (the old model ran at
++// 28.6364 MHz, 34921 ps, in both modes); SF3_CPU_CLOCK=352 keeps 352's rate at every width.
++// The quarter cycles per memory access are g_sh2_mem_q (SF3_MEM_Q, sh2.h).
++static const uint64_t kPsFixed = [] {
++    if (const char* c = std::getenv("SF3_CPU_CLOCK")) if (std::atol(c) == 352) return 34921ull;
 +    const char* v = std::getenv("SF3_PS_PER_CYCLE");
 +    const long n = v ? std::atol(v) : 0;
-+    return n > 0 ? (uint64_t)n : 34921ull;
++    return n > 0 ? (uint64_t)n : 0ull;
 +}();
-+// Virtual ns for q quarter cycles (the sub-ns rest is dropped: no state to keep).
-+static uint64_t quarters_ns(int64_t q) { return q > 0 ? (uint64_t)q * kPsPerCycle / 4000 : 0; }
++static inline uint64_t ps_per_cycle() { return kPsFixed ? kPsFixed : onchip_ps_per_cycle(); }
++static uint64_t quarters_ns(int64_t q) { return q > 0 ? (uint64_t)q * ps_per_cycle() / 4000 : 0; }
  static const uint32_t kIntPC = 0xFFFFFFE4u;     // the PC an interrupt pushes: where rte must go
  static const int kSlaveSlice = 64;              // polls the slave runs before it gives the CPU back
  
-@@ -72,9 +86,26 @@ uint64_t sat_now() {
+@@ -61,6 +78,19 @@ struct RunStop {};
+ struct SlaveReset {};
+ 
+ static uint64_t g_vtime;                        // virtual ns
++// The master's slice: kBudget quarter cycles from g_vtime, or less so that it ends at the next
++// VBlank edge (video_next_vblank_edge_ns), where its poll raises the interrupt and takes it, as the
++// hardware does, not up to a slice (~100 us) later. A function of g_vtime alone, so a state's slice
++// is worked out again on load. SF3_POLL_EDGE=0: always kBudget.
++static int32_t g_slice;
++static int32_t slice_at(uint64_t t) {
++    static const bool on = [] { const char* v = std::getenv("SF3_POLL_EDGE"); return !v || *v != '0'; }();
++    if (!on || g_cfg.realtime) return kBudget;
++    const uint64_t q = (video_next_vblank_edge_ns(t) - t) * 4000 / ps_per_cycle() + 1;
++    return q < (uint64_t)kBudget ? (int32_t)q : kBudget;
++}
++static int32_t master_slice() { if (!g_slice) g_slice = slice_at(g_vtime); return g_slice; }
++static int32_t new_slice() { return g_slice = slice_at(g_vtime); }
+ static std::chrono::steady_clock::time_point g_t0;
+ static int g_starts;
+ 
+@@ -72,9 +102,26 @@ uint64_t sat_now() {
  }
  
  static void vprint(const char* tag, const char* fmt, va_list ap) {
@@ -2103,7 +2138,7 @@ index a17d926..e173de7 100644
  }
  
  void sat_trace(const char* fmt, ...) {
-@@ -302,6 +333,36 @@ void sat_fatal(const char* fmt, ...) {
+@@ -302,6 +349,36 @@ void sat_fatal(const char* fmt, ...) {
      va_start(ap, fmt);
      vprint("FATAL", fmt, ap);
      va_end(ap);
@@ -2140,7 +2175,7 @@ index a17d926..e173de7 100644
      SH2Context& c = *g_cpu;
      std::fprintf(stderr, "  cpu %d  pr %08X  pc %08X  sr %03X\n", c.cpu, c.pr, c.pc, sh2_get_sr(c));
      for (int i = 0; i < 16; ++i) std::fprintf(stderr, "  r%-2d %08X%s", i, c.r[i], i % 4 == 3 ? "\n" : "");
-@@ -316,6 +377,7 @@ void sat_fatal(const char* fmt, ...) {
+@@ -316,6 +393,7 @@ void sat_fatal(const char* fmt, ...) {
          sound_close();                          // a run that ends in an error is the one most worth watching
          movie_finish();
      }
@@ -2148,7 +2183,7 @@ index a17d926..e173de7 100644
      std::fflush(stderr);
      std::_Exit(1);
  }
-@@ -333,6 +395,8 @@ static std::condition_variable g_cv;
+@@ -333,6 +411,8 @@ static std::condition_variable g_cv;
  static int g_turn;                  // 0 the master runs, 1 the slave
  static bool g_slave_on, g_slave_idle = true, g_slave_reset, g_slave_thread;
  static int g_slave_polls;
@@ -2157,7 +2192,7 @@ index a17d926..e173de7 100644
  
  static void give(int to) {          // hand the CPU over and wait until it comes back
      std::unique_lock<std::mutex> lk(g_mu);
-@@ -366,6 +430,14 @@ static void slave_main() {
+@@ -366,6 +446,14 @@ static void slave_main() {
              // the BIOS's slave boot: its own vector table, interrupts masked,
              // its stack, then the entry the program set as vector 0x94
              SH2Context& s = g_slave;
@@ -2172,7 +2207,7 @@ index a17d926..e173de7 100644
              s = SH2Context{};
              s.cpu = 1;
              s.vbr = 0x06000400u;
-@@ -421,7 +493,29 @@ static void watch_for_stalls() {
+@@ -421,7 +509,29 @@ static void watch_for_stalls() {
      }
  }
  
@@ -2203,7 +2238,7 @@ index a17d926..e173de7 100644
  
  void slave_on() {
      if (!g_slave_thread) {
-@@ -446,7 +540,7 @@ void slave_off() {
+@@ -446,7 +556,7 @@ void slave_off() {
  void slave_idle_check(uint32_t ftcsr) {
      if (g_cpu->cpu != 1 || (ftcsr & 0x80)) return;
      g_slave_idle = true;
@@ -2212,7 +2247,7 @@ index a17d926..e173de7 100644
  }
  
  // SINIT: the master pulses the slave's FRT input capture
-@@ -460,16 +554,26 @@ void slave_kick() {
+@@ -460,16 +570,27 @@ void slave_kick() {
  // The clock and the multitap are the run's own settings, but a dump goes on with the ones it was made with.
  void machine_state(State& s) {
      uint8_t ip[16];
@@ -2232,6 +2267,7 @@ index a17d926..e173de7 100644
      s(g_cfg.clock);
      s(g_cfg.multitap);
      s(g_master);
++    if (s.loading) g_slice = 0;                 // worked out again from g_vtime on its first use
 +    s(g_slave), s(g_slave_on), s(g_slave_idle), s(g_slave_polls);
 +    if (s.loading && g_slave_on) {
 +        if (g_slave_thread) state_fail("load requires a fresh process");
@@ -2242,7 +2278,7 @@ index a17d926..e173de7 100644
  }
  
  // --coverage FILE: "MODULE ADDRESS INSTRUCTIONS RAN" for every recompiled function, RAN 1 or 0.
-@@ -490,6 +594,30 @@ static void write_coverage(const std::string& path) {
+@@ -490,6 +611,30 @@ static void write_coverage(const std::string& path) {
      if (e) sat_note("coverage: cannot replace %s: %s", path.c_str(), e.message().c_str());
  }
  
@@ -2273,7 +2309,7 @@ index a17d926..e173de7 100644
  // --checkpoint SECONDS: coverage written again every SECONDS of the host's time, so a run that is
  // killed rather than stopped still leaves what it ran.
  static void checkpoint_due() {
-@@ -512,6 +640,7 @@ static void checkpoint_due() {
+@@ -512,6 +657,7 @@ static void checkpoint_due() {
  static const int kModemLine = 12;
  
  void master_poll_devices() {
@@ -2281,7 +2317,7 @@ index a17d926..e173de7 100644
      uint64_t now = sat_now();
      video_tick(now);
      writes_due();
-@@ -529,13 +658,16 @@ void master_poll_devices() {
+@@ -529,16 +675,20 @@ void master_poll_devices() {
  }
  
  void sh2_poll(SH2Context& c) {
@@ -2296,11 +2332,15 @@ index a17d926..e173de7 100644
      }
      g_poll_ring[g_poll_pos++ % 4096] = __builtin_return_address(0);
 -    g_vtime += kBudget * kNsPerSafePoint;
-+    g_vtime += quarters_ns((int64_t)kBudget - used);
++    g_vtime += quarters_ns((int64_t)master_slice() - used);
      master_poll_devices();
      scu_deliver(c);
      onchip_deliver(c);
-@@ -555,6 +687,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
++    c.budget = new_slice();
+ }
+ 
+ static int g_int_depth;
+@@ -555,6 +705,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
      c.r[15] -= 4; st32(c.r[15], sh2_get_sr(c));
      c.r[15] -= 4; st32(c.r[15], kIntPC);
      c.imask = level;
@@ -2308,7 +2348,7 @@ index a17d926..e173de7 100644
      if (bios_is_dispatcher(vec, target)) {
          bios_dispatch(c, vec);
      } else {
-@@ -568,9 +701,12 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -568,10 +719,14 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
  }
  
  void sh2_sleep(SH2Context& c, uint32_t pc) {
@@ -2316,14 +2356,16 @@ index a17d926..e173de7 100644
 +    // wait for an interrupt: time passes until one is taken. What the master had spent of its
 +    // slice is time already passed, so it goes in first (the sleep starts at the SLEEP's cycle,
 +    // and sat_now_cpu() reads sat_now() while it sleeps).
-+    if (&c == &g_master) { g_vtime += quarters_ns((int64_t)kBudget - c.budget); c.budget = kBudget; }
++    if (&c == &g_master) { g_vtime += quarters_ns((int64_t)master_slice() - c.budget); c.budget = new_slice(); }
      for (int i = 0; i < 100000; ++i) {
 -        g_vtime += kBudget * kNsPerSafePoint;
-+        g_vtime += quarters_ns(kBudget);
++        g_vtime += quarters_ns(&c == &g_master ? master_slice() : kBudget);
          master_poll_devices();
++        if (&c == &g_master) c.budget = new_slice();
          if (scu_deliver(c) | onchip_deliver(c)) return;
      }
-@@ -584,6 +720,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
+     sat_fatal("sleep at %08X: nothing woke it", pc);
+@@ -584,6 +739,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
  
  void sh2_bad_return(SH2Context& c, uint32_t expected) {
      if (tasks_pending()) { tasks_route(c, expected); return; }
@@ -2335,7 +2377,15 @@ index a17d926..e173de7 100644
      sat_fatal("returned to %08X, expected %08X", c.pc, expected);
  }
  
-@@ -658,7 +799,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -644,6 +804,7 @@ int saturn_main(const SaturnConfig& cfg) {
+     }
+     g_master = SH2Context{};
+     g_master.budget = kBudget;
++    g_slice = kBudget;
+     video_init();
+     sound_init();
+     cd_init();
+@@ -658,7 +819,7 @@ int saturn_main(const SaturnConfig& cfg) {
      else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
      for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
      bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
@@ -2344,7 +2394,7 @@ index a17d926..e173de7 100644
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
-@@ -704,3 +845,11 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -704,3 +865,11 @@ int saturn_main(const SaturnConfig& cfg) {
      std::fflush(stdout);
      std::_Exit(0);                  // the slave's thread is parked: do not wait for it
  }
@@ -2354,7 +2404,7 @@ index a17d926..e173de7 100644
 +// (an overspent budget too), so this never runs ahead of the next poll's time.
 +uint64_t sat_now_cpu() {
 +    if (g_cfg.realtime || g_cpu != &g_master) return sat_now();
-+    return g_vtime + quarters_ns((int64_t)kBudget - g_master.budget);
++    return g_vtime + quarters_ns((int64_t)master_slice() - g_master.budget);
 +}
 diff --git a/runtime/src/machine/mmio.cpp b/runtime/src/machine/mmio.cpp
 index b9dd332..22fd0fd 100644
@@ -2499,10 +2549,24 @@ index b9dd332..22fd0fd 100644
          return;                                 // ROM, no cartridge
      }
 diff --git a/runtime/src/machine/onchip.cpp b/runtime/src/machine/onchip.cpp
-index 33a2cdd..590690a 100644
+index 33a2cdd..cb37688 100644
 --- a/runtime/src/machine/onchip.cpp
 +++ b/runtime/src/machine/onchip.cpp
-@@ -151,7 +151,9 @@ static void divide(OnChip& o, bool wide) {
+@@ -32,6 +32,13 @@ struct OnChip {
+ static OnChip g_oc[2];
+ static uint32_t g_phi_div = 65;             // the master clock's divisor for φ: 65 or 61
+ 
++// The CPUs run at φ too: picoseconds per SH-2 cycle at the current divisor (37 211 at 320 dots,
++// 34 921 at 352, NTSC)
++uint64_t onchip_ps_per_cycle() {
++    const uint64_t master = bios_pal() ? 1734687500ull : 1746818182ull;
++    return (g_phi_div * 1000000000000ull + master / 2) / master;
++}
++
+ uint64_t onchip_phi_clocks(uint64_t ns) {
+     const uint64_t master = bios_pal() ? 1734687500ull : 1746818182ull;
+     return (uint64_t)((unsigned __int128)ns * master / ((uint64_t)g_phi_div * 1000000000ull));
+@@ -151,7 +158,9 @@ static void divide(OnChip& o, bool wide) {
      int32_t dvsr = (int32_t)rd(o, 0x100, 4);
      int64_t n = wide ? (int64_t)((uint64_t)rd(o, 0x110, 4) << 32 | rd(o, 0x114, 4)) : (int32_t)rd(o, 0x104, 4);
      int64_t q, r;
@@ -2513,7 +2577,7 @@ index 33a2cdd..590690a 100644
      if (!ovf) {
          q = n / dvsr; r = n % dvsr;
          ovf = q > INT32_MAX || q < INT32_MIN;
-@@ -163,11 +165,15 @@ static void divide(OnChip& o, bool wide) {
+@@ -163,11 +172,15 @@ static void divide(OnChip& o, bool wide) {
      }
      wr(o, 0x104, (uint32_t)q, 4); wr(o, 0x114, (uint32_t)q, 4);
      wr(o, 0x110, (uint32_t)r, 4);
@@ -2529,7 +2593,7 @@ index 33a2cdd..590690a 100644
      uint32_t base = 0x180 + ch * 0x10;
      uint32_t chcr = rd(o, base + 0xC, 4), dmaor = rd(o, 0x1B0, 4);
      if (!(chcr & 1) || (chcr & 2) || !(dmaor & 1)) return;
-@@ -183,7 +189,8 @@ static void dma(OnChip& o, int ch) {
+@@ -183,7 +196,8 @@ static void dma(OnChip& o, int ch) {
          if (ts == 3) {
              for (int k = 0; k < 16; k += 4) st32(dar + (dm ? k : 0), ld32(sar + (sm ? k : 0)));
              sar += step(sm); dar += step(dm);
@@ -2540,7 +2604,7 @@ index 33a2cdd..590690a 100644
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..e5c4290 100644
+index 6cbd98f..e107e2c 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -2593,7 +2657,15 @@ index 6cbd98f..e5c4290 100644
  
  // ---- the BIOS (bios.cpp) -----------------------------------------------------------
  void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
-@@ -213,11 +230,16 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
+@@ -206,6 +223,7 @@ void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size);
+ void onchip_input_capture(int cpu);   // SINIT/MINIT: the FRT's input-capture flag
+ void onchip_reset(int cpu);
+ void onchip_set_clock(bool dots352);   // SMPC's CKCHG: φ at 352 dots' rate or 320's
++uint64_t onchip_ps_per_cycle();          // the SH-2s' cycle at φ's current rate
+ uint64_t onchip_phi_clocks(uint64_t ns);   // φ's clocks in `ns`: the FRT's and the watchdog's time base
+ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if due and above c's mask; taken?
+ 
+@@ -213,11 +231,17 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
  void video_init();
  void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
  void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
@@ -2607,6 +2679,7 @@ index 6cbd98f..e5c4290 100644
 +uint64_t video_line_ns();                       // one raster line
 +uint64_t video_tick_ns();                       // the machine time video was last brought up to
 +uint64_t video_vbout_raised_ns();               // when the last VBlank-OUT was raised (its poll's time)
++uint64_t video_next_vblank_edge_ns(uint64_t now);  // the next line VBlank-IN or -OUT can start at
  uint64_t video_draws();
  
  // ---- sound (sound.cpp, scsp.cpp through sound.h) ----------------------------------------------
@@ -5866,7 +5939,7 @@ index 4c8bcb1..246c28b 100644
 -void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
-index 88d1642..48116e3 100644
+index 88d1642..c0efeab 100644
 --- a/runtime/src/video/video.cpp
 +++ b/runtime/src/video/video.cpp
 @@ -21,6 +21,7 @@
@@ -5945,7 +6018,7 @@ index 88d1642..48116e3 100644
      if (vdp1_interp_field(compose) && compose) {
          uint8_t saved[0x30];
          std::copy(g_vdp2_regs + 0x70, g_vdp2_regs + 0xA0, saved);
-@@ -84,24 +110,29 @@ static void vblank_in(uint64_t now) {
+@@ -84,24 +110,38 @@ static void vblank_in(uint64_t now) {
          std::copy(saved, saved + 0x30, g_vdp2_regs + 0x70);
          if (shot) write_png(g_cfg.out + "/shot-" + n + ".png", g_frame);
          movie_frame(g_frame);
@@ -5966,6 +6039,15 @@ index 88d1642..48116e3 100644
      scu_raise(IRQ_VBLANK_IN);
      scu_frame_event(0);
 -    host_pace(now);
++}
++
++// When the next VBlank edge can come: line 0 (VBlank-OUT) or a line VBlank-IN starts at in any
++// mode (224, 240, 256). The master's slices end there, so the interrupt is taken when it is raised,
++// not up to a slice later. Only the time matters, not the mode, so that a state's slice comes back.
++uint64_t video_next_vblank_edge_ns(uint64_t now) {
++    const uint64_t la = now / kLineNs, base = la - la % kLines, line = la % kLines;
++    const uint64_t next = line < 224 ? 224 : line < 240 ? 240 : line < 256 ? 256 : kLines;
++    return (base + next) * kLineNs;
  }
  
  void video_tick(uint64_t now) {
@@ -5979,7 +6061,7 @@ index 88d1642..48116e3 100644
          if (line == display_lines()) vblank_in(g_line_abs * kLineNs);
          scu_raise(IRQ_HBLANK_IN);
          scu_line(line);
-@@ -143,7 +174,20 @@ uint32_t video_read(uint32_t a, int size) {
+@@ -143,7 +183,20 @@ uint32_t video_read(uint32_t a, int size) {
  }
  
  void video_write(uint32_t a, uint32_t v, int size) {
@@ -6001,7 +6083,7 @@ index 88d1642..48116e3 100644
      uint32_t off;
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
-@@ -151,4 +195,10 @@ void video_write(uint32_t a, uint32_t v, int size) {
+@@ -151,4 +204,10 @@ void video_write(uint32_t a, uint32_t v, int size) {
      mem_wr(g_vdp2_regs, a & 0x1FF, v, size);
  }
  
@@ -6730,10 +6812,10 @@ index 0000000..64371d5
 +}
 diff --git a/runtime/tests/scsp_test.cpp b/runtime/tests/scsp_test.cpp
 new file mode 100644
-index 0000000..e6d1210
+index 0000000..4da6913
 --- /dev/null
 +++ b/runtime/tests/scsp_test.cpp
-@@ -0,0 +1,232 @@
+@@ -0,0 +1,233 @@
 +// The SCSP and the sound 68000 against numbers measured on Beetle Saturn as a black box (its output
 +// and save states only).
 +#include <cstring>
@@ -6879,8 +6961,9 @@ index 0000000..e6d1210
 +    sound_read(0x05A00000u, 2);
 +    const uint64_t t0 = sat_now_cpu();
 +    const uint32_t d0 = m68k_get_reg(nullptr, M68K_REG_D7);
-+    g_master.budget -= 4 * 28636;                 // 28 636 cycles more (overspent): 1 ms at 28.6364 MHz
-+    CHECK_EQ(sat_now_cpu() - t0 + 1 >= 999990 && sat_now_cpu() - t0 <= 1000010, true);
++    // 1 ms more of cycles (overspent) at the SH-2's clock (φ: 26.87 MHz after a reset)
++    g_master.budget -= 4 * (int32_t)(1000000000ull / onchip_ps_per_cycle());
++    CHECK_EQ(sat_now_cpu() - t0 >= 999950 && sat_now_cpu() - t0 <= 1000010, true);
 +    sound_read(0x05A00000u, 2);
 +    const uint32_t d1 = m68k_get_reg(nullptr, M68K_REG_D7);
 +    // 1 ms of the 68000 (11 289.6 cycles) is 470 loops of 24 cycles
