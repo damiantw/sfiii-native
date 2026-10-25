@@ -1737,7 +1737,7 @@ index a17d926..525dd36 100644
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
 diff --git a/runtime/src/machine/mmio.cpp b/runtime/src/machine/mmio.cpp
-index b9dd332..76b4a84 100644
+index b9dd332..a73895f 100644
 --- a/runtime/src/machine/mmio.cpp
 +++ b/runtime/src/machine/mmio.cpp
 @@ -102,12 +102,13 @@ void mmio_log_write(const std::string& path) {
@@ -1765,7 +1765,18 @@ index b9dd332..76b4a84 100644
          if (video_owns(a)) return video_read(a, size);
          if (a >= 0x02000000u && a < 0x05000000u) return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFFu;
          return bios_rom_read(a, size);          // the BIOS ROM is not here
-@@ -164,7 +165,7 @@ void sh2_mmio_write(uint32_t a, uint32_t v, int size) {
+@@ -154,6 +155,10 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
+     if (a >= 0x05800000u && a < 0x05900000u) return cd_read(a & 0xFFFFF, size);
+     if (a >= 0x05FE0000u && a < 0x05FE0100u) return scu_read(a & 0xFF, size);
+     if (video_owns(a)) return video_read(a, size);
++    if (a >= 0x01000000u && a < 0x02000000u) {  // SINIT/MINIT take writes only; a read finds the bus floating high
++        log_area("SINIT/MINIT read", a, 'R');
++        return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFFu;
++    }
+     sat_fatal("%d-byte read of %08X: nothing there", size, a);
+ }
+ 
+@@ -164,7 +169,7 @@ void sh2_mmio_write(uint32_t a, uint32_t v, int size) {
      if (area != 0) { log_area(area == 2 ? "cache purge" : "cache address array", a, 'W'); return; }
      if (const char* n = area_of(a)) {
          log_area(n, a, 'W');
@@ -3834,10 +3845,10 @@ index 0000000..1efd736
 +}
 diff --git a/runtime/tests/memmap_test.cpp b/runtime/tests/memmap_test.cpp
 new file mode 100644
-index 0000000..b1fe807
+index 0000000..6b71f96
 --- /dev/null
 +++ b/runtime/tests/memmap_test.cpp
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,25 @@
 +// The address map outside the work RAMs.
 +#include "saturn.h"
 +#include "test.h"
@@ -3853,6 +3864,15 @@ index 0000000..b1fe807
 +    sh2_io_write(0x001FFEAB, 0xA5, 1);
 +    CHECK_EQ(sh2_mmio_read(0x0018FEAB, 1), 0xA5u);
 +    sh2_mmio_write(0x0018FEAB, keep, 1);
++}
++
++// SINIT/MINIT (0x01000000-0x01FFFFFF) take writes only. Shining Force III Scenario 2 V2.000 reads a
++// battle table at index -1 and follows the word before it, 0x012C0002, as a pointer: a read there
++// must not stop the machine.
++TEST(sinit_minit_reads_float_high) {
++    CHECK_EQ(sh2_mmio_read(0x012C0002, 1), 0xFFu);
++    CHECK_EQ(sh2_mmio_read(0x012C0002, 2), 0xFFFFu);
++    CHECK_EQ(sh2_mmio_read(0x01800000, 4), 0xFFFFFFFFu);
 +}
 diff --git a/runtime/tests/vdp1_steps_test.cpp b/runtime/tests/vdp1_steps_test.cpp
 new file mode 100644
