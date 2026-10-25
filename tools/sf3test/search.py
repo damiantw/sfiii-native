@@ -79,7 +79,7 @@ def left_battle(read, job, reached):
 
     A won battle can keep its id set through the after-battle scenes (Sc3 Flagship: map 9 battle 1),
     and the unit tables keep their last values, so a win is not seen here; --stall catches it."""
-    if not job.get('root_battle') or reached:
+    if not job.get('root_battle') or job.get('no_left') or reached:
         return False
     return read(memory_map.lookup(job['profile'])['battle_id'], 1)[0] == 0
 
@@ -203,7 +203,7 @@ def search(a):
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
-                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, leader=leader, state_id=state_id, W=a.window, L=a.look)
+                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, state_id=state_id, W=a.window, L=a.look)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
     levels = [dict(state=str(st0), v=v0, actions=base_actions, end=root_end, ranked=[], pick=0, score=0,
                    backup=str(out / 'states' / 'root.backup.bin'))]
