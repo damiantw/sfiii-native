@@ -2517,7 +2517,7 @@ index c37141d..6517551 100644
      if (mco_uninit(t->co) != MCO_SUCCESS || mco_init(t->co, &desc) != MCO_SUCCESS)
          sat_fatal("tasks: the fiber cannot start over at %08X", pc);
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..9c869e0 100644
+index 8589d33..1ad83e1 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
 @@ -33,11 +33,13 @@
@@ -2698,16 +2698,17 @@ index 8589d33..9c869e0 100644
          if (in == c.outside) return;
      }
      plot_clipped(c, x, y, pix, g);
-@@ -193,7 +307,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
+@@ -192,8 +306,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
+ }
  
  static Rgb mix(const Rgb& a, const Rgb& b, int k, int n) {
-     if (n <= 0) return a;
+-    if (n <= 0) return a;
 -    return {a.r + (b.r - a.r) * k / n, a.g + (b.g - a.g) * k / n, a.b + (b.b - a.b) * k / n};
 +    return {vdp1_steps::shade(a.r, b.r, k, n), vdp1_steps::shade(a.g, b.g, k, n), vdp1_steps::shade(a.b, b.b, k, n)};
  }
  
  // A line from p0 to p1; for a texture, row v, its columns spread along the line.
-@@ -211,6 +325,7 @@ static uint64_t g_draw_steps;
+@@ -211,6 +324,7 @@ static uint64_t g_draw_steps;
  #endif
  
  static void command(const uint8_t* cmd, uint32_t a) {
@@ -2715,7 +2716,7 @@ index 8589d33..9c869e0 100644
      Cmd c{};
      c.ctrl = cw(cmd, 0);
      c.pmod = cw(cmd, 4);
-@@ -256,6 +371,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
+@@ -256,6 +370,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
      }
      for (Pt& q : p) { q.x += g_local_x; q.y += g_local_y; }
      draw_shape(c, cmd, comm, p);
@@ -2728,7 +2729,7 @@ index 8589d33..9c869e0 100644
  }
  
  // ---- the frames in between (--interp) -------------------------------------------------------
-@@ -289,6 +410,27 @@ struct RecFrame {
+@@ -289,6 +409,27 @@ struct RecFrame {
  static RecFrame g_rec_cur, g_rec_last, g_rec_prev;
  static uint16_t g_ifb[512 * 256];               // the frame in between
  static bool g_show_ifb;
@@ -2756,7 +2757,7 @@ index 8589d33..9c869e0 100644
  static uint64_t g_fields;
  static float g_alpha;
  static std::vector<uint64_t> g_next_keys;       // vdp1_next_draw_keys: by command address / 32
-@@ -312,6 +454,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
+@@ -312,6 +453,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
      return x & 1 ? w & 0xFF : w >> 8;
  }
  
@@ -2771,7 +2772,7 @@ index 8589d33..9c869e0 100644
  static void draw() {
      g_reg[EDSR] = (uint16_t)(g_reg[EDSR] >> 1 & 1);   // BEF <- CEF, CEF <- 0
      if ((g_reg[TVMR] & 3) == 3) sat_fatal("VDP1: TVMR %04X (8-bit rotation) is not done", g_reg[TVMR]);
-@@ -320,6 +470,12 @@ static void draw() {
+@@ -320,6 +469,12 @@ static void draw() {
      g_hi_on[g_draw_fb] = g_reg[FBCR] & 8;
      g_hi_target = g_hi_on[g_draw_fb] ? g_hi[g_draw_fb] : nullptr;
      g_dil = g_reg[FBCR] >> 2 & 1;
@@ -2784,7 +2785,7 @@ index 8589d33..9c869e0 100644
      RecDraw* rec = nullptr;
      if (g_cfg.interp) {
          g_rec_cur.draws.push_back({g_sys_x, g_sys_y, g_ux0, g_uy0, g_ux1, g_uy1, g_local_x, g_local_y, {}});
-@@ -606,7 +762,11 @@ static void erase(int which) {
+@@ -606,7 +761,11 @@ static void erase(int which) {
      int x0 = (g_reg[EWLR] >> 9 & 0x7F) * 8, y0 = g_reg[EWLR] & 0x1FF;
      int x1 = (g_reg[EWRR] >> 9 & 0x7F) * 8, y1 = g_reg[EWRR] & 0x1FF;
      for (int y = y0; y <= y1 && y < 256; ++y)
@@ -2797,7 +2798,7 @@ index 8589d33..9c869e0 100644
      if (!g_hi_on[which]) return;
      bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
      int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
-@@ -676,16 +836,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+@@ -676,16 +835,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
  }
  
  void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
@@ -2827,7 +2828,7 @@ index 8589d33..9c869e0 100644
      for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
  }
  
-@@ -707,4 +877,38 @@ void vdp1_state(State& s) {
+@@ -707,4 +876,38 @@ void vdp1_state(State& s) {
      s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
      s(g_draw_end), s(g_frame_changes), s(g_draws);
      s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
@@ -2867,10 +2868,10 @@ index 8589d33..9c869e0 100644
 +        for(int y=0;y<256;++y) for(int x=0;x<512;++x) scaled_store(p,x,y,g_fb[p][y*512+x]);
  }
 diff --git a/runtime/src/video/vdp1_raster.inc b/runtime/src/video/vdp1_raster.inc
-index 15c677f..75c395c 100644
+index 15c677f..5b3ee90 100644
 --- a/runtime/src/video/vdp1_raster.inc
 +++ b/runtime/src/video/vdp1_raster.inc
-@@ -9,12 +9,132 @@
+@@ -9,12 +9,134 @@
  // Bresenham's with an extra pixel wherever both coordinates step (VDP1's
  // anti-aliasing, so no holes between lines). A texture's row is the step's
  // (v = i * h / steps), its column the position along the line
@@ -2901,7 +2902,7 @@ index 15c677f..75c395c 100644
 +// general one below, with the per-dot choices (colour mode, flips, clipping, the colour
 +// calculation) made once for the line and the texture column stepped without a division.
 +template <int MODE>   // texel mode: -1 untextured, 0 4bpp bank, 1 4bpp table, 2 8bpp masks, 5 RGB
-+static void line_native(const Cmd& c, Pt p0, int dx, int dy, int len, int v, Rgb g0, Rgb g1, bool hss, bool backward) {
++static void line_native(const Cmd& c, Pt p0, int dx, int dy, int len, int v, Rgb g0, Rgb g1, bool hss) {
 +    const int adx = std::abs(dx), ady = std::abs(dy);
 +    const int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
 +    const bool hd_owner = g_hd_collect && g_target == g_fb[g_draw_fb];
@@ -2916,13 +2917,15 @@ index 15c677f..75c395c 100644
 +    const uint32_t rowi = (uint32_t)(vv * c.w);
 +    const int w = c.w;
 +    const int eos = g_reg[FBCR] >> 4 & 1;
-+    // vdp1_steps::column(s, w, len): shrink_sample or stretch_sample(up), as a stepped quotient
++    // vdp1_steps::column(s, w, len, hflip) as a stepped quotient: shrink_sample or stretch_sample,
++    // or for a flipped character w - 1 - either at len - s, which is ceil(x) - 1 for the
++    // shrink's centre x and an exact half rounded up for the stretch
 +    StepDiv col;
 +    const bool shrink = w > len + 1;
 +    if (MODE >= 0 && !hss) {
-+        if (shrink) col.start(2LL * w, w, 2LL * (len + 1));
-+        else if (len > 0) col.start(2LL * (w - 1), len, 2LL * len);
-+        else col.start(0, 0, 1);
++        if (shrink) col.start(2LL * w, c.hflip ? w - 1 : w, 2LL * (len + 1));
++        else if (len > 0) col.start(2LL * (w - 1), c.hflip ? len : len - 1, 2LL * len);
++        else col.start(0, c.hflip ? w - 1 : 0, 1);
 +    }
 +    uint16_t mask8 = 0;
 +    if constexpr (MODE == 2) mask8 = c.cmode == 2 ? 0x3F : c.cmode == 3 ? 0x7F : 0xFF;
@@ -2934,7 +2937,7 @@ index 15c677f..75c395c 100644
 +        if constexpr (MODE >= 0) {
 +            if (ends.stopped) return;
 +            int u;
-+            if (hss) u = vdp1_steps::hss_column(s, w, len, backward, c.hflip, eos);
++            if (hss) u = vdp1_steps::hss_column(s, w, len, c.hflip, eos);
 +            else {
 +                u = col.at(s);
 +                if (shrink && u > w - 1) u = w - 1;
@@ -3004,7 +3007,7 @@ index 15c677f..75c395c 100644
  static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      if (outside_clip(c, std::min(p0.x, p1.x), std::min(p0.y, p1.y), std::max(p0.x, p1.x), std::max(p0.y, p1.y))) return;
      int dx = p1.x - p0.x, dy = p1.y - p0.y;
-@@ -22,21 +142,42 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -22,21 +144,41 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      int len = std::max(adx, ady);
      g_draw_steps += (uint64_t)len + 1;
      int xi = dx < 0 ? -1 : 1, yi = dy < 0 ? -1 : 1;
@@ -3017,14 +3020,13 @@ index 15c677f..75c395c 100644
 +    const bool hss = c.textured && (c.pmod & 0x1000) && (c.ctrl & 15) != 0 && len + 1 < c.w;
 +    const int eos = g_reg[FBCR] >> 4 & 1;
 +    int sampled_u = -1;
-+    const bool backward = (adx >= ady ? dx < 0 : dy < 0) != c.hflip;
 +    if (!g_scaled_drawing && !g_hi_target && !g_fb8 && !g_reference_raster) {
-+        if (!c.textured) line_native<-1>(c, p0, dx, dy, len, v, g0, g1, hss, backward);
++        if (!c.textured) line_native<-1>(c, p0, dx, dy, len, v, g0, g1, hss);
 +        else switch (c.cmode) {
-+        case 0: line_native<0>(c, p0, dx, dy, len, v, g0, g1, hss, backward); break;
-+        case 1: line_native<1>(c, p0, dx, dy, len, v, g0, g1, hss, backward); break;
-+        case 2: case 3: case 4: line_native<2>(c, p0, dx, dy, len, v, g0, g1, hss, backward); break;
-+        default: line_native<5>(c, p0, dx, dy, len, v, g0, g1, hss, backward); break;
++        case 0: line_native<0>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++        case 1: line_native<1>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++        case 2: case 3: case 4: line_native<2>(c, p0, dx, dy, len, v, g0, g1, hss); break;
++        default: line_native<5>(c, p0, dx, dy, len, v, g0, g1, hss); break;
 +        }
 +        return;
 +    }
@@ -3036,8 +3038,8 @@ index 15c677f..75c395c 100644
          if (c.textured) {
              bool end;
 -            int u = (int)((int64_t)k * c.w / (len + 1));
-+            const int u = hss ? vdp1_steps::hss_column(s, c.w, len, backward, c.hflip, eos)
-+                              : vdp1_steps::column(s, c.w, len);
++            const int u = hss ? vdp1_steps::hss_column(s, c.w, len, c.hflip, eos)
++                              : vdp1_steps::column(s, c.w, len, c.hflip);
 +            bool first_sample = u != sampled_u;
 +            sampled_u = u;
              if (!texel(c, u, v, pix, end)) {
@@ -3054,7 +3056,7 @@ index 15c677f..75c395c 100644
          plot(c, x, y, pix, c.gouraud ? &g : nullptr);
      };
      int x = p0.x, y = p0.y;
-@@ -46,9 +187,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -46,9 +188,10 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
              pixel(x, y, k);
              if (k == len) break;
              if (err > 0) {
@@ -3066,7 +3068,7 @@ index 15c677f..75c395c 100644
              }
              err += 2 * ady;
              x += xi;
-@@ -59,9 +201,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -59,9 +202,9 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
              pixel(x, y, k);
              if (k == len) break;
              if (err > 0) {
@@ -3077,7 +3079,7 @@ index 15c677f..75c395c 100644
              }
              err += 2 * adx;
              y += yi;
-@@ -69,30 +211,40 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
+@@ -69,32 +212,48 @@ static void line(const Cmd& c, Pt p0, Pt p1, int v, Rgb g0, Rgb g1) {
      }
  }
  
@@ -3085,8 +3087,11 @@ index 15c677f..75c395c 100644
 -    if (n <= 0) return a;
 -    int d = (b - a) * i * 2;
 -    return a + (d >= 0 ? (d + n) / (2 * n) : -((-d + n) / (2 * n)));
--}
-+static int step_to(int a, int b, int i, int n) { return vdp1_steps::edge(a, b, i, n); }
++// the signed length of a side p->q along its major axis
++static int major(Pt p, Pt q) {
++    const int dx = q.x - p.x, dy = q.y - p.y;
++    return std::abs(dx) >= std::abs(dy) ? dx : dy;
+ }
  
  // the area a pixel can land in: system clipping, and the user clipping inside it
  static bool outside_clip(const Cmd& c, int x0, int y0, int x1, int y1) {
@@ -3116,22 +3121,29 @@ index 15c677f..75c395c 100644
      int n = std::max(left, right);
 -    if (n > 2048) return;                       // a shape far off the framebuffer: the chip would spend ages on it
 -    for (int i = 0; i <= n && g_draw_steps < kDrawSteps; ++i) {
+-        Pt l{step_to(a.x, d.x, i, n), step_to(a.y, d.y, i, n)};
+-        Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
+-        int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
 +    const int scale=g_scaled_drawing ? g_render_scale : 1;
 +    if (n > 2048*scale) return;                       // bound a shape far off the framebuffer
 +    for (int i = 0; i <= n && g_draw_steps < kDrawSteps*scale*scale; ++i) {
-         Pt l{step_to(a.x, d.x, i, n), step_to(a.y, d.y, i, n)};
-         Pt r{step_to(b.x, cc.x, i, n), step_to(b.y, cc.y, i, n)};
--        int v = c.textured ? (int)((int64_t)i * c.h / (n + 1)) : 0;
++        const int jl = vdp1_steps::side_step(i, left, n, major(a, d));
++        const int jr = vdp1_steps::side_step(i, right, n, major(b, cc));
++        Pt l{vdp1_steps::side_point(a.x, d.x, jl, left), vdp1_steps::side_point(a.y, d.y, jl, left)};
++        Pt r{vdp1_steps::side_point(b.x, cc.x, jr, right), vdp1_steps::side_point(b.y, cc.y, jr, right)};
 +        int v = c.textured ? vdp1_steps::row(i, c.h, n, c.vflip) : 0;
          Rgb gl{}, gr{};
-         if (c.gouraud) { gl = mix(c.g[0], c.g[3], i, n); gr = mix(c.g[1], c.g[2], i, n); }
+-        if (c.gouraud) { gl = mix(c.g[0], c.g[3], i, n); gr = mix(c.g[1], c.g[2], i, n); }
++        if (c.gouraud) { gl = mix(c.g[0], c.g[3], jl, left); gr = mix(c.g[1], c.g[2], jr, right); }
          line(c, l, r, v, gl, gr);
+     }
+ }
 diff --git a/runtime/src/video/vdp1_steps.h b/runtime/src/video/vdp1_steps.h
 new file mode 100644
-index 0000000..af28d62
+index 0000000..2e324b1
 --- /dev/null
 +++ b/runtime/src/video/vdp1_steps.h
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,128 @@
 +// saturn-recomp runtime — the step arithmetic of VDP1's shape drawing, kept apart from the
 +// drawing so tests can check it. Clean-room: written from Sega's VDP1 User's Manual
 +// (ST-013-R3-061694) and black-box comparison of output frames only.
@@ -3164,49 +3176,47 @@ index 0000000..af28d62
 +// Edge walk: the point of edge a->b at step i of n.
 +inline int edge(int a, int b, int i, int n) { return lerp_half_down(a, b, i, n); }
 +
-+// Shrinking (more texels than dots): dot q of len + 1 dots takes the texel under its centre,
-+// floor((q + 1/2) * span / (len + 1)). Black-box: Beetle Saturn framebuffers replayed from the
-+// same VRAM with coordinate-coded characters (Shining Force III church, battle, deck), not the
-+// manual, which does not give the sampling.
++// The texel a dot takes along a span of `len + 1` steps over a character `span` texels long,
++// counted from the character's first texel, for an unflipped character. Shrinking (more texels
++// than steps): the texel under the step's centre, floor((q + 1/2) * span / (len + 1)).
++// Otherwise corner to corner: the first texel on the first step, the last on the last, an exact
++// half rounded down. Black-box: coordinate-coded characters (every texel holding its own
++// column and row) written into the reference's VRAM through its save state and drawn by it from
++// Shining Force III's own command lists (graveyard, field, bridge battle), compared with these
++// rules texel for texel; the manual puts the character's corners on the vertices but does not
++// give the sampling.
 +inline int shrink_sample(int q, int span, int len) {
 +    if (len < 0 || span <= 0) return 0;
 +    const int s = (int)((int64_t)(2 * q + 1) * span / (2 * (len + 1)));
 +    return s < span ? s : span - 1;
 +}
-+// The same corner-to-corner mapping for enlargement and 1:1, exact halves rounded by `up`.
-+inline int stretch_sample(int q, int span, int len, bool up) {
++inline int stretch_sample(int q, int span, int len) {
 +    if (len <= 0 || span <= 0) return 0;
-+    return up ? lerp_half_up(0, span - 1, q, len) : lerp_half_down(0, span - 1, q, len);
++    return lerp_half_down(0, span - 1, q, len);
 +}
-+
-+// The texture column for pixel k of a line of len + 1 pixels: shrunk, the texel under the dot's
-+// centre; otherwise the character's first column lands on the line's first pixel and its last
-+// column (w - 1) on its last, as the manual's figures put the character's corners on the
-+// vertices, with an exact half rounded up whichever way the line is drawn.
-+inline int column(int k, int w, int len) {
-+    return w > len + 1 ? shrink_sample(k, w, len) : stretch_sample(k, w, len, true);
++inline int sample(int q, int span, int len) {
++    return span > len + 1 ? shrink_sample(q, span, len) : stretch_sample(q, span, len);
 +}
-+// The corner-to-corner column with an exact half rounded down for a line drawn backward (its
-+// major axis stepping toward -x or -y, a horizontally flipped character swapping the two).
-+inline int column_dir(int k, int w, int len, bool backward) { return stretch_sample(k, w, len, !backward); }
-+// The texture row for line i of n + 1 lines: the texel under the line's centre when shrunk,
-+// corner to corner otherwise, with exact halves rounded down, or up for a vertically flipped
-+// character (counted in drawing order, before the flip the texel fetch applies). Black-box, as
-+// above: flipped enlarged battle-floor tiles (Shining Force III scenarios 2 and 3).
-+inline int row(int i, int h, int n, bool vflip = false) {
-+    return h > n + 1 ? shrink_sample(i, h, n) : stretch_sample(i, h, n, vflip);
++// A flipped character is sampled as the unflipped one turned around: step q takes the texel
++// that step len - q would take unflipped, counted from the other end. (So an exact half or a
++// centre on a texel boundary goes the other way: toward the flipped character's first texel.)
++// Returned in drawing order, before the flip the texel fetch applies.
++inline int sample_flip(int q, int span, int len, bool flip) {
++    return flip ? span - 1 - sample(len - q, span, len) : sample(q, span, len);
 +}
++// The texture column for dot k of a line of len + 1 dots, and the row for line i of n + 1.
++inline int column(int k, int w, int len, bool hflip = false) { return sample_flip(k, w, len, hflip); }
++inline int row(int i, int h, int n, bool vflip = false) { return sample_flip(i, h, n, vflip); }
 +
 +// High speed shrink (manual, PMOD bit 12 and FBCR EOS), applied to a line with fewer dots than
-+// the character's width: the line steps over the character's w/2 column pairs, and takes the
-+// even (eos 0) or odd (eos 1) column of each, counted in the character as stored, so a flipped
-+// character keeps the parity of its stored columns. Returns the column in drawing order (before
-+// the horizontal flip the texel fetch applies), like column(). Pair stepping: shrink_sample when
-+// the pairs still outnumber the dots, column_dir otherwise. Black-box, as above.
-+inline int hss_column(int k, int w, int len, bool backward, bool hflip, int eos) {
++// the character's width: the line steps over the character's w/2 column pairs as column() steps
++// over columns (flip included), and takes the even (eos 0) or odd (eos 1) column of each, counted
++// in the character as stored, so a flipped character keeps the parity of its stored columns.
++// Returns the column in drawing order, like column(). Black-box, as above.
++inline int hss_column(int k, int w, int len, bool hflip, int eos) {
 +    const int half = w / 2;
 +    if (half <= 0) return 0;
-+    int j = len <= 0 ? 0 : half > len + 1 ? shrink_sample(k, half, len) : column_dir(k, half, len, backward);
++    int j = column(k, half, len, hflip);
 +    if (hflip) j = half - 1 - j;                       // the pair, counted in the stored character
 +    int u = 2 * j + (eos & 1);
 +    if (u > w - 1) u = w - 1;
@@ -3216,8 +3226,27 @@ index 0000000..af28d62
 +// next step's, where the line is heading. Black-box, as above.
 +inline int aa_step(int k, int len) { return k < len ? k + 1 : len; }
 +
-+// One Gouraud channel (5 bits) at step k of n between two vertex colours.
-+inline int shade(int a, int b, int k, int n) { return lerp_half_away(a, b, k, n); }
++// One Gouraud channel (5 bits) at step k of n between two colours: stepped as a texture is, over
++// the |b - a| + 1 values from a to b as if they were a character's texels (sample(): the centre
++// when there are more values than steps, else corner to corner, halves down), a falling run being
++// the rising one from b turned around (sample_flip()). Black-box: the reference drawing Shining
++// Force III's own command lists with every texel a flat mid grey and coded Gouraud tables written
++// into its VRAM, so each dot shows the Gouraud value; the manual gives the vertex colours only.
++inline int shade(int a, int b, int k, int n) {
++    const int span = (b > a ? b - a : a - b) + 1;
++    return b >= a ? a + sample(k, span, n) : b + sample(n - k, span, n);
++}
++// A quadrilateral's sides are walked together in n steps, n the longer side's length in dots
++// (the larger of |dx| and |dy|). Each side steps over its own length: walk step i of n is the
++// side's step i * len / n, an exact half taken toward the smaller coordinate on the side's major
++// axis (rounded down when that coordinate rises along the side, up when it falls), and the side's
++// point and Gouraud colour are those of its own step (side_point(), shade()). Black-box: the
++// reference's frames of Shining Force III's distorted sprites, where the shorter side's points and
++// colours otherwise land a dot or a shade off on exactly those halves.
++inline int side_step(int i, int len, int n, int major_delta) {
++    return major_delta >= 0 ? lerp_half_down(0, len, i, n) : lerp_half_up(0, len, i, n);
++}
++inline int side_point(int a, int b, int j, int len) { return lerp_half_down(a, b, j, len); }
 +
 +// Anti-aliasing (manual, figure 1.6): where a line steps both x and y, an extra pixel fills the
 +// corner: (new x, old y) when x and y step the same way, (old x, new y) when they step opposite ways.
@@ -4493,10 +4522,10 @@ index 0000000..9985dee
 +}
 diff --git a/runtime/tests/vdp1_steps_test.cpp b/runtime/tests/vdp1_steps_test.cpp
 new file mode 100644
-index 0000000..121c067
+index 0000000..472e126
 --- /dev/null
 +++ b/runtime/tests/vdp1_steps_test.cpp
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,137 @@
 +// VDP1's step arithmetic (vdp1_steps.h) against the rules of Sega's VDP1 User's Manual.
 +#include "../src/video/vdp1_steps.h"
 +#include "test.h"
@@ -4537,23 +4566,24 @@ index 0000000..121c067
 +    CHECK_EQ(column(0, 16, 7), 1);                                 // its dots' centres
 +    CHECK_EQ(column(0, 8, 0), 4);                                  // one dot: the middle
 +}
-+// A line drawn backward rounds an exact half down; everything else is column()'s.
-+TEST(column_dir_rounds_halves_by_direction) {
-+    CHECK_EQ(column_dir(1, 3, 4, false), 1); CHECK_EQ(column_dir(3, 3, 4, false), 2);
-+    CHECK_EQ(column_dir(1, 3, 4, true), 0);  CHECK_EQ(column_dir(3, 3, 4, true), 1);
-+    for (int k = 0; k <= 31; ++k) {
-+        CHECK_EQ(column_dir(k, 16, 31, false), column(k, 16, 31));
-+        CHECK_EQ(column_dir(0, 16, 31, true), 0);
-+        CHECK_EQ(column_dir(31, 16, 31, true), 15);
-+    }
-+    for (int k = 0; k < 16; ++k) CHECK_EQ(column_dir(k, 16, 15, true), k);
-+    CHECK_EQ(column_dir(0, 8, 0, true), 0);
++// A flipped character is sampled as the unflipped one turned around (drawing order returned).
++TEST(flipped_columns_mirror_the_unflipped_sampling) {
++    for (int len = 0; len < 40; ++len)
++        for (int w = 1; w <= 33; ++w)
++            for (int k = 0; k <= len; ++k)
++                CHECK_EQ(column(k, w, len, true), w - 1 - column(len - k, w, len));
++    for (int k = 0; k < 16; ++k) CHECK_EQ(column(k, 16, 15, true), k);   // 1:1 still the identity
++    CHECK_EQ(column(0, 8, 0, true), 3);                                   // one dot: the other middle
++    // the flipped 48 -> 45 shrink: centres on texel boundaries go toward the first texel
++    CHECK_EQ(column(7, 48, 44), 8); CHECK_EQ(column(7, 48, 44, true), 7);
 +}
-+TEST(column_and_row_round_exact_halves_differently) {
++TEST(exact_halves_round_down_unflipped_and_up_flipped) {
 +    // 3 texels over 5 dots: k*(2)/4 has halves at k=1 and k=3
-+    CHECK_EQ(column(1, 3, 4), 1); CHECK_EQ(column(3, 3, 4), 2);   // half up
-+    CHECK_EQ(row(1, 3, 4), 0);    CHECK_EQ(row(3, 3, 4), 1);      // half down
++    CHECK_EQ(column(1, 3, 4), 0); CHECK_EQ(column(3, 3, 4), 1);
++    CHECK_EQ(column(1, 3, 4, true), 1); CHECK_EQ(column(3, 3, 4, true), 2);
++    CHECK_EQ(row(1, 3, 4), 0);    CHECK_EQ(row(3, 3, 4), 1);
 +    CHECK_EQ(row(4, 3, 4), 2);
++    CHECK_EQ(row(1, 32, 5), 3 * 32 / 12); CHECK_EQ(row(1, 32, 5, true), 7);   // shrink: 8 -> 7 flipped
 +}
 +TEST(edge_walk_hits_both_vertices_and_rounds_halves_down) {
 +    CHECK_EQ(edge(5, 9, 0, 4), 5); CHECK_EQ(edge(5, 9, 4, 4), 9);
@@ -4562,38 +4592,54 @@ index 0000000..121c067
 +    CHECK_EQ(edge(0, 3, 1, 2), 1);   // 1.5 -> 1
 +    CHECK_EQ(edge(7, 7, 3, 0), 7);
 +}
-+TEST(gouraud_rounds_to_nearest_away_from_the_start) {
-+    CHECK_EQ(shade(16, 31, 0, 10), 16); CHECK_EQ(shade(16, 31, 10, 10), 31);
-+    CHECK_EQ(shade(16, 0, 1, 2), 8);
-+    CHECK_EQ(shade(16, 1, 1, 2), 8);    // 8.5 -> 8 (away from 16)
-+    CHECK_EQ(shade(16, 31, 1, 2), 24);  // 23.5 -> 24
-+    CHECK_EQ(shade(10, 0, 1, 3), 7);    // 6.67 -> 7
++TEST(gouraud_steps_like_a_texture) {
++    // 32 values over 5 dots: more values than dots, so the centres (2k + 1) * 32 / 10
++    CHECK_EQ(shade(0, 31, 0, 4), 3);  CHECK_EQ(shade(0, 31, 1, 4), 9);
++    CHECK_EQ(shade(0, 31, 3, 4), 22); CHECK_EQ(shade(0, 31, 4, 4), 28);
++    // a falling run is the rising one turned around
++    for (int k = 0; k <= 4; ++k) CHECK_EQ(shade(31, 0, k, 4), shade(0, 31, 4 - k, 4));
++    // fewer values than dots: corner to corner, halves down
++    CHECK_EQ(shade(16, 18, 0, 8), 16); CHECK_EQ(shade(16, 18, 8, 8), 18);
++    CHECK_EQ(shade(16, 18, 2, 8), 16); CHECK_EQ(shade(16, 18, 6, 8), 17);
++    CHECK_EQ(shade(7, 7, 3, 9), 7);
++}
++TEST(quad_sides_step_over_their_own_length) {
++    // a side of 4 dots walked in 5 steps: ends on both vertices, 2.4 -> 2
++    CHECK_EQ(side_step(0, 4, 5, 4), 0); CHECK_EQ(side_step(5, 4, 5, 4), 4);
++    CHECK_EQ(side_step(3, 4, 5, 4), 2);
++    // an exact half goes toward the smaller major coordinate: 52 dots in 56 steps, step 7 is 6.5
++    CHECK_EQ(side_step(7, 52, 56, 52), 6);   // rising side: down
++    CHECK_EQ(side_step(7, 52, 56, -52), 7);  // falling side: up, i.e. further toward the minus end
++    CHECK_EQ(side_point(-5, -4, 6, 52), -5); CHECK_EQ(side_point(-107, -55, 6, 52), -101);
++    CHECK_EQ(side_point(10, -42, 7, 52), 3);
++    CHECK_EQ(side_step(0, 0, 9, 0), 0);
 +}
 +
 +// High speed shrink steps over column pairs and takes one parity of the stored character.
 +TEST(high_speed_shrink_samples_one_parity_of_stored_columns) {
 +    for (int len = 0; len < 15; ++len)
 +        for (int k = 0; k <= len; ++k) {
-+            CHECK_EQ(hss_column(k, 16, len, false, false, 0) % 2, 0);
-+            CHECK_EQ(hss_column(k, 16, len, false, false, 1) % 2, 1);
++            CHECK_EQ(hss_column(k, 16, len, false, 0) % 2, 0);
++            CHECK_EQ(hss_column(k, 16, len, false, 1) % 2, 1);
 +            // flipped: the stored column (15 - drawn) keeps the parity
-+            CHECK_EQ((15 - hss_column(k, 16, len, false, true, 0)) % 2, 0);
-+            CHECK_EQ((15 - hss_column(k, 16, len, false, true, 1)) % 2, 1);
++            CHECK_EQ((15 - hss_column(k, 16, len, true, 0)) % 2, 0);
++            CHECK_EQ((15 - hss_column(k, 16, len, true, 1)) % 2, 1);
 +        }
 +    // 48 wide on 32 dots (the church wall): 24 pairs enlarged onto 32 dots, every pair used
 +    bool used[24] = {};
-+    for (int k = 0; k < 32; ++k) used[hss_column(k, 48, 31, false, false, 0) / 2] = true;
++    for (int k = 0; k < 32; ++k) used[hss_column(k, 48, 31, false, 0) / 2] = true;
 +    for (bool u : used) CHECK_EQ(u, true);
 +    // 48 wide on 8 dots: pairs sampled at the dots' centres, (2k + 1) * 24 / 16
-+    CHECK_EQ(hss_column(0, 48, 7, false, false, 0), 2);
-+    CHECK_EQ(hss_column(7, 48, 7, false, false, 1), 2 * 22 + 1);
-+    // a flipped 16-wide character on 4 dots, eos 0: drawn pairs 1,3,5,7 are stored pairs
-+    // 6,4,2,0, stored columns 12,8,4,0, which the flip draws at 3,7,11,15
-+    CHECK_EQ(hss_column(0, 16, 3, false, true, 0), 3);
-+    CHECK_EQ(hss_column(1, 16, 3, false, true, 0), 7);
-+    CHECK_EQ(hss_column(3, 16, 3, false, true, 0), 15);
-+    CHECK_EQ(hss_column(0, 15, 3, false, false, 1), 1);
-+    CHECK_EQ(hss_column(5, 1, 3, false, false, 1), 0);   // no pair: column 0
++    CHECK_EQ(hss_column(0, 48, 7, false, 0), 2);
++    CHECK_EQ(hss_column(7, 48, 7, false, 1), 2 * 22 + 1);
++    // a flipped 16-wide character on 4 dots, eos 0: the 8 pairs shrink onto 4 dots at centres
++    // 1,3,5,7 counted from the flipped end, i.e. stored pairs 7,5,3,1 (columns 14,10,6,2),
++    // which the flip draws at 1,5,9,13
++    CHECK_EQ(hss_column(0, 16, 3, true, 0), 1);
++    CHECK_EQ(hss_column(1, 16, 3, true, 0), 5);
++    CHECK_EQ(hss_column(3, 16, 3, true, 0), 13);
++    CHECK_EQ(hss_column(0, 15, 3, false, 1), 1);
++    CHECK_EQ(hss_column(5, 1, 3, false, 1), 0);   // no pair: column 0
 +}
 +// Shrinking samples under the dot's centre; enlarging maps corner to corner.
 +TEST(shrink_samples_at_dot_centres) {
@@ -4607,8 +4653,8 @@ index 0000000..121c067
 +    CHECK_EQ(row(1, 3, 4, true), 1);        // a vertically flipped one rounds halves up
 +    CHECK_EQ(row(3, 3, 4, true), 2);
 +    CHECK_EQ(row(2, 3, 4, true), 1);
-+    CHECK_EQ(row(3, 16, 7, true), 7);       // shrunk rows ignore the flip
-+    CHECK_EQ(column(1, 3, 4), 1);           // enlarged columns: halves up
++    CHECK_EQ(row(3, 16, 7, true), 6);       // shrunk rows mirror too: a centre on a boundary goes up
++    CHECK_EQ(column(1, 3, 4), 0);           // enlarged columns: halves down too
 +}
 +// An anti-aliasing dot takes the next step's texel and colour, never past the line's end.
 +TEST(aa_dot_takes_the_next_step) {
