@@ -103,5 +103,16 @@ class StoryTest(unittest.TestCase):
             autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, press)
         self.assertTrue(presses)
 
+    def test_is_hurt(self):
+        from sf3test import autoplay, memory_map as M
+        rec = bytearray(M.UNIT_STRIDE * 2)
+        o = M.UNIT_STRIDE
+        rec[o + M.UNIT_HP:o + M.UNIT_HP + 2] = (18).to_bytes(2, 'big')
+        rec[o + M.UNIT_MAX_HP:o + M.UNIT_MAX_HP + 2] = (63).to_bytes(2, 'big')
+        read = lambda a, n: bytes(rec[a - 0x1000:a - 0x1000 + n])
+        self.assertTrue(autoplay.is_hurt(read, 0x1000, 1, 0.6))
+        self.assertFalse(autoplay.is_hurt(read, 0x1000, 1, 0.2))
+        self.assertFalse(autoplay.is_hurt(read, 0x1000, 0, 0.6))     # empty record
+
 if __name__ == '__main__':
     unittest.main()

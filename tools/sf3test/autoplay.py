@@ -435,6 +435,17 @@ def plan_step(p, live, occupied, blocked, size=64, limit=6000, passable=frozense
     return None
 
 
+LEADER_SAFE = 0.6
+
+
+def is_hurt(read, table, slot, share):
+    """True when force record `slot` has less than `share` of its max HP."""
+    e = read(table + slot * memory_map.UNIT_STRIDE, memory_map.UNIT_STRIDE)
+    hp = int.from_bytes(e[memory_map.UNIT_HP:memory_map.UNIT_HP + 2], 'big')
+    top = int.from_bytes(e[memory_map.UNIT_MAX_HP:memory_map.UNIT_MAX_HP + 2], 'big')
+    return top > 0 and hp < share * top
+
+
 def aimed_turn(side, units, pol, press):
     """Closed-loop battle turn. Probe which force unit is under control (tap toward the enemies,
     see whose x/y moved), walk it step by step toward the nearest live enemy (checking the unit
@@ -492,7 +503,16 @@ def aimed_turn(side, units, pol, press):
     def dist(p):
         return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)
 
-    if pol.pathing:
+    # the leader (the force's first on-field slot) losing all HP loses the battle (round 3: Sc1
+    # Battle 22 lost with Synbios at 18 HP walking up to the boss): below LEADER_SAFE of max HP the
+    # leader steps back (B returns the probe step) and only attacks what is already next to it
+    cautious = False
+    if me == min(before) and is_hurt(rd, units['force'], me, LEADER_SAFE):
+        press(('B',), 6)
+        press((), 20)
+        cautious = True
+        pol.cautious = getattr(pol, 'cautious', 0) + 1
+    if pol.pathing and not cautious:
         key = tuple(sorted(e[0] for e in enemies))       # a new battle (enemy roster): forget edges
         if key != pol.blocked_key:
             pol.blocked, pol.blocked_key = {}, key
@@ -519,7 +539,7 @@ def aimed_turn(side, units, pol, press):
                 q = step_of(p, d)                  # early in the move it is not the range's end
                 pol.blocked[(p, q)] = pol.blocked.get((p, q), 0) + (2 if steps <= 2 else 1)
                 fails += 1
-    for _ in range(0 if pol.pathing else 10):
+    for _ in range(0 if pol.pathing or cautious else 10):
         p = pos().get(me)
         if p is None or dist(p) <= 1:
             break
