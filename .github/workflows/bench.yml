@@ -1,0 +1,75 @@
+name: Runtime hot-path benchmark
+# Disc-free timings (runtime/tests/runtime_bench.cpp: invented modules, VDP1 command tables and a
+# VDP2 screen; no game code or data) on Apple Silicon, Intel macOS and x86-64 Linux. Each fast
+# path is checked against the path it replaces; a difference fails the job. Not a pull-request
+# check: run it by hand (Actions > Run workflow) or see the run for each push to main.
+on:
+  workflow_dispatch:
+    inputs:
+      quick:
+        description: 'Short run'
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            host: linux-x86_64
+          - runner: macos-14
+            host: darwin-aarch64
+          - runner: macos-15-intel
+            host: darwin-x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch pinned runtime and apply project changes
+        shell: bash
+        run: |
+          python -B - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          spec = json.loads(Path('dependencies.json').read_text())['runtime']
+          target = Path('.local') / spec['directory']
+          target.mkdir(parents=True)
+          def git(*args):
+              subprocess.run(['git', '-C', str(target), *args], check=True)
+          git('init')
+          git('remote', 'add', 'origin', spec['url'])
+          git('fetch', '--depth', '1', 'origin', spec['commit'])
+          git('checkout', '--detach', 'FETCH_HEAD')
+          git('apply', str(Path('tools/runtime-diagnostics.patch').resolve()))
+          PY
+      - name: Build the benchmark (Release, as packaged)
+        shell: bash
+        run: |
+          cmake -S .local/saturn-recomp/runtime/tests -B "$RUNNER_TEMP/bench" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/bench" --parallel 3 --target runtime_bench
+      - name: Run
+        shell: bash
+        run: |
+          args=(--markdown --json "$RUNNER_TEMP/bench-${{ matrix.host }}.json")
+          if [ "${{ inputs.quick }}" = true ]; then args+=(--quick); fi
+          {
+            echo "### ${{ matrix.host }} (${{ matrix.runner }})"
+            echo
+            echo "$(uname -m), $(getconf _NPROCESSORS_ONLN) logical CPUs, $(c++ --version | head -1)"
+            echo
+            "$RUNNER_TEMP/bench/runtime_bench" "${args[@]}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-bench-${{ matrix.host }}
+          path: ${{ runner.temp }}/bench-${{ matrix.host }}.json
