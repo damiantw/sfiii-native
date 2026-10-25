@@ -45,6 +45,7 @@ class Policy:
         self.idle = 0
         self.attacks = 0
         self.cast, self.casts, self.tried = False, 0, {}
+        self.pathing, self.blocked, self.blocked_key = False, {}, None
 
     def town(self):
         r = self.rng.random()
@@ -126,7 +127,8 @@ class Policy:
         return self.battle(state.get('turn', 0)) if state.get('battle') else self.town()
 
 
-def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False):
+def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
+         idle_over_turns=None, pathing=False):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -135,9 +137,15 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     (memory_map.assist_writes), 'party+enemy1' also sets every enemy's HP to 1.
     `walker` (round 13): in towns, walk square spirals instead of random bursts and examine/talk
     at each corner; a door is found by walking into it (map id change). (A blocked test by picture
-    did not work: town animations change the picture while the player stands at a wall.)"""
+    did not work: town animations change the picture while the player stands at a wall.)
+    `rearm` (round 26, story driver): after an 'idle' hand-over to the walker, every `rearm` walker
+    legs try one aimed turn again while live enemies remain; a force unit that moves ends the
+    hand-over (long battle openings and boss dialogue used to end battles as 'idle' for good).
+    `idle_over_turns` overrides IDLE_OVER. `pathing` (round 26) walks battle units along a planned
+    path (see plan_step) instead of greedily."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
+    pol.pathing = pathing
     pol.cast = bool(assist)
     presses, events = [], []
     done, last_key, same, turn = 0, None, 0, 0
@@ -151,6 +159,8 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     heading, blocked, maps_seen, leg = pol.heading, 0, set(), 0
     areas, area = [], None
     idle_over = False
+    idle_turns = idle_over_turns or IDLE_OVER
+    since_idle = 0
 
     def state():
         m = side.read(mm['map_id'], 1)[0]
@@ -241,13 +251,27 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
         # free walking ('Nothing found', the INSPECT ring) while two enemy-table records (max HP 15
         # and 9, never moving) stay live, so 'won' never fires. No force unit moving in the table for
         # IDLE_OVER aimed turns in a row is logged as outcome 'idle' and hands over to the walker
-        if b and mm.get('units') and pol.idle >= IDLE_OVER and not idle_over and last_outcome != 'won':
+        if b and mm.get('units') and pol.idle >= idle_turns and not idle_over and last_outcome != 'won':
             idle_over = True
             outcomes.append((done, 'idle'))
             if log:
                 log(f'autoplay {done}: battle outcome idle (no unit moved for {pol.idle} turns)')
             last_outcome = 'idle'
         free = walker and (not b or (mm.get('units') and last_outcome in ('won', 'idle')))
+        if rearm and free and b and idle_over and last_outcome == 'idle':
+            since_idle += 1
+            if since_idle >= rearm:
+                since_idle = 0
+                if any(e[4] > 0 for e in memory_map.read_units(side.read, mm['units']['enemies'], mm['units'].get('live'))):
+                    pol.idle = 0
+                    for buttons, n in aimed_turn(side, mm['units'], pol, press):
+                        press(buttons, n)
+                    if pol.idle == 0:          # a force unit moved: battle play again
+                        idle_over, last_outcome, seen_outcome = False, None, None
+                        outcomes.append((done, 'rearmed'))
+                        if log:
+                            log(f'autoplay {done}: aimed play again (a unit moved)')
+                        continue
         if b and mm.get('units') and same < STUCK_CHECKS and not free:
             phrase = aimed_turn(side, mm['units'], pol, press)
         elif free:
@@ -327,7 +351,30 @@ def panel_share(frame):
             r, g, b = rgb[row + x * 3], rgb[row + x * 3 + 1], rgb[row + x * 3 + 2]
             t += 1
             n += b >= 60 and b > r + 35 and b > g + 20 and r < 70
-    return n / max(t, 1)
+    share = n / max(t, 1)
+    if share > 0.02 and not flat_blue_rows(w, h, rgb):
+        return 0.0                 # round 26: blue water (Sc1 Battle 30's canals), not a window
+    return share
+
+
+def flat_blue_rows(w, h, rgb, run_min=48):
+    """Rows of the lower 3/8 holding a run of `run_min` window-blue pixels whose colour steps by
+    2 or less: windows are flat colour across, water is textured (none such rows in it)."""
+    rows = 0
+    for y in range(h * 5 // 8, h, 2):
+        row, run, prev = y * w * 3, 0, None
+        for x in range(w):
+            r, g, b = rgb[row + x * 3], rgb[row + x * 3 + 1], rgb[row + x * 3 + 2]
+            ok = b >= 60 and b > r + 35 and b > g + 20 and r < 70
+            if ok and prev and abs(b - prev[1]) <= 2 and abs(g - prev[0]) <= 2:
+                run += 1
+                if run >= run_min:
+                    rows += 1
+                    break
+            else:
+                run = 0
+            prev = (g, b) if ok else None
+    return rows
 
 
 def battle_outcome(rd, units):
@@ -345,6 +392,46 @@ def next_to(p, live):
     """True when a live enemy stands on a tile next to `p` (walls and drops are not in the unit
     tables, so a unit can be stuck with free-looking tiles around it)."""
     return any(abs(p[0] - e[0]) + abs(p[1] - e[1]) == 1 for e in live)
+
+
+STEP = {'RIGHT': (1, 0), 'LEFT': (-1, 0), 'UP': (0, 1), 'DOWN': (0, -1)}
+
+
+def step_of(p, d):
+    return (p[0] + STEP[d][0], p[1] + STEP[d][1])
+
+
+def plan_step(p, live, occupied, blocked, size=64, limit=6000):
+    """First direction of a shortest path from `p` to a tile next to a live enemy, over a
+    size x size grid where unseen tiles are taken as open (optimistic planning: a failed step marks
+    its edge, `blocked` counts failures per edge; two failures close it, one makes it dear).
+    Tiles other units hold are closed. None when no tile is reachable."""
+    import heapq
+    goals = {(x + dx, y + dy) for x, y in live for dx, dy in STEP.values()} - occupied
+    if not goals:
+        return None
+    h = lambda q: min(abs(q[0] - g[0]) + abs(q[1] - g[1]) for g in goals)
+    heap, best, first, n = [(h(p), 0, p)], {p: 0}, {p: None}, 0
+    while heap and n < limit:
+        f, g, q = heapq.heappop(heap)
+        n += 1
+        if q in goals:
+            return first[q]
+        if g > best.get(q, 1 << 30):
+            continue
+        for d in STEP:
+            r = step_of(q, d)
+            if not (0 <= r[0] < size and 0 <= r[1] < size) or r in occupied:
+                continue
+            fails = blocked.get((q, r), 0)
+            if fails >= 2:
+                continue
+            ng = g + 1 + 6 * fails
+            if ng < best.get(r, 1 << 30):
+                best[r] = ng
+                first[r] = first[q] or d
+                heapq.heappush(heap, (ng + h(r), ng, r))
+    return None
 
 
 def aimed_turn(side, units, pol, press):
@@ -399,7 +486,30 @@ def aimed_turn(side, units, pol, press):
     def dist(p):
         return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)
 
-    for _ in range(10):
+    if pol.pathing:
+        key = tuple(sorted(e[0] for e in enemies))       # a new battle (enemy roster): forget edges
+        if key != pol.blocked_key:
+            pol.blocked, pol.blocked_key = {}, key
+        fails = 0
+        for _ in range(16):
+            now = pos()
+            p = now[me]
+            if dist(p) <= 1 or fails >= 8:
+                break
+            occupied = {v for k, v in now.items() if k != me} | set(live)
+            d = plan_step(p, live, occupied, pol.blocked)
+            if d is None:
+                break
+            press((d,), 8)
+            press((), 10)
+            if pos()[me] != p:
+                steps += 1
+                pol.blocked.pop((p, step_of(p, d)), None)
+            else:                                  # wall, cliff or the end of the move range
+                q = step_of(p, d)                  # early in the move it is not the range's end
+                pol.blocked[(p, q)] = pol.blocked.get((p, q), 0) + (2 if steps <= 2 else 1)
+                fails += 1
+    for _ in range(0 if pol.pathing else 10):
         p = pos()[me]
         if dist(p) <= 1:
             break

@@ -167,6 +167,26 @@ No full-game Shining Force III TAS, movie or input file exists publicly. TASVide
 - **Frame-exact lockstep only for short segments.** For in-battle segments started from a save, use layer 2: frame-exact input with RAM diffs against Mednafen/Beetle at every tick. Precedents: [zelda3](https://github.com/snesrev/zelda3)'s lockstep RAM comparison against the original, and sm64-port's `controller_recorded_tas.c` playback.
 - **RNG:** SF3's RNG source is unknown. Find it in the recompiled code: look for the LCG/seed update, and whether it is fed by frame counts, input or the RTC. That determines whether event-driven replays stay deterministic through battles, or whether the runner must pin the seed with `--write` at segment start.
 
+### Story driver and committed segments (`tools/sf3-story.py`)
+
+- `drive` loads one save record and plays forward with the closed-loop autoplay (aimed battles,
+  walker in towns). The goals are the scenario's later records in play-time order: a record is
+  reached when every story-flag bit it holds (record bytes 0x240-0x400, mirrored in work RAM per
+  profile, see `sf3test/story.py`) is set live; town/complete records that add no flag bits are
+  reached when their map holds. Every pad change (and every test-only `--assist` poke) is logged
+  with its VBlank in `segment.txt`, with the end RAM and story-flag hashes.
+- Determinism: every run passes a fixed `--clock` (the SMPC clock; the game keeps the date in work
+  RAM, so host-clock runs a few seconds apart ended with different RAM hashes). With the clock
+  fixed, a replay is frame-exact: same RAM hash, same flags, same goals at the same VBlank.
+- `replay SEG` reruns one segment and checks the end hashes, the goals reached and no FATAL.
+  `suite` replays every `tools/story-replays/<key>/*.seg` (`sc1 sc2v2 sc2v1 sc3`) with the build,
+  cue and saves from `SF3_BUILD_<KEY>`, `SF3_CUE_<KEY>`, `SF3_SAVES_<KEY>`.
+- Committed segments are pad presses only: no pokes, no assist, a clock and an end hash, and only
+  the header keys in `story.SEGMENT_KEYS` (profile, save file name, record id and hash, seed,
+  build hash, end hashes, goals). `tools/tests/test_story.py` and `check-source-package.py`
+  reject anything else. A segment is bound to its build (`binary`): a runtime change that alters
+  timing needs the segment re-recorded (rerun `drive` with the same seed), which is the point.
+
 ### Pass condition per scenario
 
 1. Reach the ending and write the complete-game save (`_02`).

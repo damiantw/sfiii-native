@@ -79,6 +79,8 @@
 !/tools/sf3-diff.py
 !/tools/sf3-vdp1-replay.py
 !/tools/sf3-town-bfs.py
+!/tools/sf3-story.py
+!/tools/story-replays/
 __pycache__/
 *.pyc
 *.bin

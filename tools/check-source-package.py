@@ -31,7 +31,8 @@ def main():
         path = Path(name)
         if path.parts[0] not in ALLOWED_TOP and name not in ALLOWED_ROOT:
             failures.append([name, 'not in publication source directories'])
-        if path.parts[0] in {'native','tools'} and path.suffix.lower() not in SOURCE_SUFFIXES and path.name != 'CMakeLists.txt':
+        story_segment = path.parts[:2] == ('tools', 'story-replays') and path.suffix == '.seg'   # input text only
+        if path.parts[0] in {'native','tools'} and path.suffix.lower() not in SOURCE_SUFFIXES and path.name != 'CMakeLists.txt' and not story_segment:
             failures.append([name,'not a source file'])
         if path.parts[0] == 'profiles' and name not in {'profiles/usa-v1.001.json','profiles/scenario2-v24.json','profiles/scenario3-v25_1.json','profiles/scenario1-usa-v25_1.json','profiles/scenario2-v25_1-v1_003.json','profiles/scenario2-v25_1-v2_000.json','profiles/scenario3-v25_1-redump.json'}:
             failures.append([name,'unreviewed generation profile'])
@@ -47,6 +48,11 @@ def main():
             failures.append([name, 'binary file'])
         if len(data) > 2_000_000:
             failures.append([name, 'unexpectedly large source file'])
+        if story_segment:
+            import sys
+            sys.path.insert(0, str(ROOT / 'tools'))
+            from sf3test import story
+            failures += [[name, 'story segment: ' + x] for x in story.check_committed(data.decode('utf-8', 'replace'))]
         for label, pattern in PATTERNS.items():
             if pattern.search(data):
                 failures.append([name,label])
