@@ -461,7 +461,7 @@ def aimed_turn(side, units, pol, press):
         press((d,), 8)
         press((), 10)
         now = pos()
-        moved = [k for k in before if now.get(k) != before[k]]
+        moved = [k for k in before if k in now and now[k] != before[k]]   # a unit that left the table did not move
         if moved:
             break
     if not moved:
@@ -478,6 +478,11 @@ def aimed_turn(side, units, pol, press):
             pol.attacks += 1
             return [(('C',), 6), ((), 30), ((RING['attack'],), 6), ((), 14), (('C',), 6), ((), 30),
                     (('C',), 6), ((), 40)] + tap(('C',), gap=40) * 4
+        if pol.idle % 4 == 3:
+            # the unit under control cannot move (boxed in by its own force on a bridge or in a
+            # corridor), so the probe never finds it: end its turn with Hold (C, ring DOWN, C)
+            pol.holds = getattr(pol, 'holds', 0) + 1
+            return [(('C',), 6), ((), 30), ((RING['hold'],), 6), ((), 14), (('C',), 6), ((), 40)] + tap(('C',), gap=40) * 2
         return tap(('B',), gap=16) if pol.idle % 3 == 0 else tap(('C',), gap=30)
     pol.idle = 0
     me = moved[0]
@@ -493,6 +498,8 @@ def aimed_turn(side, units, pol, press):
         fails = 0
         for _ in range(16):
             now = pos()
+            if me not in now:                      # the mover left the roster mid-turn (fell, withdrew)
+                break
             p = now[me]
             if dist(p) <= 1 or fails >= 8:
                 break
@@ -502,7 +509,7 @@ def aimed_turn(side, units, pol, press):
                 break
             press((d,), 8)
             press((), 10)
-            if pos()[me] != p:
+            if pos().get(me, p) != p:
                 steps += 1
                 pol.blocked.pop((p, step_of(p, d)), None)
             else:                                  # wall, cliff or the end of the move range
@@ -510,8 +517,8 @@ def aimed_turn(side, units, pol, press):
                 pol.blocked[(p, q)] = pol.blocked.get((p, q), 0) + (2 if steps <= 2 else 1)
                 fails += 1
     for _ in range(0 if pol.pathing else 10):
-        p = pos()[me]
-        if dist(p) <= 1:
+        p = pos().get(me)
+        if p is None or dist(p) <= 1:
             break
         tx, ty = min(live, key=lambda e: abs(e[0] - p[0]) + abs(e[1] - p[1]))
         dx = ('RIGHT' if tx > p[0] else 'LEFT') if tx != p[0] else None
@@ -521,13 +528,17 @@ def aimed_turn(side, units, pol, press):
         for d in order:
             press((d,), 8)
             press((), 10)
-            if pos()[me] != p:
+            if pos().get(me, p) != p:
                 went, steps = True, steps + 1
                 break
         if not went:                               # blocked or out of movement range
             break
+    if me not in pos():                            # gone mid-move: close whatever the game shows
+        return tap(('C',), gap=30)
     for _ in range(4):                             # never end on a tile another force unit holds
         now = pos()
+        if me not in now:
+            return tap(('C',), gap=30)
         if now[me] not in [v for k, v in now.items() if k != me]:
             break
         p = now[me]
@@ -535,12 +546,14 @@ def aimed_turn(side, units, pol, press):
             press((d,), 8)
             press((), 10)
             q = pos()
-            if q[me] != p and q[me] not in [v for k, v in q.items() if k != me]:
+            if me not in q or (q[me] != p and q[me] not in [v for k, v in q.items() if k != me]):
                 break
+    if me not in pos():
+        return tap(('C',), gap=30)
     adjacent = dist(pos()[me]) <= 1
     press(('C',), 6)
     press((), 30)                                  # command ring, cursor on Hold
-    near = dist(pos()[me]) <= 2                    # first-level spells reach 2 tiles (Blaze, Heal)
+    near = me in pos() and dist(pos()[me]) <= 2                    # first-level spells reach 2 tiles (Blaze, Heal)
     cast_now = near and pol.cast and pol.tried.get(me, 0) % 2 == 0
     if near and pol.cast:
         pol.tried[me] = pol.tried.get(me, 0) + 1
