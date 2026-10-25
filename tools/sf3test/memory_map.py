@@ -157,7 +157,16 @@ _SC2_HIGH_INVALID = (
     0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF9, 0xFA, 0xFC, 0xFD, 0xFE
 )
 
-INVALID_MAPS = {1: {0x70: 'black after the load on Beetle with a real BIOS'},
+# Sc1 scene table: 16-byte records at 0602CFA4, and the pointer to it is stored at 0602DA74,
+# right after record 0xAC.  So there are 0xAD scenes (0x00-0xAC), and a map id from 0xAD up reads
+# past the end (slot 0xAD is the pointer itself).  In round 20's sweep, 0xAD froze, AE-C0 crashed
+# and C1-FF froze.  On Beetle with a real BIOS (round 21), AE is black and C1 and FF show
+# 'CD READ ERROR'.
+SC1_SCENE_TABLE, SC1_SCENE_COUNT = 0x0602CFA4, 0xAD
+
+INVALID_MAPS = {1: {0x70: 'black after the load on Beetle with a real BIOS',
+                    **{m: 'past the end of the scene table (0xAD records); black or CD READ ERROR on Beetle '
+                          'with a real BIOS' for m in range(SC1_SCENE_COUNT, 0x100)}},
                 2: {m: 'black or CD READ ERROR after the load on Beetle with a real BIOS (V2.000)'
                     for m in _SC2_HIGH_INVALID},
                 3: {0x4D: 'black after the load on Beetle with a real BIOS, then map id 0',
