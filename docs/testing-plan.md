@@ -228,3 +228,9 @@ No crash, FATAL, unresolved call, hang, black or frozen run. The VDP2 features t
   Fixed by mirroring backup RAM over the whole area; all four maps now run 8000 VBlanks ok.
 - 0x4D: black screen after the load on Beetle, then map id 0, so it is not a map the game can enter; the
   port's crash (4-byte write to 00FF00FF after a jump to 0) is not a port bug. Marked invalid.
+
+## GPU renderer against the CPU path
+
+`gpu_parity OUTDIR SHADERDIR` (built from `tools/tests/gpu-parity.cpp`) renders synthetic VDP1 command lists and VDP2 register scenes written by the test itself (sprites, distorted floor tiles, colour-calculation effects, clipping, priority against an NBG0 bitmap and three random command replays). No disc or BIOS data is used. Each scene goes through the accurate CPU path and then through the GPU renderer at 1×, 2× and 4×. 1× must match the CPU frame exactly. At 2× and 4×, the number of output dots whose colour exists in no CPU dot nearby must stay within per-scene limits. Those dots are subpixel resampling of distorted polygons, not glitches. For each scale the test writes `-cpu`, `-gpu-Nx` and `-diff-Nx` PNGs: grey means equal, yellow near, magenta alien, red miss and cyan lost. Linux CI runs it on lavapipe (artifact `gpu-parity-linux-lavapipe`). The package jobs run it on Metal for macOS and Vulkan for Linux (artifact `gpu-parity-<target>`).
+
+The app defaults to internal scale 1× at 4:3, which uses the accurate CPU path. The GPU path runs only when the player picks 2×/4×/5× or 16:9.
