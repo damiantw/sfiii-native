@@ -1,6 +1,6 @@
-# Shining Force III Native
+# Shining Force III Recomp — Scenarios 1, 2 & 3
 
-An experimental native static recompilation project for **Shining Force III**, with profiles for **Scenario 1 USA MK-81383 V1.001**, **Scenario 2 Translation Project v24** and **Scenario 3 Translation Project v25.1**. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; experimental Linux x64, Apple Silicon and Intel Mac candidates are built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services; static recompilation does not remove the need to model those systems.
+**Shining Force III Recomp (Shining Force 3 Recomp)** is an experimental native PC static recompilation of Sega Saturn's **Shining Force III**, with profiles for **Scenario 1 USA MK-81383 V1.001**, **Scenario 2 Translation Project v24** and **Scenario 3 Translation Project v25.1**. Game SH-2 code is generated locally as C++ and compiled for the PC. Windows is the established development platform; experimental Linux x64, Apple Silicon and Intel Mac candidates are built separately. The runtime supplies Saturn graphics, sound, storage and other hardware services; static recompilation does not remove the need to model those systems.
 
 ## Current status — October 24, 2026
 
