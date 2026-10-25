@@ -44,6 +44,9 @@ CHECK = 30           # frames between flag reads
 SHOT_EVERY = 3000    # frames between progress shots
 MAP_HOLD = 20        # flag checks a map goal's map must hold
 CLOCK = '2026-01-01T00:00:00'   # SMPC clock at power-on for every recorded or replayed run
+# Segments are recorded with the agent's default pause at VBlank-IN; SF3_AGENT_LINE (used by Beetle
+# diffs) moves the step edge and would shift every press, so story runs never inherit it.
+os.environ.pop('SF3_AGENT_LINE', None)
 
 
 class Done(Exception):
