@@ -1792,7 +1792,7 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..5720321 100644
+index a17d926..c6a759d 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
 @@ -1,11 +1,11 @@
@@ -2114,6 +2114,18 @@ index a17d926..5720321 100644
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
+@@ -704,3 +842,11 @@ int saturn_main(const SaturnConfig& cfg) {
+     std::fflush(stdout);
+     std::_Exit(0);                  // the slave's thread is parked: do not wait for it
+ }
++
++// The master's budget counts down from kBudget (quarter cycles) between polls, and g_vtime is the
++// time its slice began: what it has spent is time already passed, and the poll adds all of it
++// (an overspent budget too), so this never runs ahead of the next poll's time.
++uint64_t sat_now_cpu() {
++    if (g_cfg.realtime || g_cpu != &g_master) return sat_now();
++    return g_vtime + quarters_ns((int64_t)kBudget - g_master.budget);
++}
 diff --git a/runtime/src/machine/mmio.cpp b/runtime/src/machine/mmio.cpp
 index b9dd332..22fd0fd 100644
 --- a/runtime/src/machine/mmio.cpp
@@ -2298,7 +2310,7 @@ index 33a2cdd..590690a 100644
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..ad3037a 100644
+index 6cbd98f..4b0f1c8 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -2309,7 +2321,17 @@ index 6cbd98f..ad3037a 100644
      std::string settings;           // the player's settings file (host.cpp); "-": none, the defaults; empty: settings.ini
                                      // in saturn-recomp's directory in the user's data directory
      std::string wav;                // the run's sound to this file (16-bit stereo, 44 100 Hz)
-@@ -103,7 +104,12 @@ void slave_off();                   // SSHOFF: held in reset
+@@ -88,6 +89,9 @@ extern SH2Context* g_cpu;           // the CPU running now
+ 
+ int  saturn_main(const SaturnConfig& cfg);
+ uint64_t sat_now();                 // ns since power-on (virtual or host)
++// sat_now() plus the master's time spent since its last poll: the time of the access it is making
++// (devices that must meet the CPU between polls). The slave, and host time, get sat_now().
++uint64_t sat_now_cpu();
+ uint64_t sat_vblanks();
+ inline bool sat_resuming() { return g_cfg.resume && sat_vblanks() < g_cfg.resume; }   // --resume's script still plays
+ void sat_trace(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+@@ -103,7 +107,12 @@ void slave_off();                   // SSHOFF: held in reset
  void slave_idle_check(uint32_t ftcsr);   // the slave read its FTCSR: yield if nothing is there
  void slave_kick();                  // SINIT: the slave's input capture, and the CPU to it
  void master_poll_devices();
@@ -2322,7 +2344,7 @@ index 6cbd98f..ad3037a 100644
  
  // ---- dumps of the machine (state.cpp; state.h for the parts) ----------------------------------
  void state_enable();                // the run has safe moments: a game's task switch
-@@ -112,10 +118,18 @@ void state_poll();                  // from the master's polls: dumps due, a sto
+@@ -112,10 +121,18 @@ void state_poll();                  // from the master's polls: dumps due, a sto
  void state_point(SH2Context& c);    // a safe moment: c's registers and PC are all the run needs to go on
  void state_stop(const char* why);   // the run stops at the next dump, or soon without one
  void state_finish();                // the last dump written
@@ -2341,7 +2363,7 @@ index 6cbd98f..ad3037a 100644
  
  // ---- the BIOS (bios.cpp) -----------------------------------------------------------
  void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
-@@ -213,6 +227,8 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
+@@ -213,6 +230,8 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
  void video_init();
  void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
  void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
@@ -3554,10 +3576,29 @@ index b40fefc..e5b0419 100644
 +    s(g_samples), s(g_counter), s(g_key_execute), s(g_stack), s(g_stack_pos), s(g_dsp), s(g_noise), s(g_rbl), s(g_rbp), s(g_cpu_level);
  }
 diff --git a/runtime/src/sound/sound.cpp b/runtime/src/sound/sound.cpp
-index 319a3f3..8e866c0 100644
+index 319a3f3..5d13f11 100644
 --- a/runtime/src/sound/sound.cpp
 +++ b/runtime/src/sound/sound.cpp
-@@ -66,16 +66,95 @@ static void bus_write(uint32_t a, uint32_t v, int size) {
+@@ -25,6 +25,7 @@
+ #include "sound.h"
+ #include "host.h"
+ #include "video.h"
++#include <cstdlib>
+ #include <cstdio>
+ #include <vector>
+ extern "C" {
+@@ -38,6 +39,10 @@ static bool g_on;                                // SNDON: the 68000 runs
+ static bool g_audio;                             // a host device takes the samples
+ static uint64_t g_samples;                       // made since power-on
+ static int g_debt;                               // 68000 cycles owed to the current sample
++static int g_part;                               // of the current sample's 256 cycles, those given already
++// SF3_SCSP_SYNC=0: the SH-2's sound accesses no longer bring the 68000 and the SCSP up to its
++// cycle (they run only at the device polls, as before), for A/B comparisons.
++static const bool kSync = [] { const char* v = std::getenv("SF3_SCSP_SYNC"); return !v || std::atoi(v) != 0; }();
+ static std::vector<int16_t> g_out;               // made this poll, interleaved
+ static FILE* g_wav;
+ static uint64_t g_wav_frames;
+@@ -66,16 +71,95 @@ static void bus_write(uint32_t a, uint32_t v, int size) {
      if (a < 0x200000) scsp_write(a & 0xFFF, v, size);
  }
  
@@ -3659,7 +3700,7 @@ index 319a3f3..8e866c0 100644
  }
  
  void sound_irq_changed() {
-@@ -97,8 +176,7 @@ static void wav_header() {
+@@ -97,8 +181,7 @@ static void wav_header() {
  }
  
  void sound_init() {
@@ -3669,10 +3710,19 @@ index 319a3f3..8e866c0 100644
      scsp_reset();
      std::string wav = movie_on() ? movie_wav() : g_cfg.wav;
      if (!wav.empty()) {
-@@ -119,6 +197,24 @@ void sound_power(bool on) {
+@@ -113,19 +196,42 @@ void sound_power(bool on) {
+     if (on && !g_on) {
+         m68k_pulse_reset();
+         g_debt = 0;
++        g_part = 0;
+         sat_trace("68000 reset: SSP %06X, PC %06X", m68k_get_reg(nullptr, M68K_REG_SP), m68k_get_reg(nullptr, M68K_REG_PC));
+     }
+     g_on = on;
      if (on) m68k_set_irq((unsigned)scsp_cpu_level());
  }
  
+-void sound_tick() {
+-    uint64_t due = sat_now() * 441 / 10000000;   // samples at 44 100 Hz
 +void sound_replay_cpu(bool on) {
 +    static bool ready;
 +    if (!ready) { cpu_setup(); ready = true; }
@@ -3681,7 +3731,7 @@ index 319a3f3..8e866c0 100644
 +    if (on) m68k_set_irq((unsigned)scsp_cpu_level());
 +}
 +
-+void sound_replay_first_slice(int cycles) { g_debt = cycles - 256; }
++void sound_replay_first_slice(int cycles) { g_debt = cycles - 256; g_part = 0; }
 +
 +void sound_replay_sample(int16_t ext_l, int16_t ext_r, int16_t out[2]) {
 +    if (g_on) {
@@ -3691,9 +3741,70 @@ index 319a3f3..8e866c0 100644
 +    scsp_sample(ext_l, ext_r, out);
 +}
 +
- void sound_tick() {
-     uint64_t due = sat_now() * 441 / 10000000;   // samples at 44 100 Hz
++// The samples due by NOW (virtual ns), made into g_out; with PARTIAL, the 68000 also runs the cycles
++// of the next sample up to NOW (the SCSP's state between samples is the 68000's alone).
++static void catch_up(uint64_t now, bool partial) {
++    const uint64_t t = now * 441;                // in units of 1/10 000 000 of a sample
++    const uint64_t due = t / 10000000;           // samples at 44 100 Hz
      while (g_samples < due) {
+         if (g_on) {
+-            g_debt += 256;
++            g_debt += 256 - g_part;
+             if (g_debt > 0) g_debt -= m68k_execute(g_debt);
+         }
++        g_part = 0;
+         int16_t cd[2], s[2];
+         cd_audio_sample(cd);
+         scsp_sample(cd[0], cd[1], s);
+@@ -134,6 +240,22 @@ void sound_tick() {
+         g_out.push_back(s[1]);
+         ++g_samples;
+     }
++    if (!partial || !g_on || g_samples != due) return;
++    const int at = (int)((t % 10000000) * 256 / 10000000);   // 68000 cycles into the sample
++    if (at <= g_part) return;
++    g_debt += at - g_part;
++    g_part = at;
++    if (g_debt > 0) g_debt -= m68k_execute(g_debt);
++}
++
++// The SH-2 is about to touch sound RAM or the SCSP: what the 68000 and the SCSP did before its
++// cycle is done first, so a command it writes or a flag it reads meets them at the right sample.
++static inline void sync_to_cpu() {
++    if (kSync) catch_up(sat_now_cpu(), true);
++}
++
++void sound_tick() {
++    catch_up(sat_now(), false);
+     if (g_out.empty()) return;
+     if (g_audio) host_audio_push(g_out.data(), (int)g_out.size() / 2);
+     if (g_wav) {
+@@ -158,18 +280,24 @@ void sound_close() {
+ 
+ // ---- the SH-2's side: sound RAM at 0x05A00000, the registers at 0x05B00000 ------------------------
+ uint32_t sound_read(uint32_t a, int size) {
++    sync_to_cpu();
+     if (a < 0x05B00000u) return mem_rd(g_sound_ram, a & 0x7FFFF, size);
+     return scsp_read(a & 0xFFF, size);
+ }
+ 
+ void sound_write(uint32_t a, uint32_t v, int size) {
++    sync_to_cpu();
+     if (a < 0x05B00000u) { mem_wr(g_sound_ram, a & 0x7FFFF, v, size); return; }
+     scsp_write(a & 0xFFF, v, size);
+ }
+ 
+ 
+ void sound_state(State& s) {
+-    s(g_on), s(g_samples), s(g_debt), s(g_peak_frames);
++    // A sample begun (g_part cycles given) is kept as the same debt with none given: the next
++    // sample's 256 then make up the same cycles.
++    int debt = g_debt - g_part;
++    s(g_on), s(g_samples), s(debt), s(g_peak_frames);
++    if (s.loading) g_debt = debt, g_part = 0;
+     std::vector<uint8_t> cpu(m68k_state_size());
+     m68k_state_get(cpu.data());
+     s.vec(cpu);
 diff --git a/runtime/src/sound/sound.h b/runtime/src/sound/sound.h
 index 1786242..0f8d027 100644
 --- a/runtime/src/sound/sound.h
@@ -6065,15 +6176,16 @@ index 0000000..068aa64
 +}
 diff --git a/runtime/tests/scsp_test.cpp b/runtime/tests/scsp_test.cpp
 new file mode 100644
-index 0000000..6bd3feb
+index 0000000..6c0d3f1
 --- /dev/null
 +++ b/runtime/tests/scsp_test.cpp
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,155 @@
 +// The SCSP and the sound 68000 against numbers measured on Beetle Saturn as a black box (its output
 +// and save states only).
 +#include <cstring>
 +#include "m68k.h"
 +#include "../src/sound/sound.h"
++#include "saturn.h"
 +#include <cstdio>
 +#include "test.h"
 +
@@ -6192,6 +6304,36 @@ index 0000000..6bd3feb
 +        timer_a_polls(c.tima, c.ctl, got, c.n);
 +        for (int i = 0; i < c.n; ++i) CHECK_EQ(got[i], c.want[i]);
 +    }
++}
++
++// An SH-2 access to sound RAM between two polls first brings the 68000 up to the master's time
++// (sat_now_cpu: the poll's time plus what the master has spent since), to the cycle.
++TEST(an_sh2_sound_access_runs_the_68000_up_to_the_masters_time) {
++    sound_replay_cpu(false);
++    sound_power(false);
++    std::memset(g_sound_ram, 0, sizeof g_sound_ram);
++    const uint8_t vec[] = {0x00, 0x07, 0xF0, 0x00, 0x00, 0x07, 0xE0, 0x00};   // SSP, PC
++    std::memcpy(g_sound_ram, vec, sizeof vec);
++    const uint8_t loop[] = {0x52, 0x87, 0x60, 0xFC};                          // addq.l #1,d7; bra.s
++    std::memcpy(g_sound_ram + 0x7E000, loop, sizeof loop);
++    SH2Context* const was = g_cpu;
++    g_cpu = &g_master;
++    const int32_t budget = g_master.budget;
++    g_master.budget = 0;                          // its slice spent
++    sound_power(true);
++    m68k_set_reg(M68K_REG_D7, 0);
++    sound_read(0x05A00000u, 2);
++    const uint64_t t0 = sat_now_cpu();
++    const uint32_t d0 = m68k_get_reg(nullptr, M68K_REG_D7);
++    g_master.budget -= 4 * 28636;                 // 28 636 cycles more (overspent): 1 ms at 28.6364 MHz
++    CHECK_EQ(sat_now_cpu() - t0 + 1 >= 999990 && sat_now_cpu() - t0 <= 1000010, true);
++    sound_read(0x05A00000u, 2);
++    const uint32_t d1 = m68k_get_reg(nullptr, M68K_REG_D7);
++    // 1 ms of the 68000 (11 289.6 cycles) is 470 loops of 24 cycles
++    CHECK_EQ(d1 - d0 >= 469 && d1 - d0 <= 471, true);
++    g_master.budget = budget;
++    g_cpu = was;
++    sound_power(false);
 +}
 diff --git a/runtime/tests/vdp1_raster_test.cpp b/runtime/tests/vdp1_raster_test.cpp
 new file mode 100644
