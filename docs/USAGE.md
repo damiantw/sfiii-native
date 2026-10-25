@@ -22,6 +22,15 @@ The window waits for each field's real-time due point first and shows the pictur
 
 To measure pacing, set `SF3_FRAMETIME=` (summary only) or `SF3_FRAMETIME=present.csv` (also writes every present-to-present interval) and quit through `--vblanks N`. At exit the log reports present intervals, the time each field took to run (emulation, composition and present), the pace wait, and how many fields started behind schedule. A machine that holds 60 fps shows a present interval near 16.7 ms with few fields behind schedule; many fields behind schedule mean the field cost exceeds the 16.7 ms budget on that host.
 
+To prove a runtime change leaves the game unchanged, replay the same input headless with a fixed clock and compare pictures, sound, backup memory and the whole machine state (work RAM included) at the end:
+
+```sh
+saturn --headless --cue game.cue --save copy.bin --settings - --input @route.txt --vblanks 12000 \
+  --clock 2026-01-01T12:00:00 --shot 1000,1100,... --wav out.wav --state-at 11990 --state-out end.state
+```
+
+`--clock` pins the SMPC clock; without it the game reads the host's time, and a few bytes of work RAM differ between runs. A command-line `--state-out` needs no `SF3_STATE_ID`: the state is then tied to the build's recompiled modules and the disc's file name. Compare state files by their parts (everything after the identity header).
+
 ## Display
 
 Use **1× / 2× / 4× / 5×** for supported geometry resolution. 5× renders 56% more pixels than 4×, so it needs more GPU headroom. Source texture detail remains original. Vulkan is preferred; Direct3D 12 is another supported backend. `SF3_GPU_BACKEND=vulkan` or `direct3d12` can force one for troubleshooting. Unsupported GPU/video paths retain a native fallback, with different performance and enhancement coverage.
