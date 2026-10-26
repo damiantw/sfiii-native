@@ -132,7 +132,7 @@ def candidate(job):
     shutil.copyfile(job['backup'], out / 'backup.bin')
     job = dict(job, backup=str(out / 'backup.bin'))
     r = agent.start(job['saturn'], run_args(job, job['state']), str(out / 'o'))
-    r._sock.settimeout(120)
+    r._sock.settimeout(float(os.environ.get('SF3_AGENT_TIMEOUT', '120')))
     try:
         s = S.Recorder(r, job['profile'], copy.deepcopy(job['goals']), out)
         s.loaded, s.g, s.held = True, 0, ''

@@ -167,7 +167,7 @@ def start_run(saturn, cue, target, scenario, work, coverage=True, clock=CLOCK):
     os.environ.setdefault('SDL_VIDEO_DRIVER', 'dummy')
     os.environ.setdefault('SDL_AUDIO_DRIVER', 'dummy')
     r = agent.start(str(saturn), args, str(work / 'o'))
-    r._sock.settimeout(120)
+    r._sock.settimeout(float(os.environ.get('SF3_AGENT_TIMEOUT', '120')))  # long box stalls: raise it
     return r
 
 
