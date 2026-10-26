@@ -1970,7 +1970,7 @@ index 5b42ace..6c3c482 100644
      }
  }
 diff --git a/runtime/src/machine/cdblock.cpp b/runtime/src/machine/cdblock.cpp
-index cd80763..95a62e4 100644
+index cd80763..2e41b5e 100644
 --- a/runtime/src/machine/cdblock.cpp
 +++ b/runtime/src/machine/cdblock.cpp
 @@ -19,6 +19,7 @@
@@ -2086,6 +2086,89 @@ index cd80763..95a62e4 100644
          }
          report();
          g_hirq |= CMOK;
+@@ -457,12 +490,12 @@ static void command() {
+         g_hirq |= CMOK | DRDY;
+         break;
+     }
+-    case 0x30: g_cddev = (uint8_t)f; answer(status_hi(), 0, 0, 0); g_hirq |= CMOK | ESEL; break;
++    case 0x30: g_cddev = (uint8_t)f; report(); g_hirq |= CMOK | ESEL; break;
+     case 0x31: answer(status_hi(), 0, (uint16_t)(g_cddev << 8), 0); g_hirq |= CMOK; break;
+     case 0x32: answer(status_hi(), 0, (uint16_t)(g_lastbuf << 8), 0); g_hirq |= CMOK; break;
+     case 0x40:                                  // Set Filter Range
+         if (f < kFilters) { g_filter[f].fad = (uint32_t)(cr1 & 0xFF) << 16 | cr2; g_filter[f].range = (uint32_t)(cr3 & 0xFF) << 16 | cr4; }
+-        answer(status_hi(), 0, 0, 0); g_hirq |= CMOK | ESEL;
++        report(); g_hirq |= CMOK | ESEL;
+         break;
+     case 0x41: {
+         Filter& F = g_filter[f % kFilters];
+@@ -476,7 +509,7 @@ static void command() {
+             F.chan = cr1 & 0xFF; F.smmask = cr2 >> 8; F.cimask = cr2 & 0xFF; F.fid = cr3 & 0xFF;
+             F.smval = cr4 >> 8; F.cival = cr4 & 0xFF;
+         }
+-        answer(status_hi(), 0, 0, 0); g_hirq |= CMOK | ESEL;
++        report(); g_hirq |= CMOK | ESEL;
+         break;
+     case 0x43: {
+         Filter& F = g_filter[f % kFilters];
+@@ -489,7 +522,7 @@ static void command() {
+             if (cr1 & 0x80) { uint8_t t = g_filter[f].tru, fl = g_filter[f].fals; reset_filter(f); g_filter[f].tru = t; g_filter[f].fals = fl; }
+             else g_filter[f].mode = cr1 & 0xFF;
+         }
+-        answer(status_hi(), 0, 0, 0); g_hirq |= CMOK | ESEL;
++        report(); g_hirq |= CMOK | ESEL;
+         break;
+     case 0x45: answer((uint16_t)(status_hi() | g_filter[f % kFilters].mode), 0, (uint16_t)(f << 8), 0); g_hirq |= CMOK | ESEL; break;
+     case 0x46:                                  // Set Filter Connection
+@@ -497,7 +530,7 @@ static void command() {
+             if (cr1 & 1) g_filter[f].tru = cr2 >> 8;
+             if (cr1 & 2) g_filter[f].fals = cr2 & 0xFF;
+         }
+-        answer(status_hi(), 0, 0, 0); g_hirq |= CMOK | ESEL;
++        report(); g_hirq |= CMOK | ESEL;
+         break;
+     case 0x47: answer(status_hi(), (uint16_t)(g_filter[f % kFilters].tru << 8 | g_filter[f % kFilters].fals), (uint16_t)(f << 8), 0); g_hirq |= CMOK | ESEL; break;
+     case 0x48: {                                // Reset Selector
+@@ -510,7 +543,7 @@ static void command() {
+             if (fl & 0x40) for (int i = 0; i < kFilters; ++i) g_filter[i].tru = (uint8_t)i;
+             if (fl & 0x80) for (int i = 0; i < kFilters; ++i) g_filter[i].fals = 0xFF;
+         }
+-        answer(status_hi(), 0, 0, 0); g_hirq |= CMOK | ESEL;
++        report(); g_hirq |= CMOK | ESEL;
+         break;
+     }
+     case 0x50: answer(status_hi(), (uint16_t)g_free.size(), 0x1800, kBlocks); g_hirq |= CMOK; break;
+@@ -518,7 +551,7 @@ static void command() {
+     case 0x52: {                                // Calculate Actual Size (words)
+         g_calcsize = 0;
+         for (int b : pick(f, cr2, cr4)) { (void)b; g_calcsize += g_getlen / 2; }
+-        answer(status_hi(), 0, 0, 0); g_hirq |= CMOK | ESEL;
++        report(); g_hirq |= CMOK | ESEL;
+         break;
+     }
+     case 0x53: answer((uint16_t)(status_hi() | (g_calcsize >> 16 & 0xFF)), (uint16_t)g_calcsize, 0, 0); g_hirq |= CMOK; break;
+@@ -533,19 +566,19 @@ static void command() {
+     case 0x60: {                                // Set Sector Length
+         static const int len[4] = {2048, 2336, 2340, 2352};
+         if ((cr1 & 0xFF) < 4) g_getlen = len[cr1 & 0xFF];
+-        answer(status_hi(), 0, 0, 0); g_hirq |= CMOK | ESEL;
++        report(); g_hirq |= CMOK | ESEL;
+         break;
+     }
+     case 0x61: case 0x63: {                     // Get (Then Delete) Sector Data
+         g_xblocks = pick(f, cr2, cr4);
+         g_xfer = X_SECTORS; g_xpos = 0; g_xcount = 0; g_xdelete = cmd == 0x63; g_xpart = f;
+-        answer(status_hi(), 0, 0, 0);
++        report();
+         g_hirq |= CMOK | DRDY;
+         break;
+     }
+     case 0x62:                                  // Delete Sector Data
+         remove_blocks(f, pick(f, cr2, cr4));
+-        answer(status_hi(), 0, 0, 0); g_hirq |= CMOK | EHST;
++        report(); g_hirq |= CMOK | EHST;
+         break;
+     case 0x67: answer(status_hi(), 0, 0, 0); g_hirq |= CMOK; break;   // Get Copy Error: none
+     case 0x70: {                                // Change Directory
 @@ -587,7 +620,7 @@ static void command() {
          report(); g_hirq |= CMOK;
          break;
