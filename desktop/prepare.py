@@ -180,6 +180,10 @@ def prepare(cue, work, scenario=None):
             atomic_json(stage/'activation.json',dict(previous_build=old,new_build=build.name,live_backups_replaced=False))
             atomic_json(work/'game.json',dict(cue=str(cue),source=str(source),profile_id=profile['id']))
             (work/'save-import-python.txt').write_text(str(python),encoding='utf-8')
+            shutil.copyfile(APP/'desktop/ai_packs.py',work/'ai-packs-helper.py')
+            (work/'ai-profiles').mkdir(exist_ok=True)
+            for artwork_profile in (APP/'profiles').glob('*.json'):
+                shutil.copyfile(artwork_profile,work/'ai-profiles'/artwork_profile.name)
             selection = work/'native-build.txt.part';selection.write_text(build.name,encoding='utf-8');os.replace(selection,work/'native-build.txt')
             atomic_json(work/'desktop-ready.json',dict(build_id=build_id,build_directory=build.name,profile_id=profile['id'],title=profile['title'],executable_sha256=sha(build/'saturn.exe'),cue=str(cue),source=str(source),version=manifest['version']))
         status('ready','Ready to play.')

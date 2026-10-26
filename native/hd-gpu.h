@@ -13,8 +13,14 @@ class HdGpu {
     SDL_GPURenderState* state_=nullptr;
     SDL_Texture *white_=nullptr,*output_=nullptr;
     std::vector<uint32_t> offsets_;
+    std::vector<size_t> resident_;
+    const HdAssets* pack_=nullptr;
+    uint32_t art_capacity_=0;
+    bool resident_valid_=false;
     bool ready_=false;
+    bool owns_device_=false;
     bool upload(SDL_GPUBuffer*,const std::vector<uint32_t>&);
+    bool prepare_art(const HdAssets&,const std::vector<size_t>&);
 public:
     // Backend can be explicitly selected with SF3_GPU_BACKEND=vulkan/direct3d12.
     SDL_Renderer* create_renderer(SDL_Window* window);
@@ -23,7 +29,8 @@ public:
     bool ready() const {return ready_;}
     const char* backend() const {return device_?SDL_GetGPUDeviceDriver(device_):"none";}
     const char* adapter() const {return device_?SDL_GetStringProperty(SDL_GetGPUDeviceProperties(device_),SDL_PROP_GPU_DEVICE_NAME_STRING,"unknown"):"none";}
-    // Call before destroying the renderer. Device is owned by this class.
+    // Call before destroying the renderer. The device may be shared with the
+    // native geometry renderer, or owned when create_renderer made it.
     void release();
     void destroy_device();
 };

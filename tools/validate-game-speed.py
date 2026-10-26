@@ -43,6 +43,7 @@ def main():
     ap.add_argument('--frames', type=int)
     ap.add_argument('--render-scale', type=int, choices=(1, 2, 4, 5))
     ap.add_argument('--aa', action='store_true', help='Enable the optional Light AA presentation pass')
+    ap.add_argument('--ray', action='store_true', help='Enable experimental GPU screen-space ray shadows')
     a = ap.parse_args()
     exe, work, cue, out = map(external, (a.exe, a.work, a.cue, a.out))
     case = next(c for c in json.loads(a.manifest.read_text())['cases'] if c['name'] == a.case)
@@ -108,6 +109,7 @@ def main():
             env.pop(key, None)
         env.update(SF3_GAME_SPEED=str(speed), SF3_PERF_FROM=str(start+1),
                    SF3_AA='1' if a.aa else '0',
+                   SF3_RAY_SHADOWS='1' if a.ray else '0',
                    SF3_STATE_ID=identity,
                    SF3_GPU_CAPTURE_AT=str(end),
                    SF3_CRASH_DIR=str(folder), SF3_RAM_DUMP=str(folder/'crash-wram-high.bin'))
@@ -154,6 +156,7 @@ def main():
     unchanged = all(not case[k] or sha(external(work/case[k])) == seeds[k] for k in seeds)
     report = dict(passed=all(r['passed'] for r in results) and unchanged, case=a.case,
                   antialiasing='Light' if a.aa else 'Off',
+                  ray_shadows='Low' if a.ray else 'Off',
                   executable_sha256=sha(exe), render_scale=a.render_scale, start=start, end=end,
                   clock=case['clock'], input_sha256=sha(recording), source_saves_unchanged=unchanged,
                   initial_saves=seeds, results=results)

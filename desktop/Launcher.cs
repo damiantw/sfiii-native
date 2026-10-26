@@ -20,7 +20,7 @@ class Launcher : Form {
     readonly string root = AppDomain.CurrentDomain.BaseDirectory;
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
     readonly TextBox cue = new TextBox(), work = new TextBox();
-    readonly Button selectDisc = new Button(), selectWork = new Button(), prepare = new Button(), play = new Button(), cancel = new Button(), controller = new Button(), import = new Button(), openFolder = new Button();
+    readonly Button selectDisc = new Button(), selectWork = new Button(), prepare = new Button(), play = new Button(), cancel = new Button(), controller = new Button(), import = new Button(), openFolder = new Button(), graphics = new Button(), originalGraphics = new Button();
     readonly Label state = new Label();
     readonly ComboBox gameChoice = new ComboBox();
     int activeGame;
@@ -59,7 +59,7 @@ class Launcher : Form {
     }
     public Launcher(string testRoot) {
         Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-        Text="Shining Force III Native"; ClientSize=new Size(850,405);MinimumSize=Size;MaximumSize=Size;
+        Text="Shining Force III Native"; ClientSize=new Size(850,455);MinimumSize=Size;MaximumSize=Size;
         Font=new Font("Segoe UI",10);StartPosition=FormStartPosition.CenterScreen;FormBorderStyle=FormBorderStyle.FixedSingle;MaximizeBox=false;
         TextAt("Shining Force III Native",24,20,800,35).Font=new Font("Segoe UI",20,FontStyle.Bold);
         TextAt("Game",25,65,120,25);
@@ -89,6 +89,9 @@ class Launcher : Form {
         ButtonAt(import,"Import saves",430,346,125,delegate {LaunchScript("import-saturn-save.ps1",true);});
         ButtonAt(openFolder,"Open data folder",565,346,145,delegate {if(Directory.Exists(work.Text)) Process.Start("explorer.exe",Quote(work.Text));});
         ButtonAt(cancel,"Cancel",720,346,100,delegate {CancelWorker();});
+        ButtonAt(graphics,"Optional graphics...",25,397,180,delegate {SelectGraphics();});
+        ButtonAt(originalGraphics,"Use original graphics",215,397,200,delegate {RunGraphicsTool(null);});
+        TextAt("Optional local artwork; build packs from your own disc.",430,403,395,34);
         fallbackSettingsPath=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SFIII Native","launcher.json");
         settingsPath=Path.Combine(root,"launcher-settings.json");
         work.Text=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SFIII Native","Game");
@@ -145,12 +148,13 @@ class Launcher : Form {
         if(busy)return;
         bool ready=Ready(),playing=game!=null;
         play.Enabled=ready && !playing;controller.Enabled=ready && !playing;import.Enabled=ready && !playing;
+        graphics.Enabled=ready && !playing;originalGraphics.Enabled=ready && !playing && File.Exists(Path.Combine(work.Text,"ai-packs.json"));
         gameChoice.Enabled=!playing;prepare.Enabled=packageId!=null && !playing;selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!playing;
         cancel.Enabled=false;
         state.Text=packageId==null ? "Extract the complete application ZIP before running it." : playing ? "Game running. Close the game to change setup or import saves." : ready ? "Ready to play." : "Select your CUE or CHD image and click Prepare game.";
     }
     void SetBusy(bool value) {
-        busy=value;gameChoice.Enabled=!value;prepare.Enabled=play.Enabled=controller.Enabled=import.Enabled=selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!value;
+        busy=value;gameChoice.Enabled=!value;prepare.Enabled=play.Enabled=controller.Enabled=import.Enabled=graphics.Enabled=originalGraphics.Enabled=selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!value;
         cancel.Enabled=value;progress.Style=value ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;progress.Value=0;
         if(!value)RefreshReady();
     }
@@ -217,6 +221,24 @@ class Launcher : Form {
         return new ProcessStartInfo(Path.Combine(work.Text,"Controller Setup.cmd")) {UseShellExecute=true,WorkingDirectory=work.Text,WindowStyle=ProcessWindowStyle.Normal};
     }
     void LaunchControllerSetup() {try {Process.Start(ControllerSetupStart());} catch(Exception e) {MessageBox.Show(this,e.Message,"Could not open controller setup");}}
+    void SelectGraphics() {
+        using(var d=new OpenFileDialog {Filter="Graphics builder report (packs-report.json)|packs-report.json|JSON files (*.json)|*.json",Title="Choose packs-report.json from the optional graphics builder"})
+            if(d.ShowDialog(this)==DialogResult.OK)RunGraphicsTool(d.FileName);
+    }
+    void RunGraphicsTool(string report) {
+        if(busy || game!=null || !Ready())return;
+        try {
+            string python=Path.Combine(root,"payload","python","python.exe");
+            string script=Path.Combine(root,"payload","app","desktop","ai_packs.py");
+            string args="-X utf8 -B "+Quote(script)+(report==null ? " detach" : " attach --report "+Quote(report)+" --profiles "+Quote(Path.Combine(root,"payload","app","profiles")))+" --game-dir "+Quote(work.Text);
+            var start=new ProcessStartInfo(python,args) {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
+            using(var process=Process.Start(start)) {
+                string output=process.StandardOutput.ReadToEnd(),error=process.StandardError.ReadToEnd();process.WaitForExit();
+                if(process.ExitCode!=0)throw new InvalidOperationException(String.IsNullOrWhiteSpace(error)?output:error);
+            }
+            RefreshReady();state.Text=report==null ? "Original artwork selected. Saves are unchanged." : "Optional artwork attached. Choose AI graphics in the game's menu.";
+        } catch(Exception error) {MessageBox.Show(this,error.Message,"Optional graphics");}
+    }
     [STAThread] static void Main(string[] args) {
         Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
         string testRoot=args.Length==2 && (args[0]=="--self-test" || args[0]=="--self-test-ready") ? Path.GetFullPath(args[1]) : null;
@@ -232,7 +254,7 @@ class Launcher : Form {
             form.work.Text=testRoot;form.smokePlayRoot=testRoot;
             form.Shown+=delegate {
                 form.RefreshReady();
-                if(!form.Ready() || !form.play.Enabled || !form.controller.Enabled || !form.import.Enabled) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared controls are not ready");Environment.ExitCode=1;form.Close();return;}
+                if(!form.Ready() || !form.play.Enabled || !form.controller.Enabled || !form.import.Enabled || !form.graphics.Enabled || form.originalGraphics.Enabled!=File.Exists(Path.Combine(testRoot,"ai-packs.json"))) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared controls are not ready");Environment.ExitCode=1;form.Close();return;}
                 if(form.gameChoice.SelectedIndex!=form.activeGame || !form.gameChoice.Text.Contains("Scenario "+(form.activeGame+1))) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared game selection is incorrect");Environment.ExitCode=1;form.Close();return;}
                 form.Refresh();form.gameChoice.Refresh();Application.DoEvents();
                 using(var image=new Bitmap(form.Width,form.Height)) {form.DrawToBitmap(image,new Rectangle(Point.Empty,form.Size));image.Save(Path.Combine(testRoot,"ready-launcher.png"));}
@@ -243,8 +265,8 @@ class Launcher : Form {
         if(testRoot!=null) form.Shown+=delegate {
             try {
                 Directory.CreateDirectory(testRoot);form.SetBusy(true);
-                if(form.prepare.Enabled || form.play.Enabled || !form.cancel.Enabled)throw new Exception("Busy controls are invalid");
-                form.SetBusy(false);if(form.play.Enabled)throw new Exception("Unprepared installation must not be playable");
+                if(form.prepare.Enabled || form.play.Enabled || form.graphics.Enabled || form.originalGraphics.Enabled || !form.cancel.Enabled)throw new Exception("Busy controls are invalid");
+                form.SetBusy(false);if(form.play.Enabled || form.graphics.Enabled || form.originalGraphics.Enabled)throw new Exception("Unprepared installation must not be playable or accept artwork");
                 var controllerStart=form.ControllerSetupStart();
                 if(!controllerStart.UseShellExecute || controllerStart.CreateNoWindow || controllerStart.WindowStyle!=ProcessWindowStyle.Normal || controllerStart.FileName!=Path.Combine(form.work.Text,"Controller Setup.cmd") || controllerStart.WorkingDirectory!=form.work.Text)
                     throw new Exception("Controller setup must open the persistent interactive console in this game's folder");

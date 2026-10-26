@@ -165,7 +165,30 @@ int main(int argc,char** argv) {
             check(rendered(gpu,f,scale).px==off.px,"AA changed unsupported/occluding native text layer");
             gpu.antialiasing(false);++cases;
         }
-        std::printf("PASS: %u shader cases: geometry, original textures, flips, native immutability, end codes, SPD, composition, fallback, masked AA and exact Off restore\n",cases);
+        // A visible small sprite can shade a larger geometry receiver through
+        // the owner mask. Sprite pixels and the original frame stay exact.
+        for(int scale:{2,4,5}) {
+            auto f=fixture(16,16);
+            auto ground=quad({0xFFFF},1,1,0,0,15,15);ground.gpu_flags=2u<<16;
+            auto figure=quad({0x801F},1,1,4,4,6,6);
+            f.hd->quads.push_back(ground);f.hd->quads.push_back(figure);
+            for(auto& p:f.hd->composition)p.owner=1;
+            for(int y=4;y<=6;++y)for(int x=4;x<=6;++x)f.hd->composition[y*16+x].owner=2;
+            const auto native=f.px;
+            gpu.ray_shadows(false);auto off=rendered(gpu,f,scale);
+            gpu.ray_shadows(true);auto on=rendered(gpu,f,scale);
+            auto at=[&](const Frame& frame,int x,int y){return frame.px[(y*scale+scale/2)*frame.w+x*scale+scale/2];};
+            check(at(on,10,8)!=at(off,10,8),"Ray shadow missed the geometry receiver");
+            check(at(on,5,5)==at(off,5,5),"Ray shadow altered protected sprite pixels");
+            check(at(on,15,0)==at(off,15,0),"Ray shadow changed an unoccluded pixel");
+            check(f.px==native,"Ray shadow changed the native frame");
+            auto draws=gpu.submissions();check(rendered(gpu,f,scale).px==on.px && gpu.submissions()==draws,"Ray shadow repeated-field cache");
+            gpu.antialiasing(true);check(rendered(gpu,f,scale).px!=off.px,"AA and ray shadows did not combine");
+            gpu.antialiasing(false);gpu.ray_shadows(false);
+            check(rendered(gpu,f,scale).px==off.px,"Ray shadow Off did not restore exact pixels");
+            ++cases;
+        }
+        std::printf("PASS: %u shader cases: geometry, original textures, flips, native immutability, end codes, SPD, composition, fallback, masked AA, ray shadows and exact Off restore\n",cases);
         if(argc==4) {
             std::ifstream input(argv[3],std::ios::binary);std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)),{});
             constexpr size_t v2=0xC0020;check(bytes.size()==0x141220,"Local video dump size");
@@ -248,6 +271,20 @@ int main(int argc,char** argv) {
                 std::string aa_label="Light AA "+std::to_string(scale)+"x including upload/submission/readback";
                 measured(aa_label.c_str(),[&]{source.px[0]^=1;rendered(gpu,source,scale);});
                 gpu.antialiasing(false);check(rendered(gpu,source,scale).px==result.px,"Local AA Off restoration");
+                gpu.ray_shadows(true);auto shaded=rendered(gpu,source,scale);
+                write_png((fs::path(argv[1])/ ("scene-"+std::to_string(scale)+"x-ray.png")).string(),shaded);
+                unsigned ray_changed=0,ray_protected=0;
+                for(int y=0;y<shaded.h;++y)for(int x=0;x<shaded.w;++x) {
+                    auto at=size_t(y)*shaded.w+x;const auto& p=source.hd->composition[size_t(y/scale)*source.w+x/scale];
+                    bool eligible=p.mode && !(p.mode&0x100) && p.owner && p.owner<=source.hd->quads.size() &&
+                        source.hd->quads[p.owner-1].gpu_eligible && ((source.hd->quads[p.owner-1].gpu_flags>>16)&15)==2;
+                    if(!eligible){check(shaded.px[at]==result.px[at],"Ray shadow changed a protected local sample");++ray_protected;}
+                    ray_changed+=shaded.px[at]!=result.px[at];
+                }
+                std::printf("Ray shadows %dx: %u changed geometry pixels, %u protected samples unchanged\n",scale,ray_changed,ray_protected);
+                std::string ray_label="Ray shadows "+std::to_string(scale)+"x including upload/submission/readback";
+                measured(ray_label.c_str(),[&]{source.px[0]^=1;rendered(gpu,source,scale);});
+                gpu.ray_shadows(false);check(rendered(gpu,source,scale).px==result.px,"Local ray Off restoration");
                 auto start=std::chrono::steady_clock::now();
                 for(int i=0;i<10;++i){source.px[0]^=1;rendered(gpu,source,scale);}
                 std::printf("GPU %dx: %.3f ms/frame including upload, submission and readback (%dx%d)\n",scale,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()/10,result.w,result.h);

@@ -13,6 +13,7 @@ import zlib
 
 sys.dont_write_bytecode = True
 from prepare_posix import APP, PAYLOAD, common, lock, package_root
+from ai_packs import validate_selection
 
 
 def within(path, root):
@@ -62,6 +63,7 @@ def play(work, native_state=None, headless=0):
     work = common.external_work(work,package_root())
     with lock(work):
         game = json.loads((work/'game.json').read_text())
+        artwork_environment = validate_selection(work, APP/'profiles')
         build = selected_build(work)
         exe, cue = build/'saturn', Path(game['cue']).resolve(strict=True)
         build_id, disc_id = identities(exe,cue)
@@ -124,6 +126,7 @@ def play(work, native_state=None, headless=0):
             env = {k:v for k,v in os.environ.items() if not k.startswith('SF3_')}
             env.update(SF3_CONTROLLER_DIR=str(work),SF3_CRASH_DIR=str(session),SF3_RAM_DUMP=str(session/'crash-wram-high.bin'),
                        SF3_REPLAY_ROOT=str(replay_root),SF3_REPLAY_SEED=str(seed),SF3_STATE_ROOT=str(state_root),SF3_STATE_ID=identity)
+            env.update(artwork_environment)
             receipt = dict(executable_sha256=build_id,arguments=args,exit_code=None,replay=str(replay) if replay else None,
                            native_state=str(native_state) if native_state else None,live_replay_progress_published=False)
             common.atomic_json(session/'session.json',receipt)

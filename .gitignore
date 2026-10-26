@@ -81,6 +81,7 @@
 !/tools/sf3-town-bfs.py
 !/tools/sf3-story.py
 !/tools/story-replays/
+!/tools/offline-assets/
 __pycache__/
 *.pyc
 *.bin
