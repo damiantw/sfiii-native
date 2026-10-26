@@ -84,6 +84,20 @@ def left_battle(read, job, reached):
     return read(memory_map.lookup(job['profile'])['battle_id'], 1)[0] == 0
 
 
+def battle_over(read, job, m, flag_bits):
+    """Round 19: with a battle-active byte (memory_map.BATTLE_ACTIVE), a battle that began active and is
+    now over with the leader up, no reset and either every root enemy down or a new story flag bit is
+    won (Sc3 harbour: the fight ends by event, the enemy table stays stale, so kills never complete).
+    An Egress also leaves the battle but sets no story flag."""
+    if not job.get('root_active'):
+        return False
+    if memory_map.in_battle(read, memory_map.lookup(job['profile'])) is not False:
+        return False
+    if m['leader_down'] or m.get('reset'):
+        return False
+    return m['won'] or flag_bits > job.get('root_flag_bits', 0)
+
+
 def save_state(r, path):
     r._ask('save ' + str(path))
     for _ in range(600):
@@ -137,6 +151,8 @@ def candidate(job):
         if not save_state(r, state):
             raise RuntimeError('state not written')
         end = S.end_hashes(s, job['profile'])
+        if battle_over(s.read, job, m1, end.get('flag_bits', 0)):
+            m1.update(won=True, over=True)
         if job.get('progress'):
             # story progress outside battle: new map ids seen and story flag bits set
             new_maps = {e[1] for e in p['events'] if e[1] not in (-1, map0)}
@@ -153,6 +169,8 @@ def candidate(job):
             m2 = metrics(unit_hp(s.read, units), job['root'], job['leader'])
             r2 = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
             m2.update(goal=bool(r2), reset=bool(p2['resets']), left=left_battle(s.read, job, r2))
+            if battle_over(s.read, job, m2, S.end_hashes(s, job['profile']).get('flag_bits', 0)):
+                m2.update(won=True, over=True)
         else:
             m2 = m1
         res.update(m_look=m2, score=score(m1) if m1.get('goal') or score(m1) <= -1e6 else score(m2))
@@ -197,7 +215,8 @@ def search(a):
         rs.loaded = load
     for _ in range(200):
         hp = unit_hp(rs.read, units)
-        if rs.read(mm['battle_id'], 1)[0] and any(v[0] > 0 for v in hp['enemies'].values()) and hp['force']:
+        ib = memory_map.in_battle(rs.read, mm)
+        if (ib if ib is not None else rs.read(mm['battle_id'], 1)[0]) and any(v[0] > 0 for v in hp['enemies'].values()) and hp['force']:
             break
         autoplay.play(rs, a.profile, 300, a.seed, walker=True, rearm=20, idle_over_turns=60, pathing=True)
     rs.pad(())
@@ -206,6 +225,7 @@ def search(a):
     root = unit_hp(rs.read, units)
     root_pos = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rs.read, units['force'], units.get('live'))}
     root_battle = rs.read(mm['battle_id'], 1)[0]
+    root_active = memory_map.in_battle(rs.read, mm)
     leader = getattr(a, 'leader', None)
     if leader is None or leader not in root['force']:
         leader = min(root['force'])
@@ -214,11 +234,13 @@ def search(a):
     base_actions, v0 = list(rs.actions), r.vblank
     root_end = S.end_hashes(rs, a.profile)
     r.close()
+    common_fb = root_end.get('flag_bits', 0)
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
                   profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, state_id=state_id, W=a.window, L=a.look,
-                  progress=getattr(a, 'progress', False), root_pos=root_pos)
+                  progress=getattr(a, 'progress', False), root_pos=root_pos,
+                  root_active=root_active, root_flag_bits=common_fb)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
     levels = [dict(state=str(st0), v=v0, actions=base_actions, end=root_end, ranked=[], pick=0, score=0,
                    backup=str(out / 'states' / 'root.backup.bin'))]
@@ -311,6 +333,8 @@ def resync(a, S, start, mm, units, out, lv, common, n):
         reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
         m = metrics(unit_hp(s.read, units), common['root'], common['leader'])
         m.update(goal=bool(reached), reset=False, left=left_battle(s.read, common, reached))
+        if battle_over(s.read, common, m, S.end_hashes(s, a.profile).get('flag_bits', 0)):
+            m.update(won=True, over=True)
         st = out / 'states' / f'sync-{n:04d}.state'
         if not save_state(r, st):
             raise RuntimeError('sync state not written')

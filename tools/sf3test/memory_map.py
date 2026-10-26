@@ -139,6 +139,16 @@ BATTLE_UNITS.update({
     'scenario2-v25_1-v1_003': dict(enemies=0x06030920, force=0x06033260, live=0x98),
 })
 
+# Round 19 (story driver): a battle-active byte that does not depend on the map/battle ids or the unit
+# tables. On Sc3 both ids stay 9/1 from the Flagship fight through the Ch7 ship and harbour, and after
+# a battle that ends by event (the Destonia harbour fight) the enemy table keeps its last 'live'
+# records, two of them next to force units, while the force walks the ship. u8 0603664E is 1 in
+# battle and 2 in the field: over a pad-only Ch7:13 replay (265k VBlanks, sampled every 1500) it
+# flips 2->1 at the Flagship start (25.5k), 1->2 after the win and level-ups (48k), 2->1 at the
+# harbour start (99k) and 1->2 when that fight ends (111k), and stays 2 to 265k. 06023AA4 (0 in battle,
+# 6 in the field) and 060FA019 (0 / 20) flip at the same samples. (addr, battle value)
+BATTLE_ACTIVE = {'scenario3-v25_1-redump': (0x0603664E, 1)}
+
 # Map ids a map sweep must not edit into a save: checked on Beetle Saturn with a real BIOS (the game
 # never draws again after the load), so a failure there says nothing about the port.
 # Sc3 ids from 0xA5 up that fail in the sweep and show only black or 'CD READ ERROR' on Beetle
@@ -200,7 +210,15 @@ def lookup(profile):
     scenario, base, tick = PROFILES[profile]
     return dict(profile=profile, scenario=scenario, state_base=base, tick=tick,
                 map_id=base + MAP_ID, battle_id=base + BATTLE_ID, prev_map=base + PREV_MAP,
-                units=BATTLE_UNITS.get(profile))
+                units=BATTLE_UNITS.get(profile), battle_active=BATTLE_ACTIVE.get(profile))
+
+
+def in_battle(read, mm):
+    """True/False from the profile's battle-active byte; None when the profile has none."""
+    ba = mm.get('battle_active')
+    if not ba:
+        return None
+    return read(ba[0], 1)[0] == ba[1]
 
 
 def on_field(rec, live=None):

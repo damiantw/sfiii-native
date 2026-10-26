@@ -235,6 +235,22 @@ class StoryTest(unittest.TestCase):
         self.assertGreater(search.score(won), search.score(hit))
         self.assertEqual(search.score(dict(same, goal=True)), 1e6)
 
+    def test_battle_over_from_active_byte(self):
+        from sf3test import search, memory_map as M
+        prof = 'scenario3-v25_1-redump'
+        addr, val = M.lookup(prof)['battle_active']
+        job = dict(profile=prof, root_active=True, root_flag_bits=17)
+        m = dict(won=False, leader_down=False, reset=False)
+        field = lambda a, n: bytes([2]) if a == addr else bytes(n)
+        fight = lambda a, n: bytes([val]) if a == addr else bytes(n)
+        self.assertFalse(search.battle_over(fight, job, m, 18))     # still in battle
+        self.assertTrue(search.battle_over(field, job, m, 18))      # over by event: a new story bit
+        self.assertFalse(search.battle_over(field, job, m, 17))     # Egress: no new bit, enemies up
+        self.assertTrue(search.battle_over(field, job, dict(m, won=True), 17))
+        self.assertFalse(search.battle_over(field, job, dict(m, leader_down=True), 18))
+        self.assertFalse(search.battle_over(field, dict(job, root_active=None), m, 18))
+        self.assertIsNone(M.in_battle(field, M.lookup('scenario1-usa-v25_1')))
+
     def test_is_hurt(self):
         from sf3test import autoplay, memory_map as M
         rec = bytearray(M.UNIT_STRIDE * 2)
