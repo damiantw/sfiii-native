@@ -50,6 +50,7 @@ class Policy:
         self.att_miss, self.last_attack = {}, None
         self.explore = 0.0
         self.heal, self.heal_at, self.heal_fail, self.heal_check, self.sigs = (), 0.6, {}, None, {}
+        self.heal_item = ()
 
     def town(self):
         r = self.rng.random()
@@ -132,7 +133,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None, escort=None):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None, escort=None, heal_item=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -172,6 +173,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     pol.avoid = tuple(avoid) if avoid else None
     pol.focus = tuple(focus or ())
     pol.heal, pol.heal_at, pol.heal_fail, pol.heal_check = tuple(heal or ()), heal_at or LEADER_SAFE, {}, None
+    pol.heal_item = tuple(heal_item or ())
     pol.escort = escort
     presses, events = [], []
     fell, watch_base = [], (mm.get('units') or {}).get('force') if watch else None
@@ -643,12 +645,14 @@ def heal_due(rd, units, pol, me):
             and is_hurt(rd, units['force'], me, pol.heal_at) and unit_mp_of(rd, units['force'], me) >= 3)
 
 
-def heal_cast(rd, units, pol, me):
+def heal_cast(rd, units, pol, me, ring='magic', target=None, caster=None):
     """Ring Magic, first spell, first level, default target (the caster itself for Heal); the next
-    turn checks the caster's HP rose (pol.heal_check)."""
-    pol.heal_check = (me, unit_hp_of(rd, units['force'], me))
+    turn checks the target's HP rose (pol.heal_check: target, its HP, the caster charged on a miss).
+    ring='item' uses the first item instead (Items, Use, first item, default target)"""
+    t = me if target is None else target
+    pol.heal_check = (t, unit_hp_of(rd, units['force'], t), me if caster is None else caster)
     pol.casts += 1
-    return ([(('C',), 6), ((), 30), ((RING['magic'],), 6), ((), 14)]
+    return ([(('C',), 6), ((), 30), ((RING[ring],), 6), ((), 14)]
             + [(('C',), 6), ((), 30)] * 4 + tap(('C',), gap=40) * 4)
 
 
@@ -691,7 +695,8 @@ def aimed_turn(side, units, pol, press):
         # MP, a message): two of those and that unit retreats instead from then on
         pol.heal_check = None
         if unit_hp_of(rd, units['force'], hc[0]) <= hc[1]:
-            pol.heal_fail[hc[0]] = pol.heal_fail.get(hc[0], 0) + 1
+            who = hc[2] if len(hc) > 2 else hc[0]
+            pol.heal_fail[who] = pol.heal_fail.get(who, 0) + 1
         else:
             pol.heals = getattr(pol, 'heals', 0) + 1
     live = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k not in phantoms]
@@ -802,6 +807,21 @@ def aimed_turn(side, units, pol, press):
         elif min(gap.values()) <= ESCORT_GUARD:
             goal = [before[min(esc, key=gap.get)]]
             pol.escorting = getattr(pol, 'escorting', 0) + 1
+
+    hi = getattr(pol, 'heal_item', ())
+    if me in hi and pol.heal_fail.get(me, 0) < 2:
+        # round 27 (Sc3 Ch7 dock fight v74, probe ap74b): no force member has Heal (Edmund's one
+        # spell is Antidote) and Gracia wore down to 8 HP by 325k in every candidate; Edmund carries
+        # a Healing Drop and Items/Use with the default target put it on Gracia beside him (20 -> 35).
+        # A --heal-item unit next to a hurt escorted/protected unit uses its first item, default target
+        wards = [e for e in esc + list(getattr(pol, 'protect', None) or ()) if e in before and e != me]
+        hurt = [e for e in wards if abs(before[e][0] - before[me][0]) + abs(before[e][1] - before[me][1]) == 1
+                and is_hurt(rd, units['force'], e, pol.heal_at)]
+        if hurt:
+            press(('B',), 6)
+            press((), 20)
+            pol.item_heals = getattr(pol, 'item_heals', 0) + 1
+            return heal_cast(rd, units, pol, me, ring='item', target=hurt[0])
 
     def dist(p):
         return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)

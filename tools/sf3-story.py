@@ -465,6 +465,7 @@ def main():
     q.add_argument('--keep-away', type=int, default=0, help='the leader/protected units retreat whenever a live enemy is within N tiles, and each one ending a window that close costs 1.5 (Sc3 Ch7 dock fight: the Masked Monk poisoned Julian)')
     q.add_argument('--avoid', type=lambda t: tuple(int(v) for v in t.split(',')), help='X,Y,R: the leader/protected units walk out of the tiles within R of X,Y, and each one ending a window there costs 3 (Sc2 Ch6: scripted blast zone)')
     q.add_argument('--focus', type=int, nargs='+', help='enemy slots the force paths to first while they live (Sc3 Ch7 dock fight: the Masked Monk, 1)')
+    q.add_argument('--heal-item', type=int, nargs='+', help='force slots that use their first item (default target) on a hurt escorted or protected unit next to them (Sc3 dock: Edmund 42 and his Healing Drop)')
     q.add_argument('--escort', type=int, nargs='+', help='force slots that must not fall, e.g. one the game moves itself (Sc3 dock: Gracia 31, Julian 7): enemies near any are the targets, else units walk next to the one nearest the enemies')
     q.add_argument('--heal', type=int, nargs='+', help='force slots that cast their first spell on themselves when hurt (below --guard-hp + 0.3, else 0.6) before retreating; a cast that heals nothing twice turns it off for that slot (Sc3 dock: Gracia, 31)')
     q.add_argument('--guard-hp', type=float, help='a candidate that leaves the leader or a --protect slot below this share of its HP at the search root loses (backtracks) (Sc3 dock fight v66)')

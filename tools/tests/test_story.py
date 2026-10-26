@@ -228,7 +228,7 @@ class StoryTest(unittest.TestCase):
                 mock.patch.object(autoplay, 'unit_hp_of', lambda *a: 11):
             out = autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, lambda b, n: None)
         self.assertIn((autoplay.RING['magic'],), [b for b, _ in out])
-        self.assertEqual(pol.heal_check, (31, 11))
+        self.assertEqual(pol.heal_check, (31, 11, 31))
         self.assertEqual(pol.casts, 1)
 
     def test_escort_draws_units_to_it(self):
@@ -261,6 +261,40 @@ class StoryTest(unittest.TestCase):
             x, y = force[2]
             self.assertLessEqual(abs(x - want[0]) + abs(y - want[1]), 2, (enemies, force))
             self.assertEqual(getattr(pol, "escorting", 0), 0 if want == (1, 1) else 1)   # an enemy far off: attack
+
+    def test_heal_item_on_hurt_escort_beside(self):
+        # invented roster: slot 2 carries a heal item, escorted slot 9 beside it is hurt: slot 2 uses
+        # its first item (ring Items) and the check watches 9's HP, charging a miss to 2; with 9
+        # two tiles off it does not
+        from unittest import mock
+        from sf3test import autoplay
+        for spot, want in (((5, 6), True), ((5, 8), False)):
+            force = {2: (5, 5), 9: spot}
+
+            def read_units(rd, base, live=None):
+                if base == 'E':
+                    return [(0, 5, 12, 0, 10)]
+                return [(k, x, y, 0, 10) for k, (x, y) in force.items()]
+
+            def press(btn, n):
+                if btn and btn[0] in autoplay.DIRS:
+                    force[2] = autoplay.step_of(force[2], btn[0])
+
+            class Side:
+                read = None
+                def frame(self):
+                    return None
+            pol = autoplay.Policy(1)
+            pol.pathing, pol.escort, pol.leader, pol.heal_item = True, 9, 9, (2,)
+            with mock.patch.object(autoplay.memory_map, 'read_units', read_units), \
+                    mock.patch.object(autoplay, 'panel_share', lambda f: 0.0), \
+                    mock.patch.object(autoplay, 'is_hurt', lambda rd, b, k, s: k == 9), \
+                    mock.patch.object(autoplay, 'unit_hp_of', lambda *a: 8):
+                out = autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, press)
+            used = (autoplay.RING['item'],) in [b for b, _ in out]
+            self.assertEqual(used, want, spot)
+            if want:
+                self.assertEqual(pol.heal_check, (9, 8, 2))
 
     def test_escort_several_guards_the_exposed_one(self):
         # invented roster: slots 9 and 7 escorted; no enemy near either; 7 is nearer the enemy, so
