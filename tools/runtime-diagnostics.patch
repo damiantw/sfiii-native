@@ -2090,7 +2090,7 @@ index 5b42ace..6c3c482 100644
      }
  }
 diff --git a/runtime/src/machine/cdblock.cpp b/runtime/src/machine/cdblock.cpp
-index cd80763..462096b 100644
+index cd80763..737ad20 100644
 --- a/runtime/src/machine/cdblock.cpp
 +++ b/runtime/src/machine/cdblock.cpp
 @@ -2,7 +2,7 @@
@@ -2126,16 +2126,17 @@ index cd80763..462096b 100644
  static uint64_t g_seek_from, g_seek_until;      // --accurate-drive: a play's seek, BUSY then SEEK, until PLAY
  static int g_getlen = 2048;
  static std::deque<int16_t> g_cdda;              // the audio played, not yet taken by the SCSP (L, R)
-@@ -199,7 +202,7 @@ static bool deliver_sector() {
+@@ -199,14 +202,29 @@ static bool deliver_sector() {
      return true;
  }
  
 -static void play_ended() {
-+static void play_ended(uint64_t busy_extra_ns = 0) {
++static void play_ended(uint64_t busy_extra_ns = 0, uint64_t at = 0) {
      if (g_repeat_left > 0 || g_repeat == 0xF) {
          if (g_repeat != 0xF) --g_repeat_left;
          g_fad = g_play_start;
-@@ -207,6 +210,21 @@ static void play_ended() {
+-        g_play_t0 = sat_now();
++        g_play_t0 = at ? at : sat_now();
          g_play_done = 0;
          return;
      }
@@ -2150,22 +2151,40 @@ index cd80763..462096b 100644
 +            const char* v = std::getenv("SF3_CD_BUSY_US");
 +            return v ? (uint64_t)std::atoll(v) * 1000 + 1 : 8237001ull;
 +        }();
-+        g_pause_at = sat_now() + busy_ns + busy_extra_ns;
++        g_pause_at = (at ? at : sat_now()) + busy_ns + busy_extra_ns;
 +        sat_trace("CD: play ended at FAD %u, pausing", g_fad);
 +        return;
 +    }
      g_status = ST_PAUSE;
      g_hirq |= PEND;
      sat_trace("CD: play ended at FAD %u", g_fad);
-@@ -228,6 +246,7 @@ int cd_data_rate() { return g_cfg.accurate_drive ? 150 : 300; }
+@@ -226,8 +244,23 @@ uint64_t cd_seek_ns(uint32_t from, uint32_t to, int rate, uint64_t* busy_ns) {
  
- void cd_tick() {
-     uint64_t now = sat_now();
+ int cd_data_rate() { return g_cfg.accurate_drive ? 150 : 300; }
+ 
+-void cd_tick() {
+-    uint64_t now = sat_now();
++// --accurate-drive: the drive's events at their own times, not at the device poll's. Reference emulator,
++// black box (cpu r41, cd2/t5.py and t6.py, 63.5 us resolution): the first CSCT comes 116.0 ms after the CR4
++// write of a play (d = 0), GetSectorNumber counts the sector from then on, and PAUSE + PEND come
++// 14.87-15.00 ms after the last CSCT. Ours took the play's start from the poll before the command (up to a
++// poll, ~100 us, early), started PLAY and ended the play at the poll after the seek or the last sector (up
++// to a poll late), and a command or HIRQ read saw the drive as of the last poll. So a play now starts at
++// its CR4 write, PLAY at the seek's end, the PAUSE timer at the last sector's time, and every command and
++// HIRQ read first brings the drive up to the CPU's own time (drive_at). s2v2-05: a status poll 50 us
++// after the PAUSE time still saw BUSY, a frame late.
++static uint64_t g_drive_now;                    // the latest time the drive was brought to (not saved)
++static void drive_at(uint64_t now) {
++    const bool exact = g_cfg.accurate_drive;
++    if (exact) {
++        if (now < g_drive_now) now = g_drive_now;
++        g_drive_now = now;
++    }
 +    cmd_settle(now);
      if (g_cdrom_clear_at && now >= g_cdrom_clear_at) g_is_cdrom = false, g_cdrom_clear_at = 0;
      if (g_fs_data_at && now >= g_fs_data_at) g_is_cdrom = true, g_fs_data_at = 0;
      if (g_fs_done && now >= g_fs_done) {
-@@ -238,6 +257,7 @@ void cd_tick() {
+@@ -238,17 +271,18 @@ void cd_tick() {
      } else if (g_fs_done && now >= g_seek_from) {
          g_status = ST_SEEK;
      }
@@ -2173,7 +2192,21 @@ index cd80763..462096b 100644
      if (g_status == ST_BUSY && g_seek_until && now >= g_seek_from) g_status = ST_SEEK;
      if (g_status == ST_SEEK && g_seek_until && now >= g_seek_until) {
          g_status = ST_PLAY;
-@@ -258,10 +278,23 @@ void cd_tick() {
+-        g_play_t0 = now;
++        g_play_t0 = exact ? g_seek_until : now;
+         g_seek_until = 0;
+     }
+-    if (g_status == ST_PLAY) {
++    if (g_status == ST_PLAY && now >= g_play_t0) {
+         uint64_t rate = g_audio_play ? 75 : (uint64_t)cd_data_rate();
+         uint64_t due = (now - g_play_t0) * rate / 1000000000ull;
+         while (g_play_done < due && g_status == ST_PLAY) {
+-            if (g_fad >= g_play_end) { play_ended(); break; }
++            if (g_fad >= g_play_end) { play_ended(0, exact ? g_play_t0 + (g_play_done + 1) * 1000000000ull / rate : 0); break; }
+             if (!g_audio_play && !deliver_sector()) {       // the buffer is full: wait
+                 g_play_t0 = now - g_play_done * 1000000000ull / rate;
+                 break;
+@@ -258,10 +292,29 @@ void cd_tick() {
                  for (int i = 0; i < 2352; i += 2) g_cdda.push_back((int16_t)(raw[i] | raw[i + 1] << 8));
              ++g_fad;
              ++g_play_done;
@@ -2181,11 +2214,17 @@ index cd80763..462096b 100644
 +            // later (reference emulator, black box: s1-07's play to FAD 5EC7 reports BUSY 0.5 ms after its
 +            // last sector, then PAUSE at a later report).
 +            if (g_cfg.accurate_drive && !g_audio_play && g_fad >= g_play_end && g_repeat_left <= 0 && g_repeat != 0xF) {
-+                play_ended(1000000000ull / rate);
++                play_ended(1000000000ull / rate, exact ? g_play_t0 + g_play_done * 1000000000ull / rate : 0);
 +                break;
 +            }
          }
      }
++}
++
++void cd_tick() {
++    uint64_t now = sat_now();
++    drive_at(now);
++    if (g_cfg.accurate_drive && now < g_drive_now) now = g_drive_now;
      if (now >= g_next_peri) {                   // the periodic report
 -        g_next_peri = now + 16666667;
 +        // Saturn Technical Bulletin (Sattechs p31): the report is updated every 13.3 ms at
@@ -2198,7 +2237,7 @@ index cd80763..462096b 100644
          g_hirq |= SCDQ;
          if (!g_cmd_busy) {
              report();
-@@ -329,7 +362,7 @@ static void fs_read(uint32_t fad, uint32_t size) {
+@@ -329,7 +382,7 @@ static void fs_read(uint32_t fad, uint32_t size) {
      g_seek_from = now + busy;
      g_seek_until = 0;
      g_fad = fad + n;
@@ -2207,7 +2246,12 @@ index cd80763..462096b 100644
      g_cdrom_clear_at = now + kCdromClearNs;
      g_fs_data_at = g_fs_done - n * (1000000000ull / cd_data_rate());
  }
-@@ -363,9 +396,18 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
+@@ -359,13 +412,22 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
+     g_audio_play = cdrom_is_audio(g_fad);
+     g_cdrom_clear_at = sat_now() + kCdromClearNs;
+     g_status = ST_PLAY;
+-    g_play_t0 = sat_now();
++    g_play_t0 = g_cfg.accurate_drive ? sat_now_cpu() : sat_now();
      g_play_done = 0;
      g_seek_until = 0;
      g_fs_done = 0;
@@ -2226,7 +2270,7 @@ index cd80763..462096b 100644
          g_seek_from = g_play_t0 + busy;
          g_status = ST_BUSY;
      }
-@@ -410,7 +452,7 @@ static void command() {
+@@ -410,7 +472,7 @@ static void command() {
          g_hirq |= CMOK;
          break;
      case 0x04:                                  // Initialize CD System
@@ -2235,7 +2279,7 @@ index cd80763..462096b 100644
          if (cr1 & 0x10) sat_trace("CD: 1x speed asked for (kept at 2x)");
          report();
          g_hirq |= CMOK | ESEL;
-@@ -431,12 +473,12 @@ static void command() {
+@@ -431,12 +493,12 @@ static void command() {
          break;
      case 0x11: {                                // Seek Disc
          uint32_t pos = (uint32_t)(cr1 & 0xFF) << 16 | cr2;
@@ -2250,7 +2294,7 @@ index cd80763..462096b 100644
          }
          report();
          g_hirq |= CMOK;
-@@ -457,12 +499,12 @@ static void command() {
+@@ -457,12 +519,12 @@ static void command() {
          g_hirq |= CMOK | DRDY;
          break;
      }
@@ -2265,7 +2309,7 @@ index cd80763..462096b 100644
          break;
      case 0x41: {
          Filter& F = g_filter[f % kFilters];
-@@ -476,7 +518,7 @@ static void command() {
+@@ -476,7 +538,7 @@ static void command() {
              F.chan = cr1 & 0xFF; F.smmask = cr2 >> 8; F.cimask = cr2 & 0xFF; F.fid = cr3 & 0xFF;
              F.smval = cr4 >> 8; F.cival = cr4 & 0xFF;
          }
@@ -2274,7 +2318,7 @@ index cd80763..462096b 100644
          break;
      case 0x43: {
          Filter& F = g_filter[f % kFilters];
-@@ -489,7 +531,7 @@ static void command() {
+@@ -489,7 +551,7 @@ static void command() {
              if (cr1 & 0x80) { uint8_t t = g_filter[f].tru, fl = g_filter[f].fals; reset_filter(f); g_filter[f].tru = t; g_filter[f].fals = fl; }
              else g_filter[f].mode = cr1 & 0xFF;
          }
@@ -2283,7 +2327,7 @@ index cd80763..462096b 100644
          break;
      case 0x45: answer((uint16_t)(status_hi() | g_filter[f % kFilters].mode), 0, (uint16_t)(f << 8), 0); g_hirq |= CMOK | ESEL; break;
      case 0x46:                                  // Set Filter Connection
-@@ -497,7 +539,7 @@ static void command() {
+@@ -497,7 +559,7 @@ static void command() {
              if (cr1 & 1) g_filter[f].tru = cr2 >> 8;
              if (cr1 & 2) g_filter[f].fals = cr2 & 0xFF;
          }
@@ -2292,7 +2336,7 @@ index cd80763..462096b 100644
          break;
      case 0x47: answer(status_hi(), (uint16_t)(g_filter[f % kFilters].tru << 8 | g_filter[f % kFilters].fals), (uint16_t)(f << 8), 0); g_hirq |= CMOK | ESEL; break;
      case 0x48: {                                // Reset Selector
-@@ -510,7 +552,7 @@ static void command() {
+@@ -510,7 +572,7 @@ static void command() {
              if (fl & 0x40) for (int i = 0; i < kFilters; ++i) g_filter[i].tru = (uint8_t)i;
              if (fl & 0x80) for (int i = 0; i < kFilters; ++i) g_filter[i].fals = 0xFF;
          }
@@ -2301,7 +2345,7 @@ index cd80763..462096b 100644
          break;
      }
      case 0x50: answer(status_hi(), (uint16_t)g_free.size(), 0x1800, kBlocks); g_hirq |= CMOK; break;
-@@ -518,7 +560,7 @@ static void command() {
+@@ -518,7 +580,7 @@ static void command() {
      case 0x52: {                                // Calculate Actual Size (words)
          g_calcsize = 0;
          for (int b : pick(f, cr2, cr4)) { (void)b; g_calcsize += g_getlen / 2; }
@@ -2310,7 +2354,7 @@ index cd80763..462096b 100644
          break;
      }
      case 0x53: answer((uint16_t)(status_hi() | (g_calcsize >> 16 & 0xFF)), (uint16_t)g_calcsize, 0, 0); g_hirq |= CMOK; break;
-@@ -533,19 +575,19 @@ static void command() {
+@@ -533,19 +595,19 @@ static void command() {
      case 0x60: {                                // Set Sector Length
          static const int len[4] = {2048, 2336, 2340, 2352};
          if ((cr1 & 0xFF) < 4) g_getlen = len[cr1 & 0xFF];
@@ -2333,7 +2377,7 @@ index cd80763..462096b 100644
          break;
      case 0x67: answer(status_hi(), 0, 0, 0); g_hirq |= CMOK; break;   // Get Copy Error: none
      case 0x70: {                                // Change Directory
-@@ -587,7 +629,7 @@ static void command() {
+@@ -587,7 +649,7 @@ static void command() {
          report(); g_hirq |= CMOK;
          break;
      }
@@ -2342,7 +2386,7 @@ index cd80763..462096b 100644
      case 0xE0: report(); g_hirq |= CMOK | EFLS | CSCT; break;                 // Authenticate Device
      case 0xE1: answer(status_hi(), 4, 0, 0); g_hirq |= CMOK; break;                 // a Saturn disc
      default:
-@@ -615,7 +657,7 @@ static uint16_t next_word() {
+@@ -615,7 +677,7 @@ static uint16_t next_word() {
  void cd_init() {
      reset_all();
      g_cddev = 0;                                // as the BIOS leaves it after reading the boot files
@@ -2351,16 +2395,27 @@ index cd80763..462096b 100644
      g_fad = 150;
      g_seek_until = 0;
      g_fs_done = 0;
-@@ -638,7 +680,7 @@ uint32_t cd_read(uint32_t off, int size) {
+@@ -626,6 +688,7 @@ void cd_init() {
+     g_cdrom_clear_at = g_fs_data_at = 0;
+     g_cdda.clear();
+     g_cmd_busy = false;
++    g_drive_now = 0;
+     g_hirq = CMOK | CSCT | PEND | ESEL | EHST | ECPY | EFLS;
+     report();
+ }
+@@ -638,7 +701,10 @@ uint32_t cd_read(uint32_t off, int size) {
          return off & 1 ? w & 0xFF : w >> 8;     // a byte read takes a whole word from the FIFO, as Mednafen's bus does
      }
      switch (off & ~3u) {
 -    case 0x90008: return g_hirq;
-+    case 0x90008: cmd_settle(sat_now_cpu()); return g_hirq;
++    case 0x90008:
++        if (g_cfg.accurate_drive) drive_at(sat_now_cpu());
++        else cmd_settle(sat_now_cpu());
++        return g_hirq;
      case 0x9000C: return g_hmask;
      case 0x90018: return g_out[0];
      case 0x9001C: return g_out[1];
-@@ -648,6 +690,36 @@ uint32_t cd_read(uint32_t off, int size) {
+@@ -648,6 +714,37 @@ uint32_t cd_read(uint32_t off, int size) {
      sat_fatal("CD block read %05X (%d bytes)", off, size);
  }
  
@@ -2385,6 +2440,7 @@ index cd80763..462096b 100644
 +static void issue() {
 +    const bool on = g_cfg.accurate_drive;
 +    if (g_cmd_pend) { g_hirq |= g_cmd_pend; g_cmd_pend = 0; }
++    if (on) drive_at(sat_now_cpu());
 +    uint16_t before = g_hirq;
 +    command();
 +    if (!on) return;
@@ -2397,7 +2453,7 @@ index cd80763..462096b 100644
  void cd_write(uint32_t off, uint32_t v, int size) {
      (void)size;
      switch (off & ~3u) {
-@@ -656,12 +728,13 @@ void cd_write(uint32_t off, uint32_t v, int size) {
+@@ -656,12 +753,13 @@ void cd_write(uint32_t off, uint32_t v, int size) {
      case 0x90018: g_cr[0] = (uint16_t)v; g_cmd_busy = true; return;
      case 0x9001C: g_cr[1] = (uint16_t)v; return;
      case 0x90020: g_cr[2] = (uint16_t)v; return;
@@ -2408,11 +2464,11 @@ index cd80763..462096b 100644
  }
  
  void cdblock_state(State& s) {
-+    if (s.loading) g_cmd_pend = 0;              // a dump from before cdcmd: no command in flight
++    if (s.loading) g_cmd_pend = 0, g_drive_now = 0;   // a dump from before cdcmd: no command in flight
      s(g_block);
      s.vec(g_free);
      for (auto& p : g_part) s.deq(p);
-@@ -680,5 +753,7 @@ void cdblock_state(State& s) {
+@@ -680,5 +778,7 @@ void cdblock_state(State& s) {
  }
  
  void cddrive_state(State& s) { s(g_seek_from), s(g_seek_until); }
