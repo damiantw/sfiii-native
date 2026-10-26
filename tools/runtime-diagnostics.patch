@@ -243,21 +243,23 @@ index 0000000..712a96c
 +    ~SH2CallFrame() { g_sh2_frames->pop(depth); }
 +};
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..aabd7ed 100644
+index cb6af72..a1f43b7 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
-@@ -3,7 +3,10 @@
+@@ -3,7 +3,12 @@
  // active modules (one per address range: the resident programs and the one
  // swapped in).
  #include "saturn/sh2.h"
 +#include "call_frames.h"
 +extern const bool g_sh2_native_states __attribute__((weak)) = false;
++// The bus model lives in the machine (mmio.cpp); a core-only link (selftest, tools tests) never turns it on.
++__attribute__((weak)) void sh2_bus_access(uint32_t, int, bool) {}
  #include <cstdio>
 +#include <cstdlib>
  #include <cstring>
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
-@@ -13,19 +16,24 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
+@@ -13,19 +18,24 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
  // Areas by the top three bits: 0 cached, 1 cache-through (the same 27-bit
  // external bus), 2 associative purge (writes drop a cache line: nothing to
  // do), 3 the cache's address array, 6 its data array, 7 the on-chip
@@ -285,7 +287,7 @@ index cb6af72..aabd7ed 100644
          return sh2_mmio_read(p, size);
      }
      if (area == 2) return 0;
-@@ -33,6 +41,7 @@ uint32_t sh2_io_read(uint32_t a, int size) {
+@@ -33,6 +43,7 @@ uint32_t sh2_io_read(uint32_t a, int size) {
  }
  
  void sh2_io_write(uint32_t a, uint32_t v, int size) {
@@ -293,7 +295,7 @@ index cb6af72..aabd7ed 100644
      uint32_t area = a >> 29;
      if (area <= 1) {
          uint32_t p = a & 0x07FFFFFFu;
-@@ -40,6 +49,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -40,6 +51,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
              for (int i = size - 1; i >= 0; --i, v >>= 8) g_wram_h[(p + i) & 0xFFFFFu] = (uint8_t)v;
              return;
          }
@@ -304,7 +306,7 @@ index cb6af72..aabd7ed 100644
          sh2_mmio_write(p, v, size);
          return;
      }
-@@ -50,7 +63,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -50,7 +65,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
  static uint8_t* host(uint32_t a) {
      a &= 0x1FFFFFFFu;
      if (a >= 0x06000000u && a < 0x08000000u) return g_wram_h + (a & 0xFFFFFu);
@@ -313,7 +315,7 @@ index cb6af72..aabd7ed 100644
      return nullptr;
  }
  
-@@ -88,6 +101,10 @@ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc) {
+@@ -88,6 +103,10 @@ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc) {
      return ~crc;
  }
  
@@ -324,7 +326,7 @@ index cb6af72..aabd7ed 100644
  const SH2Module* sh2_module(const char* name) {
      for (int i = 0; i < g_sh2_nmodules; ++i)
          if (!std::strcmp(g_sh2_modules[i]->name, name)) return g_sh2_modules[i];
-@@ -113,42 +130,116 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +132,116 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -454,7 +456,7 @@ index cb6af72..aabd7ed 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -183,12 +274,57 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -183,12 +276,57 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  
