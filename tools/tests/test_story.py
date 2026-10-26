@@ -218,6 +218,23 @@ class StoryTest(unittest.TestCase):
         self.assertGreaterEqual(p[1], 8)
         self.assertEqual(autoplay.retreat_path((5, 5), [(5, 2)], allies, {}, reach=0), [])
 
+    def test_prune_keeps_backtrack_frontier(self):
+        import tempfile
+        from pathlib import Path
+        from sf3test import search
+        with tempfile.TemporaryDirectory() as td:
+            c = Path(td) / 'c'
+            for n in ('0000-0', '0000-1', '0000-2', '0001-0', '0001-1', '0002-0'):
+                (c / n).mkdir(parents=True)
+                (c / n / 'commit.state').write_text('x')
+            st = lambda n: str(c / n / 'commit.state')
+            levels = [dict(state='/root.state', ranked=[dict(state=st('0000-1'), score=5), dict(state=st('0000-0'), score=4),
+                                                        dict(state=st('0000-2'), score=-1e6)], pick=0),
+                      dict(state=st('0000-1'), ranked=[dict(state=st('0001-0'), score=3), dict(state=st('0001-1'), score=2)], pick=1),
+                      dict(state=st('0002-0'), ranked=[], pick=0)]
+            self.assertEqual(search.prune_dead(c, levels), 4)
+            self.assertEqual(sorted(p.name for p in c.iterdir()), ['0000-0', '0002-0'])
+
     def test_search_metrics_and_score(self):
         from sf3test import search
         root = {'force': {0: (60, 60), 1: (40, 40)}, 'enemies': {5: (100, 100), 6: (50, 50)}}

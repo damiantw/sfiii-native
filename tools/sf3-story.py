@@ -462,6 +462,7 @@ def main():
     q.add_argument('--leader', type=int, help='force slot whose fall loses the battle (default: the lowest slot at the root; Sc3 Flagship: 31)')
     q.add_argument('--protect', type=int, nargs='+', help='more force slots whose fall loses the battle; they also play cautious (Sc3 Ch7 dock fight: the guest Julian, 7)')
     q.add_argument('--watch-fall', action='store_true', help='sample the leader/protected HP during each window; a fall loses even if the game revives the unit by the window end (Sc2 Ch6: church)')
+    q.add_argument('--prune', action='store_true', help='delete candidate saves the search can never backtrack to (keeps the stack top and the untried alternatives)')
     q.add_argument('--no-left', action='store_true', help='do not score battle id 0 as Egress/defeat (Sc2 V1.003: its map/battle bytes do not track in Ch6)')
     q.add_argument('--resync', action='store_true', help='after each level, replay the committed pads straight from the save and continue from that run (save-state restores are not exact)')
     q.add_argument('--stall', type=int, default=8, help='stop when the best score is flat this many levels (0: never)')

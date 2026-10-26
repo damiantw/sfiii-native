@@ -105,6 +105,30 @@ def battle_over(read, job, m, flag_bits):
     return m['won'] or flag_bits > job.get('root_flag_bits', 0)
 
 
+def live_dirs(levels):
+    """The candidate dirs backtracking can still reach: the stack top's and every untried ranked
+    alternative below it (a popped level is never expanded again)."""
+    keep = {Path(levels[-1]['state']).parent}
+    for lv in levels[:-1]:
+        keep |= {Path(c['state']).parent for c in lv['ranked'][lv['pick'] + 1:]
+                 if c.get('state') and c['score'] > -1e6}
+    return keep
+
+
+def prune_dead(cdir, levels):
+    """--prune: delete the candidate dirs the search can never return to (a long search kept a 5 MB
+    save per candidate, ~4 GB/h)."""
+    if not cdir.is_dir():
+        return 0
+    keep = {k.resolve() for k in live_dirs(levels)}
+    gone = 0
+    for d in cdir.iterdir():
+        if d.is_dir() and d.resolve() not in keep:
+            shutil.rmtree(d, ignore_errors=True)
+            gone += 1
+    return gone
+
+
 def save_state(r, path):
     r._ask('save ' + str(path))
     for _ in range(600):
@@ -260,6 +284,8 @@ def search(a):
     log, backs, done_goal, stalled = [], 0, False, False
     with ProcessPoolExecutor(a.jobs) as ex:
         while levels[-1]['v'] - v0 < a.frames and len(log) < a.max_levels:
+            if getattr(a, 'prune', False):
+                prune_dead(out / 'c', levels)
             cur = levels[-1]
             n = len(log)
             jobs = [dict(common, state=cur['state'], backup=cur['backup'], v=cur['v'], seed=a.seed * 1000 + n * 37 + i,
