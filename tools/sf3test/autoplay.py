@@ -721,6 +721,10 @@ def aimed_turn(side, units, pol, press):
     press((), 30)                                  # command ring, cursor on Hold
     near = me in pos() and dist(pos()[me]) <= 2                    # first-level spells reach 2 tiles (Blaze, Heal)
     cast_now = (near and pol.cast and pol.tried.get(me, 0) % 2 == 0) or (near and cast_pick)
+    # round 19 (Sc3 Ch7 dock fight, search v55): the leader and protected units never cast. Julian's
+    # first spell is Egress, and a random cast took the force out of the fight to the church, which
+    # the battle-over check took for a win (the battle byte went to the field and a story bit was set)
+    cast_now = cast_now and not cautious
     if near and pol.cast:
         pol.tried[me] = pol.tried.get(me, 0) + 1
     if cast_now:
