@@ -1408,6 +1408,142 @@ index 5b42ace..2c288f5 100644
 +        if(s.loading) device.changed=true;
      }
  }
+diff --git a/runtime/src/machine/cdblock.cpp b/runtime/src/machine/cdblock.cpp
+index cd80763..2685fc2 100644
+--- a/runtime/src/machine/cdblock.cpp
++++ b/runtime/src/machine/cdblock.cpp
+@@ -19,6 +19,7 @@
+ // noted here.
+ #include "saturn.h"
+ #include "state.h"
++#include <cstdlib>
+ #include <cstring>
+ #include <deque>
+ #include <string>
+@@ -58,6 +59,7 @@ static bool g_is_cdrom = true;                  // the report's CD-ROM bit
+ static uint64_t g_cdrom_clear_at, g_fs_data_at;
+ static const uint64_t kCdromClearNs = 500ull * 1000000000ull / (44100 * 256);
+ static uint64_t g_play_t0, g_play_done;         // time the play began, sectors read since
++static uint64_t g_pause_at;                     // --accurate-drive: a data play's end, BUSY until PAUSE
+ static uint64_t g_seek_from, g_seek_until;      // --accurate-drive: a play's seek, BUSY then SEEK, until PLAY
+ static int g_getlen = 2048;
+ static std::deque<int16_t> g_cdda;              // the audio played, not yet taken by the SCSP (L, R)
+@@ -207,6 +209,15 @@ static void play_ended() {
+         g_play_done = 0;
+         return;
+     }
++    if (g_cfg.accurate_drive && !g_audio_play) {
++        // Mednafen's drive (black box, Sc1's first battle load): after the last sector it reports
++        // BUSY, without PEND, and PAUSE comes 9.3-14.9 ms after its head passes the end, i.e. two
++        // sectors' time at 2x. Ours ends one sector after the last delivery: one sector more.
++        g_status = ST_BUSY;
++        g_pause_at = sat_now() + 1000000000ull / (uint64_t)cd_data_rate();
++        sat_trace("CD: play ended at FAD %u, pausing", g_fad);
++        return;
++    }
+     g_status = ST_PAUSE;
+     g_hirq |= PEND;
+     sat_trace("CD: play ended at FAD %u", g_fad);
+@@ -238,6 +249,7 @@ void cd_tick() {
+     } else if (g_fs_done && now >= g_seek_from) {
+         g_status = ST_SEEK;
+     }
++    if (g_pause_at && now >= g_pause_at) { g_pause_at = 0; g_status = ST_PAUSE; g_hirq |= PEND; }
+     if (g_status == ST_BUSY && g_seek_until && now >= g_seek_from) g_status = ST_SEEK;
+     if (g_status == ST_SEEK && g_seek_until && now >= g_seek_until) {
+         g_status = ST_PLAY;
+@@ -261,7 +273,13 @@ void cd_tick() {
+         }
+     }
+     if (now >= g_next_peri) {                   // the periodic report
+-        g_next_peri = now + 16666667;
++        // Saturn Technical Bulletin (Sattechs p31): the report is updated every 13.3 ms at
++        // standard speed, 6.7 ms at double speed, 16.7 ms or less otherwise, and not while a
++        // command is being answered. With --accurate-drive, a play's reports follow its sectors.
++        uint64_t period = 16666667;
++        if (g_cfg.accurate_drive && g_status == ST_PLAY)
++            period = 1000000000ull / (g_audio_play ? 75 : (uint64_t)cd_data_rate());
++        g_next_peri = now + period;
+         g_hirq |= SCDQ;
+         if (!g_cmd_busy) {
+             report();
+@@ -329,7 +347,7 @@ static void fs_read(uint32_t fad, uint32_t size) {
+     g_seek_from = now + busy;
+     g_seek_until = 0;
+     g_fad = fad + n;
+-    g_status = ST_BUSY;
++    g_status = ST_BUSY; g_pause_at = 0;
+     g_cdrom_clear_at = now + kCdromClearNs;
+     g_fs_data_at = g_fs_done - n * (1000000000ull / cd_data_rate());
+ }
+@@ -363,9 +381,18 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
+     g_play_done = 0;
+     g_seek_until = 0;
+     g_fs_done = 0;
++    g_pause_at = 0;
+     if (g_cfg.accurate_drive) {
+         uint64_t busy;
+         g_seek_until = g_play_t0 + cd_seek_ns(head, g_fad, g_audio_play ? 75 : 150, &busy);
++        // A data read's first sector comes 1.5 ms later than the seek model says: fitted to
++        // Mednafen (black box) on 7 battle loads' counter starts (sum of misses 14 frames, against
++        // 18 at 0 ms and 31 at 3 ms) with the CPU at φ's rate and slices ending at VBlank edges.
++        // SF3_CD_FIRST_US=N: N us instead.
++        static const int64_t first_ns = [] {
++            const char* v = std::getenv("SF3_CD_FIRST_US"); return (v ? std::atoll(v) : 1500) * 1000;
++        }();
++        if (!g_audio_play) g_seek_until += first_ns;
+         g_seek_from = g_play_t0 + busy;
+         g_status = ST_BUSY;
+     }
+@@ -410,7 +437,7 @@ static void command() {
+         g_hirq |= CMOK;
+         break;
+     case 0x04:                                  // Initialize CD System
+-        if (cr1 & 1) { reset_all(); g_status = ST_PAUSE; }
++        if (cr1 & 1) { reset_all(); g_status = ST_PAUSE; g_pause_at = 0; }
+         if (cr1 & 0x10) sat_trace("CD: 1x speed asked for (kept at 2x)");
+         report();
+         g_hirq |= CMOK | ESEL;
+@@ -431,12 +458,12 @@ static void command() {
+         break;
+     case 0x11: {                                // Seek Disc
+         uint32_t pos = (uint32_t)(cr1 & 0xFF) << 16 | cr2;
+-        if (pos == 0) g_status = ST_STANDBY, g_is_cdrom = true, g_cdrom_clear_at = 0;
++        if (pos == 0) g_pause_at = 0, g_status = ST_STANDBY, g_is_cdrom = true, g_cdrom_clear_at = 0;
+         else {                                  // 0xFFFFFF: pause where it is
+             if (pos == 0xFFFFFF) {}
+             else if (pos & 0x800000) g_fad = pos & 0x7FFFFF;
+             else g_fad = track_fad(pos >> 8, false);
+-            g_status = ST_PAUSE;
++            g_status = ST_PAUSE; g_pause_at = 0;
+         }
+         report();
+         g_hirq |= CMOK;
+@@ -587,7 +614,7 @@ static void command() {
+         report(); g_hirq |= CMOK;
+         break;
+     }
+-    case 0x75: g_status = ST_PAUSE; g_fs_done = 0; report(); g_hirq |= CMOK | EFLS; break;   // Abort File
++    case 0x75: g_status = ST_PAUSE; g_pause_at = 0; g_fs_done = 0; report(); g_hirq |= CMOK | EFLS; break;   // Abort File
+     case 0xE0: report(); g_hirq |= CMOK | EFLS | CSCT; break;                 // Authenticate Device
+     case 0xE1: answer(status_hi(), 4, 0, 0); g_hirq |= CMOK; break;                 // a Saturn disc
+     default:
+@@ -615,7 +642,7 @@ static uint16_t next_word() {
+ void cd_init() {
+     reset_all();
+     g_cddev = 0;                                // as the BIOS leaves it after reading the boot files
+-    g_status = ST_PAUSE;
++    g_status = ST_PAUSE; g_pause_at = 0;
+     g_fad = 150;
+     g_seek_until = 0;
+     g_fs_done = 0;
+@@ -680,5 +707,6 @@ void cdblock_state(State& s) {
+ }
+ 
+ void cddrive_state(State& s) { s(g_seek_from), s(g_seek_until); }
++void cdpause_state(State& s) { s(g_pause_at); }
+ void cdfs_state(State& s) { s(g_fs_done), s(g_root_known); }
+ void cdpos_state(State& s) { s(g_is_cdrom), s(g_cdrom_clear_at), s(g_fs_data_at); }
 diff --git a/runtime/src/machine/cdrom.cpp b/runtime/src/machine/cdrom.cpp
 index e1918ba..453fb8f 100644
 --- a/runtime/src/machine/cdrom.cpp
@@ -2194,10 +2330,10 @@ index ef4f660..13864ed 100644
              }
          }
 diff --git a/runtime/src/machine/state.cpp b/runtime/src/machine/state.cpp
-index 67ccdd3..9282525 100644
+index 67ccdd3..6bacdcb 100644
 --- a/runtime/src/machine/state.cpp
 +++ b/runtime/src/machine/state.cpp
-@@ -19,9 +19,23 @@
+@@ -19,16 +19,30 @@
  #include <filesystem>
  #include <map>
  #include <thread>
@@ -2222,6 +2358,14 @@ index 67ccdd3..9282525 100644
  
  // An optional part may be missing from a dump made before it existed; its fields keep their values.
  static const struct { const char* name; void (*fn)(State&); bool optional; } kParts[] = {
+     {"machine", machine_state}, {"video", video_state},     {"core", core_state},       {"mmio", mmio_state},
+     {"bios", bios_state},       {"scu", scu_state},         {"scudsp", scudsp_state},   {"onchip", onchip_state},
+     {"smpc", smpc_state},       {"cdblock", cdblock_state}, {"vdp1", vdp1_state},       {"vdp2", vdp2_state},
+-    {"sound", sound_state},     {"scsp", scsp_state},       {"tasks", tasks_state},     {"cddrive", cddrive_state, true},
++    {"sound", sound_state},     {"scsp", scsp_state},       {"tasks", tasks_state},     {"cddrive", cddrive_state, true}, {"cdpause", cdpause_state, true},
+     {"cdfs", cdfs_state, true},   {"clock", clock_state, true}, {"cdpos", cdpos_state, true},
+ };
+ 
 @@ -56,8 +70,11 @@ void core_state(State& s) {
  
  // ---- writing --------------------------------------------------------------------------------
@@ -2374,7 +2518,7 @@ index 67ccdd3..9282525 100644
          at += size;
      }
 diff --git a/runtime/src/machine/state.h b/runtime/src/machine/state.h
-index 91d606c..387ded9 100644
+index 91d606c..5f6e134 100644
 --- a/runtime/src/machine/state.h
 +++ b/runtime/src/machine/state.h
 @@ -34,6 +34,7 @@ struct State {
@@ -2393,6 +2537,14 @@ index 91d606c..387ded9 100644
          if (loading) s.resize(n);
          if (n) raw(s.data(), n);
      }
+@@ -62,6 +64,7 @@ void clock_state(State& s);
+ void smpc_state(State& s);
+ void cdblock_state(State& s);
+ void cddrive_state(State& s);
++void cdpause_state(State& s);
+ void cdfs_state(State& s);
+ void cdpos_state(State& s);
+ void video_state(State& s);
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
 index 8589d33..bee2cc3 100644
 --- a/runtime/src/video/vdp1.cpp
