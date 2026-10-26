@@ -2098,7 +2098,7 @@ index 91d606c..387ded9 100644
          if (n) raw(s.data(), n);
      }
 diff --git a/runtime/src/video/vdp1.cpp b/runtime/src/video/vdp1.cpp
-index 8589d33..7c44204 100644
+index 8589d33..1ad83e1 100644
 --- a/runtime/src/video/vdp1.cpp
 +++ b/runtime/src/video/vdp1.cpp
 @@ -33,11 +33,13 @@
@@ -2190,7 +2190,7 @@ index 8589d33..7c44204 100644
  
  static Rgb rgb_of(uint16_t v) { return {v & 0x1F, v >> 5 & 0x1F, v >> 10 & 0x1F}; }
  
-@@ -135,13 +189,68 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
+@@ -135,13 +189,69 @@ static bool texel(const Cmd& c, int u, int v, uint16_t& out, bool& end) {
  }
  
  static bool g_fb8;                              // 8 bits a pixel (TVMR 1) for this draw
@@ -2222,7 +2222,8 @@ index 8589d33..7c44204 100644
 +    std::copy(xy,xy+8,q.xy);q.hflip=c.hflip;q.vflip=c.vflip;q.texture=texture;
 +    q.clip[0]=g_sys_x;q.clip[1]=g_sys_y;q.clip[2]=g_ux0;q.clip[3]=g_uy0;q.clip[4]=g_ux1;q.clip[5]=g_uy1;
 +    q.gpu_flags=c.pmod|((c.ctrl&15)<<16);q.gpu_eligible=true;
-+    for(auto raw:texture->raw) if(raw && raw!=0x7FFF && !(raw&0x8000)) {q.gpu_eligible=false;break;}
++    // 0x7FFF is an end code only while end codes are enabled; otherwise it is a palette dot.
++    for(auto raw:texture->raw) if(raw && !(raw==0x7FFF && !c.ecd) && !(raw&0x8000)) {q.gpu_eligible=false;break;}
 +    if((c.ctrl&15)>=2) {
 +        const Pt corners[]={a,b,cc,d};int sign=0;
 +        for(int i=0;i<4;++i) {
@@ -2259,7 +2260,7 @@ index 8589d33..7c44204 100644
      if (g_hi_target) {
          uint16_t& h = g_hi_target[y * 1024 + x];
          if (g_fb8) { if (!c.mon) h = pix & 0xFF; }
-@@ -156,12 +265,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
+@@ -156,12 +266,16 @@ static void plot_clipped(const Cmd& c, int x, int y, uint16_t pix, const Rgb* g)
          return;
      }
      put(g_target[y * 512 + x], c, pix, g);
@@ -2278,7 +2279,7 @@ index 8589d33..7c44204 100644
          if (in == c.outside) return;
      }
      plot_clipped(c, x, y, pix, g);
-@@ -192,8 +305,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
+@@ -192,8 +306,7 @@ static void put(uint16_t& d, const Cmd& c, uint16_t pix, const Rgb* g) {
  }
  
  static Rgb mix(const Rgb& a, const Rgb& b, int k, int n) {
@@ -2288,7 +2289,7 @@ index 8589d33..7c44204 100644
  }
  
  // A line from p0 to p1; for a texture, row v, its columns spread along the line.
-@@ -211,6 +323,7 @@ static uint64_t g_draw_steps;
+@@ -211,6 +324,7 @@ static uint64_t g_draw_steps;
  #endif
  
  static void command(const uint8_t* cmd, uint32_t a) {
@@ -2296,7 +2297,7 @@ index 8589d33..7c44204 100644
      Cmd c{};
      c.ctrl = cw(cmd, 0);
      c.pmod = cw(cmd, 4);
-@@ -256,6 +369,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
+@@ -256,6 +370,12 @@ static void command(const uint8_t* cmd, uint32_t a) {
      }
      for (Pt& q : p) { q.x += g_local_x; q.y += g_local_y; }
      draw_shape(c, cmd, comm, p);
@@ -2309,7 +2310,7 @@ index 8589d33..7c44204 100644
  }
  
  // ---- the frames in between (--interp) -------------------------------------------------------
-@@ -289,6 +408,27 @@ struct RecFrame {
+@@ -289,6 +409,27 @@ struct RecFrame {
  static RecFrame g_rec_cur, g_rec_last, g_rec_prev;
  static uint16_t g_ifb[512 * 256];               // the frame in between
  static bool g_show_ifb;
@@ -2337,7 +2338,7 @@ index 8589d33..7c44204 100644
  static uint64_t g_fields;
  static float g_alpha;
  static std::vector<uint64_t> g_next_keys;       // vdp1_next_draw_keys: by command address / 32
-@@ -312,6 +452,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
+@@ -312,6 +453,14 @@ uint16_t vdp1_dot(int x, int y, bool dd) {
      return x & 1 ? w & 0xFF : w >> 8;
  }
  
@@ -2352,7 +2353,7 @@ index 8589d33..7c44204 100644
  static void draw() {
      g_reg[EDSR] = (uint16_t)(g_reg[EDSR] >> 1 & 1);   // BEF <- CEF, CEF <- 0
      if ((g_reg[TVMR] & 3) == 3) sat_fatal("VDP1: TVMR %04X (8-bit rotation) is not done", g_reg[TVMR]);
-@@ -320,6 +468,12 @@ static void draw() {
+@@ -320,6 +469,12 @@ static void draw() {
      g_hi_on[g_draw_fb] = g_reg[FBCR] & 8;
      g_hi_target = g_hi_on[g_draw_fb] ? g_hi[g_draw_fb] : nullptr;
      g_dil = g_reg[FBCR] >> 2 & 1;
@@ -2365,7 +2366,7 @@ index 8589d33..7c44204 100644
      RecDraw* rec = nullptr;
      if (g_cfg.interp) {
          g_rec_cur.draws.push_back({g_sys_x, g_sys_y, g_ux0, g_uy0, g_ux1, g_uy1, g_local_x, g_local_y, {}});
-@@ -606,7 +760,11 @@ static void erase(int which) {
+@@ -606,7 +761,11 @@ static void erase(int which) {
      int x0 = (g_reg[EWLR] >> 9 & 0x7F) * 8, y0 = g_reg[EWLR] & 0x1FF;
      int x1 = (g_reg[EWRR] >> 9 & 0x7F) * 8, y1 = g_reg[EWRR] & 0x1FF;
      for (int y = y0; y <= y1 && y < 256; ++y)
@@ -2378,7 +2379,7 @@ index 8589d33..7c44204 100644
      if (!g_hi_on[which]) return;
      bool fb8 = g_reg[TVMR] & 1;                  // 8 bits a pixel: EWDR is two dots, X counts 16 of them
      int d0 = fb8 ? x0 * 2 : x0, d1 = fb8 ? x1 * 2 : x1;
-@@ -676,16 +834,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
+@@ -676,16 +835,26 @@ uint32_t vdp1_fb_read(uint32_t off, int size) {
  }
  
  void vdp1_fb_write(uint32_t off, uint32_t v, int size) {
@@ -2408,7 +2409,7 @@ index 8589d33..7c44204 100644
      for (uint16_t r : g_reg) { uint8_t b[2] = {(uint8_t)(r >> 8), (uint8_t)r}; std::fwrite(b, 1, 2, f); }
  }
  
-@@ -707,4 +875,38 @@ void vdp1_state(State& s) {
+@@ -707,4 +876,38 @@ void vdp1_state(State& s) {
      s(g_dil), s(g_draw_fb), s(g_reg), s(g_change_pending), s(g_erase_pending), s(g_erase_field), s(g_drawing);
      s(g_draw_end), s(g_frame_changes), s(g_draws);
      s(g_sys_x), s(g_sys_y), s(g_ux0), s(g_uy0), s(g_ux1), s(g_uy1), s(g_local_x), s(g_local_y), s(g_fb8);
@@ -2877,7 +2878,7 @@ index 0000000..2e324b1
 +
 +}  // namespace vdp1_steps
 diff --git a/runtime/src/video/vdp2.cpp b/runtime/src/video/vdp2.cpp
-index 4c8bcb1..e382fc0 100644
+index 4c8bcb1..2318424 100644
 --- a/runtime/src/video/vdp2.cpp
 +++ b/runtime/src/video/vdp2.cpp
 @@ -5,9 +5,10 @@
@@ -3177,7 +3178,18 @@ index 4c8bcb1..e382fc0 100644
  // ---- the sprite layer -----------------------------------------------------------------------
  struct SpriteType { int pr_shift, pr_mask, cc_shift, cc_mask, dc_mask; };
  static const SpriteType kTypes[16] = {
-@@ -367,7 +608,7 @@ static void note_unsupported() {
+@@ -305,7 +546,9 @@ static SpriteDot sprite_pixel(uint16_t d, Pix& p) {
+         else if (msb_shadow && !(d & 0x7FFF)) {
+             if (!(reg(0xE2) >> 8 & 1)) return S_NONE;                    // transparent shadows off (TPSDSL)
+             kind = S_SHADOW;
+-        } else if (dc == 0) return S_NONE;
++        }
++        // A palette dot with colour code 0 is still a dot when its priority/ratio bits are set: only an
++        // all-zero word is transparent (checked against the reference core's pictures).
+         p.shade = msb_shadow;
+         int pr = t.pr_mask ? d >> t.pr_shift & t.pr_mask : 0;
+         int cc = t.cc_mask ? d >> t.cc_shift & t.cc_mask : 0;
+@@ -367,7 +610,7 @@ static void note_unsupported() {
      auto once = [&](int i, bool cond, const char* what, uint16_t v) {
          if (cond && !noted[i]) { noted[i] = fresh = true; sat_note("VDP2: %s (%04X) is not done", what, v); }
      };
@@ -3186,7 +3198,7 @@ index 4c8bcb1..e382fc0 100644
      once(1, reg(0x9A) & 0x3F3F, "line or vertical cell scroll (SCRCTL)", reg(0x9A));
      once(2, reg(0x22) & 0xF, "mosaic (MZCTL)", reg(0x22));
      once(3, (reg(0xD0) | reg(0xD2) | reg(0xD4) | reg(0xD6)) & 0x2020, "the sprite window (WCTL)", reg(0xD0));
-@@ -393,18 +634,37 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
+@@ -393,18 +636,37 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
      return (uint32_t)out;
  }
  
@@ -3226,7 +3238,7 @@ index 4c8bcb1..e382fc0 100644
      uint32_t bk = ((uint32_t)(reg(0xAC) & 7) << 16 | reg(0xAE)) * 2;
      bool bk_lines = reg(0xAC) & 0x8000;
      bool add = reg(0xEC) >> 8 & 1;
-@@ -420,7 +680,7 @@ void vdp2_compose(Frame& f) {
+@@ -420,7 +682,7 @@ void vdp2_compose(Frame& f) {
      Pix line_colour{};
      line_colour.ratio = (uint8_t)(reg(0x10E) & 0x1F);
      uint16_t sfprmd = reg(0xEA), sfccmd = reg(0xEE);
@@ -3235,7 +3247,7 @@ index 4c8bcb1..e382fc0 100644
                               (uint8_t)reg(0xD2), (uint8_t)(reg(0xD2) >> 8)};
      uint8_t cc_wctl = (uint8_t)(reg(0xD6) >> 8);
      uint16_t sdctl = reg(0xE2);
-@@ -428,10 +688,40 @@ void vdp2_compose(Frame& f) {
+@@ -428,10 +690,40 @@ void vdp2_compose(Frame& f) {
      // top or second image of a colour calculation
      static const int kGradLayer[8] = {L_SPRITE, -1, L_NBG0, -1, L_NBG1, L_NBG2, L_NBG3, -1};
      int grad = reg(0xEC) & 0x8000 && hreso < 2 && cram_mode() == 0 ? kGradLayer[reg(0xEC) >> 12 & 7] : -1;
@@ -3277,7 +3289,7 @@ index 4c8bcb1..e382fc0 100644
          back.rgb = rgb555(vw(bk + (bk_lines ? (uint32_t)line * 2 : 0)));
          // a table word a line, a line of either field in double-density interlace
          line_colour.rgb = cram(vw(lc_table + (lc_lines ? (uint32_t)y * 2 : 0)) & 0x7FF, nullptr);
-@@ -439,18 +729,26 @@ void vdp2_compose(Frame& f) {
+@@ -439,18 +731,26 @@ void vdp2_compose(Frame& f) {
              // each dot averaged with the average of the two before it; a dot the screen does not draw is black
              auto avg = [](uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; };
              uint32_t prev[2] = {0, 0};
@@ -3308,7 +3320,7 @@ index 4c8bcb1..e382fc0 100644
              Pix l[L_COUNT];
              int top = -1, second = -1;
              auto consider = [&](int i) {
-@@ -458,16 +756,32 @@ void vdp2_compose(Frame& f) {
+@@ -458,16 +758,32 @@ void vdp2_compose(Frame& f) {
                  if (top < 0 || l[i].prio > l[top].prio) { second = top; top = i; }
                  else if (second < 0 || l[i].prio > l[second].prio) second = i;
              };
@@ -3344,7 +3356,7 @@ index 4c8bcb1..e382fc0 100644
              for (int n = 0; n < 4; ++n) {
                  Pix& p = l[L_NBG0 + n];
                  p = {};
-@@ -485,10 +799,12 @@ void vdp2_compose(Frame& f) {
+@@ -485,10 +801,12 @@ void vdp2_compose(Frame& f) {
                  p.ratio = s.ratio; p.offset = s.offset; p.offset_b = s.offset_b;
                  consider(L_NBG0 + n);
              }
@@ -3359,7 +3371,7 @@ index 4c8bcb1..e382fc0 100644
              uint32_t rgb = t.rgb;
              if (top >= 0 && t.cc && !windowed(cc_wctl, win, x)) {
                  uint32_t out = 0;
-@@ -504,11 +820,128 @@ void vdp2_compose(Frame& f) {
+@@ -504,11 +822,128 @@ void vdp2_compose(Frame& f) {
              if (t.offset) rgb = apply_offset(rgb, t.offset_b);
              // A shadow halves the top screen under it when SDCTL enables that screen (bit 5: the back screen).
              bool shaded = top == L_SPRITE ? t.shade
@@ -3898,6 +3910,30 @@ index 0000000..472e126
 +    CHECK_EQ(aa_step(5, 5), 5);
 +    CHECK_EQ(aa_step(0, 0), 0);
 +}
+diff --git a/runtime/tests/vdp2_test.cpp b/runtime/tests/vdp2_test.cpp
+index 8229575..6a5ab11 100644
+--- a/runtime/tests/vdp2_test.cpp
++++ b/runtime/tests/vdp2_test.cpp
+@@ -187,6 +187,19 @@ TEST(msb_shadow_halves_the_sprite_itself) {
+     CHECK_EQ(at(f, 10, 0), kBlue);
+ }
+ 
++TEST(colour_code_0_with_priority_bits_is_a_dot) {
++    // Only an all-zero sprite word is transparent: colour code 0 with other bits set shows colour 0
++    // (a town's darkened road strip, 0x4800 in type 4, is drawn this way; checked against the reference).
++    sprites_over_green();
++    reg(0xF0, 0x0303);                           // PRISA: sprite priorities 0 and 1 are 3
++    cram16(0, 0x7C00);
++    show_sprites(0x4000, 10, 19);                // type 2: priority bit set, colour code 0
++    Frame f;
++    vdp2_compose(f);
++    CHECK_EQ(at(f, 10, 0), kBlue);
++    CHECK_EQ(at(f, 20, 0), kGreen);
++}
++
+ TEST(transparent_shadow_needs_tpsdsl) {
+     sprites_over_green();
+     reg(0xE2, 0x0001);
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
 index de3d7ec..a14fa32 100644
 --- a/src/saturnrecomp/recomp/__main__.py
