@@ -162,12 +162,16 @@ def scenario(a):
             m['funcs_hit'].add(func); fhit.add((key[0], func))
         if real is None or (key[0], func) in real:
             m['real_blocks'] += 1; m['real_hit'] += hit; m['real_insns'] += n; m['real_insns_hit'] += n * hit
+    reached = defaultdict(set)                     # module -> run groups that ran any of its blocks
+    for tag, keys in tag_hits.items():
+        for key in keys:
+            reached[key[0]].add(tag)
     rows = []
     for name, m in sorted(mods.items()):
         rows.append(dict(module=name, crc=m['crc'], label=label(name), blocks=m['blocks'], hit=m['hit'], master=m['master'],
                          slave=m['slave'], insns=m['insns'], insns_hit=m['insns_hit'], functions=len(m['funcs']),
                          functions_hit=len(m['funcs_hit']), real_blocks=m['real_blocks'], real_hit=m['real_hit'],
-                         real_insns=m['real_insns'], real_insns_hit=m['real_insns_hit']))
+                         real_insns=m['real_insns'], real_insns_hit=m['real_insns_hit'], groups=sorted(reached[name])))
     tot = {k: sum(r[k] for r in rows) for k in ('blocks', 'hit', 'master', 'slave', 'insns', 'insns_hit', 'functions',
                                                'functions_hit', 'real_blocks', 'real_hit', 'real_insns', 'real_insns_hit')}
     tot['modules'] = len(rows)

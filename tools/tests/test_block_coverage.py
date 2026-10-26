@@ -40,6 +40,7 @@ class BlockCoverageReport(unittest.TestCase):
             self.assertEqual(r['groups']['story']['only'], 1)
             self.assertEqual([c['function'] for c in r['cold_in_ran_modules']], ['06004100'])
             self.assertEqual(r['cold_modules'][0]['module'], 'X1BTL02')
+            self.assertEqual([m['groups'] for m in r['modules']], [['story', 'title'], []])
             self.assertTrue(r['cold_modules'][0]['label'].startswith('battle'))
 
     def test_refuses_report_inside_repository(self):
