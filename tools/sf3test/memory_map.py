@@ -147,7 +147,14 @@ BATTLE_UNITS.update({
 # flips 2->1 at the Flagship start (25.5k), 1->2 after the win and level-ups (48k), 2->1 at the
 # harbour start (99k) and 1->2 when that fight ends (111k), and stays 2 to 265k. 06023AA4 (0 in battle,
 # 6 in the field) and 060FA019 (0 / 20) flip at the same samples. (addr, battle value)
-BATTLE_ACTIVE = {'scenario3-v25_1-redump': (0x0603664E, 1)}
+# Round 27 (Sc2 V1.003 Ch6 war-machine fight, map 0x49): the battle id reads 0 all fight, so autoplay
+# took it for a town and walked spirals (A/C examine) for the whole search: no unit was ever steered,
+# the leader never retreated and the blast at ~523k took the force every candidate. u8 0603B269 is 1
+# there (root 512.9k and 400 later) and 2 in the town after the defeat (527k-528k); the only byte of
+# 1MB work RAM that flips that way with values < 8 (the same 1/2 sense as Sc3's). V2.000 reads its
+# battle id there (0x0B), so it gets no entry
+BATTLE_ACTIVE = {'scenario3-v25_1-redump': (0x0603664E, 1),
+                 'scenario2-v25_1-v1_003': (0x0603B269, 1)}
 
 # Map ids a map sweep must not edit into a save: checked on Beetle Saturn with a real BIOS (the game
 # never draws again after the load), so a failure there says nothing about the port.

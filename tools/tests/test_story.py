@@ -285,6 +285,16 @@ class StoryTest(unittest.TestCase):
         self.assertFalse(search.battle_over(field, dict(job, root_active=None), m, 18))
         self.assertIsNone(M.in_battle(field, M.lookup('scenario1-usa-v25_1')))
 
+    def test_turned_camera_pad(self):
+        # round 27: on Sc2 V1.003 map 0x49 pad RIGHT steps y-1 and UP x+1
+        from sf3test import autoplay as A
+        t = A.learn_turn('RIGHT', (0, -1))
+        self.assertEqual(t, A.learn_turn('UP', (1, 0)))
+        self.assertEqual(A.pad_for('RIGHT', t), 'UP')
+        self.assertEqual(A.pad_for('UP', t), 'LEFT')
+        self.assertEqual(A.pad_for('DOWN', 0), 'DOWN')
+        self.assertIsNone(A.learn_turn('UP', (1, 1)))
+
     def test_protected_fall_loses(self):
         from sf3test import search
         root = dict(force={31: (40, 40), 7: (13, 42)}, enemies={0: (40, 40)})

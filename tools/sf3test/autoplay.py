@@ -189,6 +189,8 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     def state():
         m = side.read(mm['map_id'], 1)[0]
         b = side.read(mm['battle_id'], 1)[0]
+        if not b and memory_map.in_battle(side.read, mm):
+            b = 0xFF          # round 27: Sc2 V1.003 map 0x49 fights with battle id 0 (memory_map.BATTLE_ACTIVE)
         return m, b
 
     def press(buttons, n):
@@ -415,8 +417,12 @@ def hud_up(frame, run_min=48):
     if frame is None:                  # no picture (unit tests): take it as unit control
         return True
     w, h, rgb = frame.width, frame.height, frame.rgb
+    # round 27 (Sc2 v1.003 war-machine fight): the panel sits lower, beside the land-effect box,
+    # with only 4 flat rows (y 18-21 of 240) above its name; every other row from 3% to 20% missed
+    # them, so the panel read as gone: the probe and the leader's turn pressed B into the free
+    # cursor and nobody moved for 15k VBlanks until the blast. Every row to a quarter, 4 rows
     rows = 0
-    for y in range(h * 3 // 100, h // 5, 2):
+    for y in range(h * 3 // 100, h // 4):
         row, run, prev = y * w * 3, 0, None
         for x in range(w // 4, w * 3 // 4):
             r, g, b = rgb[row + x * 3], rgb[row + x * 3 + 1], rgb[row + x * 3 + 2]
@@ -429,7 +435,7 @@ def hud_up(frame, run_min=48):
             else:
                 run = 0
             prev = (g, b) if ok else None
-    return rows >= 3
+    return rows >= 4
 
 
 def battle_outcome(rd, units):
@@ -454,6 +460,28 @@ STEP = {'RIGHT': (1, 0), 'LEFT': (-1, 0), 'UP': (0, 1), 'DOWN': (0, -1)}
 
 def step_of(p, d):
     return (p[0] + STEP[d][0], p[1] + STEP[d][1])
+
+
+# round 27 (Sc2 V1.003 Ch6 war machine, map 0x49): the camera there is turned a quarter, so pad RIGHT
+# steps y-1 and UP x+1 (Hazuki at 12,4); every planned step went the wrong way or into a wall. The
+# probe step of each turn shows which way a pad direction goes: ROTATIONS maps a planned direction
+# (STEP's sense) to the pad direction that makes it under the turn seen
+ROTATIONS = (lambda a, b: (a, b), lambda a, b: (-b, a), lambda a, b: (-a, -b), lambda a, b: (b, -a))
+
+
+def learn_turn(pressed, delta):
+    """The rotation index under which pad `pressed` steps by `delta`, or None (not one step)."""
+    for i, rot in enumerate(ROTATIONS):
+        if rot(*STEP[pressed]) == tuple(delta):
+            return i
+    return None
+
+
+def pad_for(d, turn):
+    """The pad direction that steps the way `d` means in STEP, under rotation index `turn`."""
+    if not turn:
+        return d
+    return next(k for k in STEP if ROTATIONS[turn](*STEP[k]) == STEP[d])
 
 
 def plan_step(p, live, occupied, blocked, size=64, limit=6000, passable=frozenset()):
@@ -540,6 +568,7 @@ def aimed_turn(side, units, pol, press):
     key = tuple(sorted(e[0] for e in enemies))           # a new battle (enemy roster): forget edges
     if key != pol.blocked_key:
         pol.blocked, pol.blocked_key, pol.phantoms = {}, key, set()
+        pol.turn = 0
         pol.att_miss, pol.last_attack = {}, None
     phantoms = getattr(pol, 'phantoms', set())
     hp_of = {k: hp for k, x, y, f, hp in enemies}
@@ -575,7 +604,11 @@ def aimed_turn(side, units, pol, press):
         now = pos()
         moved = [k for k in before if k in now and now[k] != before[k]]   # a unit that left the table did not move
         if moved:
+            t = learn_turn(d, (now[moved[0]][0] - before[moved[0]][0], now[moved[0]][1] - before[moved[0]][1]))
+            if t is not None:
+                pol.turn = t
             break
+    turn = getattr(pol, 'turn', 0)
     if not moved and not hud_up(side.frame()) and getattr(pol, 'cursor_b', 0) < 2:
         # round 5 (Sc1 Battle 22 search): nothing moved and no unit panel: the free cursor (B on
         # the start tile enters it; C there opens the field menu or a member's status, which the
@@ -656,19 +689,33 @@ def aimed_turn(side, units, pol, press):
         av = getattr(pol, 'avoid', None)
         in_zone = bool(av and me in now and abs(now[me][0] - av[0]) + abs(now[me][1] - av[1]) <= av[2])
         if me in now and (in_zone or near_threat or is_hurt(rd, units['force'], me, LEADER_SAFE)):
-            path = retreat_path(now[me], [av[:2]] if in_zone else live, {v for k, v in now.items() if k != me}, pol.blocked,
-                                reach=8 if in_zone else 5)
-            for i, d in enumerate(path):
-                q = pos().get(me)
-                if q is None:
+            # round 27 (Sc2 V1.003 war machine): the leader gets one turn before the blast and the
+            # first planned step hit an unseen wall, so the turn ended in the zone. A step that fails
+            # in the first two marks the edge and plans again from where the unit stands (8 plans)
+            walked = 0
+            for _plan in range(8):
+                here = pos().get(me)
+                if here is None:
                     break
-                press((d,), 8)
-                press((), 10)
-                if pos().get(me, q) == q:          # a wall early on; later it is the move range's end
-                    if i < 2:
-                        pol.blocked[(q, step_of(q, d))] = 1
+                path = retreat_path(here, [av[:2]] if in_zone else live,
+                                    {v for k, v in pos().items() if k != me}, pol.blocked,
+                                    reach=max(1, (8 if in_zone else 5) - walked))
+                replan = False
+                for i, d in enumerate(path):
+                    q = pos().get(me)
+                    if q is None:
+                        break
+                    press((pad_for(d, turn),), 8)
+                    press((), 10)
+                    if pos().get(me, q) == q:          # a wall early on; later it is the move range's end
+                        if walked < 2:
+                            pol.blocked[(q, step_of(q, d))] = 1
+                            replan = True
+                        break
+                    walked += 1
+                    pol.retreats = getattr(pol, 'retreats', 0) + 1
+                if not replan:
                     break
-                pol.retreats = getattr(pol, 'retreats', 0) + 1
     if hold_back and not cautious:
         press(('B',), 6)
         press((), 20)
@@ -687,7 +734,7 @@ def aimed_turn(side, units, pol, press):
             d = plan_step(p, goal, allies | set(live), pol.blocked, passable=allies)
             if d is None:
                 break
-            press((d,), 8)
+            press((pad_for(d, turn),), 8)
             press((), 10)
             if pos().get(me, p) != p:
                 steps += 1
@@ -706,7 +753,7 @@ def aimed_turn(side, units, pol, press):
         order = [d for d in ((dx, dy) if abs(tx - p[0]) >= abs(ty - p[1]) else (dy, dx)) if d]
         went = False
         for d in order:
-            press((d,), 8)
+            press((pad_for(d, turn),), 8)
             press((), 10)
             if pos().get(me, p) != p:
                 went, steps = True, steps + 1
