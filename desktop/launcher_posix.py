@@ -15,7 +15,9 @@ from prepare_posix import APP, PAYLOAD, common, lock, package_root
 from run_posix import selected_build
 from ai_packs import install_selection, detach_selection
 
-PROFILES = ('scenario1-usa-v1_001', 'scenario2-translation-v24', 'scenario3-translation-v25_1')
+# Accepted disc revision profiles (profiles/*.json ids) per game slot; the first is the recommended disc.
+PROFILES = (('scenario1-usa-v1_001',), ('scenario2-translation-v24',), ('scenario3-translation-v25_1',))
+# Default data folders keep their original names so existing game data stays where it was.
 DATA_FOLDERS = ('Scenario1-USA', 'Scenario2-v24', 'Scenario3-v25_1')
 
 def data_root():
@@ -101,8 +103,7 @@ class Launcher:
             work=Path(self.work.get())
             ready=json.loads((work/'desktop-ready.json').read_text())
             package=json.loads((PAYLOAD/'package.json').read_text())
-            expected=PROFILES[self.active]
-            return (ready['build_id']==package['build_id'] and ready['profile_id']==expected
+            return (ready['build_id']==package['build_id'] and ready['profile_id'] in PROFILES[self.active]
                     and common.sha(selected_build(work)/'saturn')==ready['executable_sha256'])
         except (OSError,ValueError,KeyError):return False
 

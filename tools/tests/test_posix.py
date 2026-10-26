@@ -31,14 +31,29 @@ class PortableTests(unittest.TestCase):
             build=data/'build-synthetic';build.mkdir();(build/'saturn').write_bytes(b'invented executable')
             form=launcher.Launcher.__new__(launcher.Launcher)
             form.work=SimpleNamespace(get=lambda:str(data))
-            for index,profile in enumerate(launcher.PROFILES):
-                ready={'build_id':'synthetic-package','profile_id':profile,'executable_sha256':worker.common.sha(build/'saturn')}
-                (data/'desktop-ready.json').write_text(json.dumps(ready))
-                for selected in range(3):
-                    form.active=selected
-                    with self.subTest(prepared=index,selected=selected),patch.object(launcher,'PAYLOAD',payload):
-                        self.assertEqual(form.ready(),selected==index)
+            for index,profiles in enumerate(launcher.PROFILES):
+                for profile in profiles:
+                    ready={'build_id':'synthetic-package','profile_id':profile,'executable_sha256':worker.common.sha(build/'saturn')}
+                    (data/'desktop-ready.json').write_text(json.dumps(ready))
+                    for selected in range(3):
+                        form.active=selected
+                        with self.subTest(prepared=profile,selected=selected),patch.object(launcher,'PAYLOAD',payload):
+                            self.assertEqual(form.ready(),selected==index)
             self.assertEqual(len(set(launcher.DATA_FOLDERS)),3)
+
+    def test_every_registered_profile_has_exactly_one_launcher_slot(self):
+        import launcher_posix as launcher
+        ids=[p for slot in launcher.PROFILES for p in slot]
+        self.assertEqual(len(ids),len(set(ids)))
+        registered={}
+        for path in (Path(__file__).resolve().parents[2]/'profiles').glob('*.json'):
+            profile=json.loads(path.read_text(encoding='utf-8-sig'))
+            registered[profile['id']]=profile['scenario']
+        self.assertEqual(set(ids),set(registered))
+        for index,slot in enumerate(launcher.PROFILES):
+            for profile in slot:self.assertEqual(registered[profile],index+1,profile)
+        cs=(Path(__file__).resolve().parents[2]/'desktop/Launcher.cs').read_text(encoding='utf-8')
+        for profile in ids:self.assertIn('"'+profile+'"',cs)
 
     def test_bundle_boundary_includes_entire_mac_application(self):
         path=Path('/Applications/SFIII Native.app/Contents/Resources/payload')
