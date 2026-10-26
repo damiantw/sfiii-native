@@ -23,7 +23,7 @@ float4 main(Input input):SV_Target {
     float2 a=asfloat(uint2(S(q),S(q+1))),b=asfloat(uint2(S(q+2),S(q+3)))-a;
     float2 d=asfloat(uint2(S(q+6),S(q+7)))-a;
     float2 cross=a-asfloat(uint2(S(q+2),S(q+3)))+asfloat(uint2(S(q+4),S(q+5)))-asfloat(uint2(S(q+6),S(q+7)));
-    float2 uv=0.5;
+    precise float2 uv=0.5;
     [unroll] for(int i=0;i<5;++i) {
         float2 f=a+b*uv.x+d*uv.y+cross*uv.x*uv.y-float2(cell);
         float2 du=b+cross*uv.y,dv=d+cross*uv.x;
@@ -40,7 +40,7 @@ float4 main(Input input):SV_Target {
     uv=saturate((uv-0.5)*sign+0.5+shift*sign);
     uint tw=S(q+23),th=S(q+24);
     float2 lo=asfloat(uint2(S(q+25),S(q+26))),hi=asfloat(uint2(S(q+27),S(q+28)));
-    float2 tex=(lo+uv*(hi-lo))*float2(tw-1,th-1);
+    precise float2 tex=(lo+uv*(hi-lo))*float2(tw-1,th-1);
     uint2 t=uint2(tex),s=min(t+1,uint2(tw-1,th-1)),fraction=uint2(frac(tex)*256);
     uint rgba=blend(blend(A(base+t.y*tw+t.x),A(base+t.y*tw+s.x),fraction.x),blend(A(base+s.y*tw+t.x),A(base+s.y*tw+s.x),fraction.x),fraction.y);
     float2 guv=(uv-0.5)*sign+0.5;uint color=0;

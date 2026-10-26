@@ -1,6 +1,7 @@
 #include "hd-gpu.h"
 #include "gpu-shader.h"
 #include <cstring>
+#include <array>
 
 namespace sf3 {
 static constexpr uint32_t scene_bytes=8*1024*1024;
@@ -25,12 +26,14 @@ SDL_Renderer* HdGpu::create_renderer(SDL_Window* window) {
         device_=SDL_CreateGPUDeviceWithProperties(props);SDL_DestroyProperties(props);
         if(!device_) continue;
         auto* renderer=SDL_CreateGPURenderer(device_,window);
-        if(renderer) return renderer;
+        if(renderer) {owns_device_=true;return renderer;}
         SDL_DestroyGPUDevice(device_);device_=nullptr;
     }
     return nullptr;
 }
 bool HdGpu::upload(SDL_GPUBuffer* buffer,const std::vector<uint32_t>& words) {
+    if(!buffer || words.empty() || words.size()>UINT32_MAX/4)
+        return SDL_SetError("Invalid HD GPU upload size");
     auto size=uint32_t(words.size()*4);
     SDL_GPUTransferBufferCreateInfo ti{};ti.usage=SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;ti.size=size;
     auto* transfer=SDL_CreateGPUTransferBuffer(device_,&ti);
@@ -41,28 +44,72 @@ bool HdGpu::upload(SDL_GPUBuffer* buffer,const std::vector<uint32_t>& words) {
     auto* command=SDL_AcquireGPUCommandBuffer(device_);
     if(!command) {SDL_ReleaseGPUTransferBuffer(device_,transfer);return false;}
     auto* copy=SDL_BeginGPUCopyPass(command);
+    if(!copy) {SDL_CancelGPUCommandBuffer(command);SDL_ReleaseGPUTransferBuffer(device_,transfer);return false;}
     SDL_GPUTransferBufferLocation source{transfer,0};SDL_GPUBufferRegion dest{buffer,0,size};
     SDL_UploadToGPUBuffer(copy,&source,&dest,true);SDL_EndGPUCopyPass(copy);
     bool ok=SDL_SubmitGPUCommandBuffer(command);SDL_ReleaseGPUTransferBuffer(device_,transfer);
     return ok;
 }
+bool HdGpu::prepare_art(const HdAssets& assets,const std::vector<size_t>& needed) {
+    if(resident_valid_ && resident_==needed) return true;
+    size_t words=0;
+    for(auto index:needed) {
+        if(index>=assets.assets_.size()) return SDL_SetError("Invalid visible HD material");
+        const auto& replacement=assets.assets_[index].replacement;
+        size_t size=replacement.px.size();
+        if(replacement.w<1 || replacement.h<1 || size!=size_t(replacement.w)*replacement.h)
+            return SDL_SetError("Visible HD material pixels are unavailable");
+        if(size>UINT32_MAX/4-words) return SDL_SetError("Visible HD materials exceed GPU buffer limit");
+        words+=size;
+    }
+    std::vector<uint32_t> offsets(assets.assets_.size(),UINT32_MAX),art;
+    art.reserve(std::max(size_t(1),words));
+    for(auto index:needed) {
+        offsets[index]=uint32_t(art.size());
+        const auto& pixels=assets.assets_[index].replacement.px;
+        art.insert(art.end(),pixels.begin(),pixels.end());
+    }
+    if(art.empty()) art.push_back(0); // Keep a valid storage binding for empty scenes.
+    uint32_t required=uint32_t(art.size()*4);
+    if(required>art_capacity_) {
+        // Grow without discarding the previous working binding on allocation failure.
+        uint64_t capacity=std::max(uint64_t(required),uint64_t(art_capacity_)*2);
+        capacity=std::min(capacity,uint64_t(UINT32_MAX/4)*4);
+        SDL_GPUBufferCreateInfo bi{};bi.usage=SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;bi.size=uint32_t(capacity);
+        auto* buffer=SDL_CreateGPUBuffer(device_,&bi);if(!buffer) return false;
+        SDL_GPUBuffer* buffers[]{scene_,buffer};SDL_GPURenderStateCreateInfo ri{};
+        ri.fragment_shader=shader_;ri.num_storage_buffers=2;ri.storage_buffers=buffers;
+        auto* state=SDL_CreateGPURenderState(renderer_,&ri);
+        if(!state || !upload(buffer,art)) {
+            if(state) SDL_DestroyGPURenderState(state);
+            SDL_ReleaseGPUBuffer(device_,buffer);return false;
+        }
+        // render() flushed earlier draws before reaching this point. SDL defers
+        // GPU buffer destruction until submitted commands have finished with it.
+        if(state_) SDL_DestroyGPURenderState(state_);
+        if(art_) SDL_ReleaseGPUBuffer(device_,art_);
+        state_=state;art_=buffer;art_capacity_=uint32_t(capacity);
+    } else {
+        resident_valid_=false;
+        if(!upload(art_,art)) return false;
+    }
+    offsets_=std::move(offsets);resident_=needed;resident_valid_=true;
+    return true;
+}
 bool HdGpu::initialize(SDL_Renderer* renderer,const HdAssets& assets,const std::string& dir) {
     renderer_=renderer;
-    if(!device_ || SDL_GetGPURendererDevice(renderer)!=device_) return SDL_SetError("GPU shader renderer not available");
+    auto* renderer_device=SDL_GetGPURendererDevice(renderer);
+    if(!renderer_device || (device_ && renderer_device!=device_)) return SDL_SetError("GPU shader renderer not available");
+    if(!device_) {device_=renderer_device;owns_device_=false;}
     if(assets.assets_.empty()) return SDL_SetError("No HD asset pack loaded");
     FragmentShader code;if(!code.read(device_,dir,"hd-assets"))return false;
     SDL_GPUShaderCreateInfo si{};si.code=code.bytes.data();si.code_size=code.bytes.size();si.entrypoint=code.entry;
     si.format=code.format;si.stage=SDL_GPU_SHADERSTAGE_FRAGMENT;si.num_samplers=1;si.num_storage_buffers=2;
     shader_=SDL_CreateGPUShader(device_,&si);if(!shader_) return false;
-    std::vector<uint32_t> art;
-    for(const auto& asset:assets.assets_) {offsets_.push_back(uint32_t(art.size()));art.insert(art.end(),asset.replacement.px.begin(),asset.replacement.px.end());}
-    if(art.size()>UINT32_MAX/4) return SDL_SetError("HD pack exceeds GPU buffer limit");
-    SDL_GPUBufferCreateInfo bi{};bi.usage=SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;bi.size=uint32_t(art.size()*4);
-    art_=SDL_CreateGPUBuffer(device_,&bi);bi.size=scene_bytes;scene_=SDL_CreateGPUBuffer(device_,&bi);
-    if(!art_ || !scene_ || !upload(art_,art)) return false;
-    SDL_GPUBuffer* buffers[]{scene_,art_};SDL_GPURenderStateCreateInfo ri{};
-    ri.fragment_shader=shader_;ri.num_storage_buffers=2;ri.storage_buffers=buffers;
-    state_=SDL_CreateGPURenderState(renderer,&ri);if(!state_) return false;
+    SDL_GPUBufferCreateInfo bi{};bi.usage=SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;bi.size=scene_bytes;
+    scene_=SDL_CreateGPUBuffer(device_,&bi);if(!scene_) return false;
+    pack_=&assets;resident_valid_=false;
+    if(!prepare_art(assets,{})) return false;
     white_=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STATIC,1,1);
     output_=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,1440,1080);
     if(!white_ || !output_) return false;
@@ -73,33 +120,53 @@ bool HdGpu::initialize(SDL_Renderer* renderer,const HdAssets& assets,const std::
 }
 SDL_Texture* HdGpu::render(const Frame& frame,const HdAssets& assets) {
     if(!ready_) return nullptr;
+    if(pack_!=&assets || offsets_.size()!=assets.assets_.size()) {
+        SDL_SetError("HD asset pack changed; GPU initialization required");return nullptr;
+    }
     auto* old_target=SDL_GetRenderTarget(renderer_);
     if(!SDL_FlushRenderer(renderer_)) return nullptr;
+    assets.begin_frame();
+    if(frame.w<1 || frame.h<1) {SDL_SetError("Invalid HD frame dimensions");return nullptr;}
     size_t pixels=size_t(frame.w)*frame.h;
     bool valid=frame.hd && frame.hd->visible.size()==pixels;
-    size_t count=valid?frame.hd->quads.size():0,quad_offset=4+pixels*8;
-    if((quad_offset+count*32)*4>scene_bytes) {SDL_SetError("HD scene exceeds GPU buffer limit");return nullptr;}
+    size_t count=valid?frame.hd->quads.size():0;
+    if(pixels>(scene_bytes/4-4)/8) {SDL_SetError("HD scene exceeds GPU buffer limit");return nullptr;}
+    size_t quad_offset=4+pixels*8;
+    if(count>(scene_bytes/4-quad_offset)/32) {SDL_SetError("HD scene exceeds GPU buffer limit");return nullptr;}
     std::vector<uint32_t> data(quad_offset+count*32);
     data[0]=frame.w;data[1]=frame.h;data[2]=uint32_t(quad_offset);data[3]=uint32_t(count);
+    std::vector<size_t> needed,materials(count,SIZE_MAX);
     if(valid) {
+        std::vector<uint8_t> visible(count,0);
         for(size_t i=0;i<pixels;++i) {
             auto at=4+i*8;data[at]=frame.hd->visible[i];
+            if(data[at] && data[at]<=count) visible[data[at]-1]=1;
             if(frame.hd->effects.size()==pixels) {const auto& e=frame.hd->effects[i];data[at+1]=e.second;
                 for(int c=0;c<3;++c) data[at+2+c]=uint32_t(int32_t(e.offset[c]));
                 data[at+5]=e.ratio;data[at+6]=e.flags;}
         }
-        std::unordered_map<const HdTexture*,const HdAssets::Asset*> matches;
+        // A texture may occur in both a character command and a world command;
+        // eligibility belongs to the texture/command pair.
+        struct Matches {std::array<const HdAssets::Asset*,16> asset{};uint16_t attempted=0;};
+        std::unordered_map<const HdTexture*,Matches> matches;
         for(size_t i=0;i<count;++i) {
             auto at=quad_offset+i*32;const auto& q=frame.hd->quads[i];data[at+22]=UINT32_MAX;
-            if(!q.texture) continue;
-            auto [it,inserted]=matches.emplace(q.texture.get(),nullptr);if(inserted) it->second=assets.match(*q.texture);
-            auto* a=it->second;if(!a) continue;
+            if(!visible[i] || !q.gpu_eligible || !q.texture) continue;
+            unsigned command=(q.gpu_flags>>16)&15;
+            auto it=matches.try_emplace(q.texture.get()).first;
+            auto*& a=it->second.asset[command];unsigned mask=1u<<command;
+            if(!(it->second.attempted&mask)) {a=assets.match(*q.texture,command);it->second.attempted|=mask;}
+            if(!a) continue;
+            materials[i]=size_t(a-assets.assets_.data());needed.push_back(materials[i]);
             std::memcpy(data.data()+at,q.xy,32);std::memcpy(data.data()+at+8,q.shade,48);
             data[at+20]=q.hflip;data[at+21]=q.vflip;
-            data[at+22]=offsets_[a-assets.assets_.data()];data[at+23]=a->replacement.w;data[at+24]=a->replacement.h;
+            data[at+23]=a->replacement.w;data[at+24]=a->replacement.h;
             std::memcpy(data.data()+at+25,a->uv,16);
         }
     }
+    std::sort(needed.begin(),needed.end());needed.erase(std::unique(needed.begin(),needed.end()),needed.end());
+    if(!prepare_art(assets,needed)) return nullptr;
+    for(size_t i=0;i<count;++i) if(materials[i]!=SIZE_MAX) data[quad_offset+i*32+22]=offsets_[materials[i]];
     if(!upload(scene_,data)) return nullptr;
     if(!SDL_SetRenderTarget(renderer_,output_)) return nullptr;
     SDL_SetRenderDrawColor(renderer_,0,0,0,0);SDL_RenderClear(renderer_);
@@ -115,6 +182,7 @@ void HdGpu::release() {
     if(white_) SDL_DestroyTexture(white_);if(output_) SDL_DestroyTexture(output_);
     if(device_) {if(scene_) SDL_ReleaseGPUBuffer(device_,scene_);if(art_) SDL_ReleaseGPUBuffer(device_,art_);if(shader_) SDL_ReleaseGPUShader(device_,shader_);}
     state_=nullptr;white_=output_=nullptr;scene_=art_=nullptr;shader_=nullptr;offsets_.clear();
+    resident_.clear();resident_valid_=false;pack_=nullptr;art_capacity_=0;
 }
-void HdGpu::destroy_device() {if(device_) SDL_DestroyGPUDevice(device_);device_=nullptr;}
+void HdGpu::destroy_device() {if(device_ && owns_device_) SDL_DestroyGPUDevice(device_);device_=nullptr;owns_device_=false;}
 }

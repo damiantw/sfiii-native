@@ -104,8 +104,38 @@ float4 edge_aa(Input input) {
     float strength=.65*saturate((contrast-threshold)/max(contrast,.0001));
     return float4(lerp(center.rgb,smooth,strength),1);
 }
+// A short ray through the visible Saturn command owners approximates a
+// directional contact shadow. It has no world-space depth or hardware RT
+// acceleration; only eligible geometry receives the optional presentation tint.
+float4 ray_shadow(Input input,float4 base) {
+    uint w=S(0),h=S(1),scale=S(2);
+    int2 cell=int2(min(uint2(input.position.xy)/scale,uint2(w-1,h-1)));
+    uint p=S(4)+(uint(cell.y)*w+uint(cell.x))*10,owner=S(p+8),mode=S(p+3);
+    if(mode==0 || (mode&0x100) || owner==0 || owner>S(3))return base;
+    uint q=S(5)+(owner-1)*40,flags=S(q+25),area=S(q+35);
+    if(flags==0xFFFFFFFF || ((flags>>16)&15)!=2 || area<120)return base;
+    float strength=0;
+    [loop]for(int step=1;step<=8;++step) {
+        int2 sample_cell=cell-int2(step,(step+1)/2);
+        if(any(sample_cell<0))break;
+        uint sample_p=S(4)+(uint(sample_cell.y)*w+uint(sample_cell.x))*10;
+        uint blocker=S(sample_p+8);
+        if(blocker<=owner || blocker>S(3))continue;
+        uint block_q=S(5)+(blocker-1)*40;
+        if(S(block_q+25)==0xFFFFFFFF)continue;
+        uint block_area=S(block_q+35);
+        if(block_area>0 && block_area*3<area*2) {
+            strength=.24*(1.0-float(step)/10.0);
+            break;
+        }
+    }
+    return float4(base.rgb*(1.0-strength),1);
+}
 float4 main(Input input):SV_Target {
-    if(aa_pass!=0)return edge_aa(input);
+    if(aa_pass!=0) {
+        float4 base=(aa_pass&1)!=0?edge_aa(input):picture.Load(int3(uint2(input.position.xy),0));
+        return (aa_pass&2)!=0?ray_shadow(input,base):base;
+    }
     uint w=S(0),h=S(1),scale=S(2);uint2 pixel=uint2(input.position.xy),cell=min(pixel/scale,uint2(w-1,h-1));
     uint p=S(4)+(cell.y*w+cell.x)*10,mode=S(p+3);
     if(mode&0x100)return output_color(S(p));

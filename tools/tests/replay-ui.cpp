@@ -12,8 +12,10 @@ int main(int argc, char** argv) {
     g_cfg.out = root.string();
     g_cfg.record_input = (root / "input.txt").string();
     g_cfg.settings = (root / "settings.ini").string();
+    { std::ofstream old(fs::path(std::getenv("SF3_CONTROLLER_DIR")) / "render-resolution.ini"); old << "[display]\ninternal_scale = 4\n"; }
     { std::ofstream f(g_cfg.record_input); f << "100:START,110:,700:A,"; }
     if (!host_open()) return 3;
+    if(vdp1_render_scale()!=5 || g_settings.number("display","internal_scale")!=5)return 68;
     aspect_set(false);
     resolution_set(1); // Start repeatably; fixture preferences may be retained.
     State state;
@@ -36,7 +38,7 @@ int main(int argc, char** argv) {
     auto initial_pixels=picture.px;
     if(g_game_speed!=1 || !host_audio_open())return 46;
     for(int cycle=0;cycle<6;++cycle) {
-        click(8);int expected=cycle%3+2;if(expected==4)expected=1;
+        click(7);int expected=cycle%3+2;if(expected==4)expected=1;
         if(g_game_speed!=expected || SDL_GetAudioStreamFrequencyRatio(g_audio)!=expected ||
            SDL_GetAudioStreamQueued(g_audio)!=0 || g_audio_buffer.playing ||
            g_audio_buffer.speed!=expected || picture.px!=initial_pixels || vdp1_render_scale()!=1)return 47;
@@ -69,8 +71,8 @@ int main(int argc, char** argv) {
     speed_set(1);
     click(5);
     if(vdp1_render_scale()!=2 || picture.px!=initial_pixels)return 20;
-    click(6);if(vdp1_render_scale()!=4)return 21;
-    click(7);if(vdp1_render_scale()!=5 || choice_at(M_RESOLUTION)!=3)return 41;
+    click(6);if(vdp1_render_scale()!=5 || choice_at(M_RESOLUTION)!=2)return 41;
+    if(choice_count(M_RESOLUTION)!=3 || std::string(choice_name(M_RESOLUTION,2))!="5x")return 21;
     load_settings(g_cfg.settings);if(vdp1_render_scale()!=5)return 42;
     for(int i=0;i<5+kRenderScaleCount;++i) {
         auto a=replay_bar_button(i);
@@ -108,22 +110,61 @@ int main(int argc, char** argv) {
     aspect_set(false);if(vdp1_widescreen() || vdp1_gpu_active())return 40;
     resolution_set(2);
     for(const auto& row:layout.rows)if(std::string(menu_label(row.id)).find("HD")!=std::string::npos)return 28;
-    menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=4)return 29;
+    menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=5)return 29;
     {std::ofstream saved(g_cfg.settings);saved<<"[display]\ninternal_scale = 1\n";}
-    load_settings(g_cfg.settings);if(vdp1_render_scale()!=4)return 30;
-    menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=5)return 45;
+    load_settings(g_cfg.settings);if(vdp1_render_scale()!=5)return 30;
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=1)return 31;
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=2)return 32;
     upload_frame(picture);
-    auto aa_row=std::find_if(layout.rows.begin(),layout.rows.end(),[](const MenuRow& r){return r.id==M_AA;});
-    if(aa_row==layout.rows.end() || choice_at(M_AA)!=0)return 58;
-    menu_adjust(M_AA,1);
+    auto visible=[&](MenuId id){return std::any_of(layout.rows.begin(),layout.rows.end(),[&](const MenuRow& r){return r.id==id;});};
+    if(visible(M_AA) || visible(M_RAY))return 58;
+    if(visible(M_AI_GRAPHICS)!=(g_ai_ready[0] && g_ai_ready[1] && g_ai_ready[2]))return 69;
+    if(!visible(M_AI_GRAPHICS) && g_ai_mode!=0)return 83;
+    if(visible(M_AI_GRAPHICS)) {
+        auto persisted=[&](const char* mode) {
+            bool found=false;std::vector<std::string> issues;Settings reloaded;
+            reloaded.read(settings_load(g_cfg.settings,found),issues);
+            return found && issues.empty() && reloaded.get("display","ai_graphics")==mode;
+        };
+        ai_set(0);if(choice_at(M_AI_GRAPHICS)!=0)return 71;
+        if(!persisted("off"))return 79;
+        menu_adjust(M_AI_GRAPHICS,1);
+        if(choice_at(M_AI_GRAPHICS)!=1 || picture.px!=initial_pixels)return 72;
+        if(!persisted("video"))return 80;
+        resolution_set(1);
+        if(!gpu_picture_active() || !g_gpu_tex || !g_ai_tex || picture.px!=initial_pixels)return 78;
+        resolution_set(2);
+        menu_adjust(M_AI_GRAPHICS,1);
+        if(choice_at(M_AI_GRAPHICS)!=2 || picture.px!=initial_pixels)return 73;
+        if(!persisted("anime"))return 81;
+        menu_adjust(M_AI_GRAPHICS,1);
+        if(choice_at(M_AI_GRAPHICS)!=3 || picture.px!=initial_pixels)return 74;
+        if(!persisted("general"))return 82;
+        const auto row=std::find_if(layout.rows.begin(),layout.rows.end(),[](const MenuRow& r){return r.id==M_AI_GRAPHICS;});
+        const auto area=control_area(layout,*row);
+        if(ui_text_width(14*layout.u,choice_name(M_AI_GRAPHICS,3),true)>area.w-40*layout.u)return 75;
+        menu_tap(area.x+area.w-4*layout.u,area.y+area.h/2,0);
+        if(choice_at(M_AI_GRAPHICS)!=0)return 76;
+        menu_tap(area.x+4*layout.u,area.y+area.h/2,0);
+        if(choice_at(M_AI_GRAPHICS)!=3)return 77;
+        ai_set(0);
+    }
+    if(choice_at(M_AA)!=0)return 70;
+    aa_set(true);
     if(choice_at(M_AA)!=(g_gpu_active?1:0) || picture.px!=initial_pixels)return 59;
     if(g_gpu_active) {
         Frame aa; if(!g_gpu.capture(aa))return 60;
         for(auto p:aa.px)if(p!=0x102030)return 61;
     }
     aa_set(false);if(choice_at(M_AA)!=0)return 62;
+    if(choice_at(M_RAY)!=0)return 63;
+    ray_set(true);
+    if(choice_at(M_RAY)!=(g_gpu_active?1:0) || picture.px!=initial_pixels)return 64;
+    if(g_gpu_active) {
+        Frame ray; if(!g_gpu.capture(ray))return 65;
+        for(auto p:ray.px)if(p!=0x102030)return 66;
+    }
+    ray_set(false);if(choice_at(M_RAY)!=0)return 67;
     if(vdp1_gpu_active()) {
         float w=0,h=0;if(!g_gpu_tex || !SDL_GetTextureSize(g_gpu_tex,&w,&h) || w!=640 || h!=480)return 33;
         Frame readback;if(!g_gpu.capture(readback) || readback.w!=640 || readback.h!=480)return 34;

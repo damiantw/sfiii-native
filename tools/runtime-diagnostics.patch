@@ -444,7 +444,7 @@ index 0000000..00c23c1
 +    }
 +};
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..56047a0 100644
+index feded39..ee4fa8b 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
 @@ -2,8 +2,8 @@
@@ -478,7 +478,7 @@ index feded39..56047a0 100644
  #include "pad_slots.h"
  #include "settings.h"
  #include "touch_pad.h"
-@@ -40,8 +42,19 @@
+@@ -40,8 +42,21 @@
  #include <SDL3/SDL.h>
  #include <algorithm>
  #include <chrono>
@@ -492,21 +492,29 @@ index feded39..56047a0 100644
 +#include "audio-buffer.h"
 +#include "replay-checkpoint.h"
 +#include "gpu-renderer.h"
++#include "hd-assets.h"
++#include "hd-gpu.h"
 +#include <fstream>
 +#include <stdexcept>
 +#endif
  
  static SDL_Window* g_win;
  static PadSlots g_slots(kHostSlots);
-@@ -50,19 +63,45 @@ static SDL_Texture* g_tex;
+@@ -50,19 +65,51 @@ static SDL_Texture* g_tex;
  static int g_tex_w, g_tex_h;
  static uint16_t g_buttons[kHostSlots];
  static const Frame* g_last;
 +#ifdef SF3_CONTROLLER_SUPPORT
 +static sf3::GpuRenderer g_gpu;
++static sf3::HdAssets g_ai_assets[3];
++static sf3::HdGpu g_ai_gpu[3];
++static bool g_ai_ready[3]={false,false,false};
++static int g_ai_mode=0; // 0 original, 1 AnimeVideo v3, 2 x4plus anime, 3 x4plus general
++static SDL_Texture* g_ai_tex=nullptr;
 +static bool g_gpu_active=false;
 +static SDL_Texture* g_gpu_tex;
 +static bool g_gpu_wide=false;
++static bool gpu_picture_active() {return g_gpu_active && (vdp1_gpu_active() || g_ai_mode!=0);}
 +static std::chrono::steady_clock::time_point g_perf_begin,g_perf_end;
 +static uint64_t g_perf_first=0,g_perf_last=0,g_perf_fields=0;
 +static int g_perf_empty_base=0;
@@ -547,7 +555,7 @@ index feded39..56047a0 100644
  static std::string g_settings_path, g_settings_text;     // the file and its text, which a save writes over
  static void bind_keyboard();
  
-@@ -91,6 +130,25 @@ static void load_settings(const std::string& named) {
+@@ -91,6 +138,29 @@ static void load_settings(const std::string& named) {
              for (auto& p : problems) sat_note("%s, so its default", p.c_str());
          }
      }
@@ -567,13 +575,17 @@ index feded39..56047a0 100644
 +    }
 +    if(const char* mode=std::getenv("SF3_WIDESCREEN"))g_settings.set("display","aspect",std::strcmp(mode,"1")==0?"16:9":"4:3");
 +    vdp1_widescreen(g_settings.get("display","aspect")=="16:9");
++    const int saved_scale=g_settings.number("display","internal_scale");
++    // The 4x menu preset was retired. Existing player preferences open at 5x;
++    // an explicit --render-scale 4 remains available for developer comparisons.
++    if(saved_scale==4 && !g_cfg.render_scale)g_settings.set("display","internal_scale","5");
 +    vdp1_render_scale(g_settings.number("display","internal_scale"));
-+    vdp1_hd_collect(vdp1_gpu_active());
++    vdp1_hd_collect(gpu_picture_active());
 +#endif
      bind_keyboard();
  }
  
-@@ -112,7 +170,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
+@@ -112,7 +182,13 @@ SDL_Renderer* host_sdl_renderer() { return g_ren; }
  
  bool host_window(const SaturnConfig& cfg) {
      if (g_win) return true;
@@ -587,7 +599,7 @@ index feded39..56047a0 100644
      load_settings(cfg.settings);
      int s = cfg.scale > 0 ? cfg.scale : g_settings.number("display", "scale");
      bool full = cfg.fullscreen || g_settings.flag("display", "fullscreen");
-@@ -121,16 +185,38 @@ bool host_window(const SaturnConfig& cfg) {
+@@ -121,16 +197,58 @@ bool host_window(const SaturnConfig& cfg) {
      SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
      full = true;
  #endif
@@ -612,9 +624,29 @@ index feded39..56047a0 100644
 +    std::string shader_dir=shader_override?shader_override:std::string(SDL_GetBasePath())+"shaders";
 +    g_gpu_active=g_gpu.initialize(g_ren,shader_dir);
 +    if(const char* aa=std::getenv("SF3_AA"))g_gpu.antialiasing(std::strcmp(aa,"1")==0);
-+    vdp1_gpu_available(g_gpu_active);vdp1_hd_collect(vdp1_gpu_active());
-+    if(g_gpu_active)sat_note("Geometry GPU: backend=%s, adapter=%s; original textures, no replacement artwork",g_gpu.backend(),g_gpu.adapter());
++    if(const char* ray=std::getenv("SF3_RAY_SHADOWS"))g_gpu.ray_shadows(std::strcmp(ray,"1")==0);
++    vdp1_gpu_available(g_gpu_active);vdp1_hd_collect(gpu_picture_active());
++    if(g_gpu_active)sat_note("Geometry GPU: backend=%s, adapter=%s; native base layer",g_gpu.backend(),g_gpu.adapter());
 +    else sat_note("Geometry GPU unavailable: %s; CPU reference fallback",SDL_GetError());
++    if(g_gpu_active) {
++        const char* paths[]={std::getenv("SF3_AI_VIDEO_DIR"),std::getenv("SF3_AI_ASSET_DIR"),std::getenv("SF3_AI_NATURAL_DIR")};
++        const char* names[]={"AnimeVideo v3","x4plus anime","x4plus general"};
++        for(int i=0;i<3;++i) if(paths[i] && *paths[i]) {
++            const auto pack_begin=std::chrono::steady_clock::now();
++            const size_t count=g_ai_assets[i].load(paths[i]);
++            g_ai_ready[i]=count && g_ai_gpu[i].initialize(g_ren,g_ai_assets[i],shader_dir);
++            sat_note("AI %s textures: %zu exact-match assets; GPU %s",names[i],count,g_ai_ready[i]?"ready":"unavailable");
++            sat_note("AI pack startup: %s, %.1f ms",g_ai_assets[i].loaded_from_index()?"cached index":"directory scan",
++                std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-pack_begin).count());
++        }
++        const auto saved=g_settings.get("display","ai_graphics");
++        if(saved=="general" && g_ai_ready[2])g_ai_mode=3;
++        else if(saved=="anime" && g_ai_ready[1])g_ai_mode=2;
++        else if(saved=="video" && g_ai_ready[0])g_ai_mode=1;
++        else if(saved!="off") {for(int i=0;i<3;++i)if(g_ai_ready[i]){g_ai_mode=i+1;break;}}
++        if(!(g_ai_ready[0] && g_ai_ready[1] && g_ai_ready[2]))g_ai_mode=0;
++        sat_note("AI graphics: %s; matching world and character artwork, original menus retained",g_ai_mode?names[g_ai_mode-1]:"Off");
++    }
 +#endif
      ui_open(g_ren);
      // host_pace keeps real time; a present that waited for the display would stall the whole machine
@@ -627,7 +659,7 @@ index feded39..56047a0 100644
      return true;
  }
  
-@@ -150,6 +236,11 @@ bool host_open() {
+@@ -150,6 +268,11 @@ bool host_open() {
      g_touchscreen = touch_devices > 0;
      g_base = Clock::now();
      g_paced = !g_cfg.realtime;
@@ -639,7 +671,7 @@ index feded39..56047a0 100644
      return true;
  }
  
-@@ -163,6 +254,10 @@ struct HostCall {
+@@ -163,6 +286,10 @@ struct HostCall {
  static SDL_AudioStream* g_audio;
  static const int kLead = 2205, kMax = 11025;    // frames: 50 ms ahead, 250 ms at most
  static int g_underruns, g_dropped;
@@ -650,7 +682,7 @@ index feded39..56047a0 100644
  
  static void audio_silence(int frames) {
      std::vector<int16_t> z((size_t)frames * 2);
-@@ -174,23 +269,121 @@ bool host_audio_open() {
+@@ -174,23 +301,121 @@ bool host_audio_open() {
      SDL_AudioSpec spec = {SDL_AUDIO_S16, 2, 44100};
      g_audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
      if (!g_audio) { sat_note("SDL audio: %s (no sound)", SDL_GetError()); return false; }
@@ -776,7 +808,7 @@ index feded39..56047a0 100644
  }
  
  // ---- the pad ----------------------------------------------------------------------------------
-@@ -281,6 +474,9 @@ static void read_pads() {
+@@ -281,6 +506,9 @@ static void read_pads() {
          if (k[key] && !(alt && key == SDL_SCANCODE_RETURN)) b[0] |= bit;   // Alt+Enter is fullscreen
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -786,7 +818,7 @@ index feded39..56047a0 100644
          if (s >= 0) b[s] |= gamepad_buttons(p.pad, p.map);
      }
      for (int s = 0; s < kHostSlots; ++s) {
-@@ -292,6 +488,7 @@ static void read_pads() {
+@@ -292,6 +520,7 @@ static void read_pads() {
  }
  
  static void pad_added(SDL_JoystickID id) {
@@ -794,7 +826,7 @@ index feded39..56047a0 100644
      SDL_Gamepad* pad = SDL_OpenGamepad(id);
      if (!pad) return;
      char guid[33];
-@@ -303,7 +500,11 @@ static void pad_added(SDL_JoystickID id) {
+@@ -303,7 +532,11 @@ static void pad_added(SDL_JoystickID id) {
          return;
      }
      g_pads.push_back({pad, id, bind_gamepad(guid)});
@@ -807,7 +839,7 @@ index feded39..56047a0 100644
  }
  
  static void pad_removed(SDL_JoystickID id) {
-@@ -329,6 +530,7 @@ void host_rebind() {
+@@ -329,6 +562,7 @@ void host_rebind() {
  void host_pad_event(const SDL_Event& e) {
      if (e.type == SDL_EVENT_GAMEPAD_ADDED) pad_added(e.gdevice.which);
      if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pad_removed(e.gdevice.which);
@@ -815,7 +847,7 @@ index feded39..56047a0 100644
  }
  
  std::vector<HostController> host_controllers() {
-@@ -336,6 +538,9 @@ std::vector<HostController> host_controllers() {
+@@ -336,6 +570,9 @@ std::vector<HostController> host_controllers() {
      std::vector<HostController> out;
      for (auto& p : g_pads) {
          int s = g_slots.slot_of(p.id);
@@ -825,7 +857,7 @@ index feded39..56047a0 100644
          if (s >= 0) out.push_back({SDL_GetGamepadName(p.pad), s, gamepad_buttons(p.pad, p.map) != 0});
      }
      std::sort(out.begin(), out.end(), [](const HostController& a, const HostController& b) { return a.slot < b.slot; });
-@@ -351,45 +556,83 @@ static void save_shot() {
+@@ -351,45 +588,83 @@ static void save_shot() {
  }
  
  // --virtual-input: SDL virtual gamepads, plugged in a player each in order, pressed by a script, so a
@@ -935,16 +967,16 @@ index feded39..56047a0 100644
      }
  }
  
-@@ -438,7 +681,7 @@ static uint16_t touch_read() {
+@@ -438,7 +713,7 @@ static uint16_t touch_read() {
  // by as long as it was, so the run is the same run with or without it. A panel of two columns where
  // the screen is wide enough, the game's choices in one and the touch pad's in the other, each a row:
  // an action, a choice of a few, a slider, or a switch.
 -enum MenuId { M_RESUME, M_SAVES, M_QUIT, M_PAD, M_SIZE, M_STYLE, M_MENU_BUTTON };
-+enum MenuId { M_RESUME, M_SAVES, M_QUIT, M_PAD, M_SIZE, M_STYLE, M_MENU_BUTTON, M_REPLAY_SAVE, M_REPLAY_LOAD, M_CAPTURE, M_RESOLUTION, M_ASPECT, M_STATE_SAVE, M_STATE_LOAD, M_SPEED, M_AA };
++enum MenuId { M_RESUME, M_SAVES, M_QUIT, M_PAD, M_SIZE, M_STYLE, M_MENU_BUTTON, M_REPLAY_SAVE, M_REPLAY_LOAD, M_CAPTURE, M_RESOLUTION, M_ASPECT, M_STATE_SAVE, M_STATE_LOAD, M_SPEED, M_AA, M_RAY, M_AI_GRAPHICS };
  enum class Control { Action, Choice, Slider, Switch };
  struct MenuRow { MenuId id; Control control; int column; SDL_FRect r; };
  struct MenuLayout { SDL_FRect panel; float u; float title_y; float section_y[2]; float column_x[2]; std::vector<MenuRow> rows; };
-@@ -456,10 +699,22 @@ static void setting_change(const char* key, const char* value) {
+@@ -456,10 +731,26 @@ static void setting_change(const char* key, const char* value) {
      host_settings_save();
  }
  
@@ -953,15 +985,19 @@ index feded39..56047a0 100644
 +static void resolution_set(int scale);
 +static void aspect_set(bool wide);
 +static void aa_set(bool enabled);
-+static const int kRenderScales[]={1,2,4,5};
++static void ray_set(bool enabled);
++static void ai_set(int mode);
++static const int kRenderScales[]={1,2,5};
 +static constexpr int kRenderScaleCount=sizeof(kRenderScales)/sizeof(kRenderScales[0]);
-+static const char* kRenderNames[]={"1x","2x","4x","5x"};
-+static int choice_count(MenuId id) { return id==M_SPEED ? 3 : id==M_RESOLUTION ? kRenderScaleCount : id==M_PAD ? 3 : 2; }
-+static const char* choice_name(MenuId id, int i) { return id==M_AA ? (i?"Light":"Off") : id==M_SPEED ? (i==0?"1x":i==1?"2x":"3x") : id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
++static const char* kRenderNames[]={"1x","2x","5x"};
++static int choice_count(MenuId id) { return id==M_AI_GRAPHICS ? (g_ai_ready[2]?4:g_ai_ready[1]?3:2) : id==M_SPEED ? 3 : id==M_RESOLUTION ? kRenderScaleCount : id==M_PAD ? 3 : 2; }
++static const char* choice_name(MenuId id, int i) { return id==M_AI_GRAPHICS ? (i==0?"Off":i==1?"AnimeVideo v3":i==2?"x4plus anime":"x4plus general") : id==M_RAY ? (i?"Low":"Off") : id==M_AA ? (i?"Light":"Off") : id==M_SPEED ? (i==0?"1x":i==1?"2x":"3x") : id==M_ASPECT ? (i?"16:9":"4:3") : id==M_RESOLUTION ? kRenderNames[i] : id == M_PAD ? kPadModeNames[i] : kStyleNames[i]; }
  
  static int choice_at(MenuId id) {
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    if(id==M_AA)return g_gpu.antialiasing()?1:0;
++    if(id==M_RAY)return g_gpu.ray_shadows()?1:0;
++    if(id==M_AI_GRAPHICS)return g_ai_mode;
 +#endif
 +    if(id==M_SPEED)return g_game_speed-1;
 +    if(id==M_ASPECT)return vdp1_widescreen()?1:0;
@@ -969,18 +1005,20 @@ index feded39..56047a0 100644
      std::string v = g_settings.get("touch", id == M_PAD ? "controls" : "style");
      for (int i = 0; i < choice_count(id); ++i)
          if (v == (id == M_PAD ? kPadModes[i] : kStyles[i])) return i;
-@@ -468,6 +723,10 @@ static int choice_at(MenuId id) {
+@@ -468,6 +759,12 @@ static int choice_at(MenuId id) {
  
  static void choose(MenuId id, int i) {
      i = (i + choice_count(id)) % choice_count(id);
 +    if(id==M_AA) {aa_set(i!=0);return;}
++    if(id==M_RAY) {ray_set(i!=0);return;}
++    if(id==M_AI_GRAPHICS) {ai_set(i);return;}
 +    if(id==M_SPEED) {speed_set(i+1);return;}
 +    if(id==M_ASPECT) {aspect_set(i!=0);return;}
 +    if(id==M_RESOLUTION) {resolution_set(kRenderScales[i]);return;}
      setting_change(id == M_PAD ? "controls" : "style", id == M_PAD ? kPadModes[i] : kStyles[i]);
  }
  
-@@ -482,6 +741,15 @@ static const char* menu_label(MenuId id) {
+@@ -482,6 +779,17 @@ static const char* menu_label(MenuId id) {
      case M_RESUME: return "Resume";
      case M_SAVES: return "Save files";
      case M_QUIT: return "Quit";
@@ -993,10 +1031,12 @@ index feded39..56047a0 100644
 +    case M_ASPECT: return "Aspect ratio (beta)";
 +    case M_SPEED: return "Game speed (F6)";
 +    case M_AA: return "Edge AA (beta)";
++    case M_RAY: return "Ray shadows";
++    case M_AI_GRAPHICS: return "AI graphics";
      case M_PAD: return "Show pad";
      case M_SIZE: return "Size";
      case M_STYLE: return "Style";
-@@ -492,6 +760,16 @@ static const char* menu_label(MenuId id) {
+@@ -492,6 +800,18 @@ static const char* menu_label(MenuId id) {
  static MenuLayout menu_layout() {
      const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 340, between = 24;
      std::vector<std::pair<MenuId, Control>> game = {{M_RESUME, Control::Action}};
@@ -1008,12 +1048,14 @@ index feded39..56047a0 100644
 +    game.push_back({M_RESOLUTION, Control::Choice});
 +    game.push_back({M_ASPECT, Control::Choice});
 +    game.push_back({M_SPEED, Control::Choice});
-+    game.push_back({M_AA, Control::Choice});
++    // Shader diagnostics remain available through environment overrides.
++    // Show the AI choice only when actual replacement assets are GPU-ready.
++    if(g_ai_ready[0] && g_ai_ready[1] && g_ai_ready[2])game.push_back({M_AI_GRAPHICS, Control::Choice});
 +#endif
      if (!g_cfg.after.empty()) game.push_back({M_SAVES, Control::Action});
      game.push_back({M_QUIT, Control::Action});
      const std::vector<std::pair<MenuId, Control>> touch = {
-@@ -527,7 +805,7 @@ static MenuLayout menu_layout() {
+@@ -527,7 +847,7 @@ static MenuLayout menu_layout() {
  
  // The parts of a row's control: a choice's segments, or a slider's minus, track and plus.
  static SDL_FRect control_area(const MenuLayout& l, const MenuRow& r) {
@@ -1022,7 +1064,7 @@ index feded39..56047a0 100644
      return {r.r.x + r.r.w - w - 10 * l.u, r.r.y + 9 * l.u, w, r.r.h - 18 * l.u};
  }
  
-@@ -563,12 +841,186 @@ static void menu_quit(bool to_saves) {
+@@ -563,12 +883,206 @@ static void menu_quit(bool to_saves) {
  }
  
  // Enter, A, or a tap on the row's label: an action acts, and the rest move on a step.
@@ -1095,7 +1137,7 @@ index feded39..56047a0 100644
 +        fs::create_directories(path);
 +        video_capture_debug(path.string());
 +        if (g_last) write_png((path / "game.png").string(), *g_last);
-+        if(g_last && vdp1_gpu_active()) {
++        if(g_last && gpu_picture_active()) {
 +            Frame enhanced;
 +            upload_frame(*g_last);
 +            if(g_gpu.capture(enhanced)) {
@@ -1164,7 +1206,7 @@ index feded39..56047a0 100644
 +        if(!settings_store(std::string(root)+"/render-resolution.ini","[display]\ninternal_scale = "+std::to_string(vdp1_render_scale())+"\n"))
 +            sat_note("Internal resolution: could not save preference");
 +#endif
-+    vdp1_hd_collect(vdp1_gpu_active() && !sat_resuming());
++    vdp1_hd_collect(gpu_picture_active() && !sat_resuming());
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    if(g_last)upload_frame(*g_last);
 +#endif
@@ -1180,7 +1222,7 @@ index feded39..56047a0 100644
 +    if(const char* root=std::getenv("SF3_CONTROLLER_DIR"))
 +        if(!settings_store(std::string(root)+"/aspect-ratio.ini",std::string("[display]\naspect = ")+(wide?"16:9":"4:3")+"\n"))
 +            sat_note("Aspect ratio: could not save preference");
-+    vdp1_hd_collect(vdp1_gpu_active() && !sat_resuming());
++    vdp1_hd_collect(gpu_picture_active() && !sat_resuming());
 +    if(g_last)upload_frame(*g_last);
 +    sat_note("Aspect ratio: %s; expanded world view is experimental; game culling may leave edge gaps",wide?"16:9":"4:3");
 +#endif
@@ -1195,6 +1237,26 @@ index feded39..56047a0 100644
 +#endif
 +}
 +
++static void ray_set(bool enabled) {
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(!g_gpu_active){sat_note("Ray shadows: GPU renderer unavailable; original picture retained");return;}
++    g_gpu.ray_shadows(enabled);
++    if(g_last)upload_frame(*g_last);
++    sat_note("Ray shadows: %s; short screen-space rays on 3D geometry, no hardware RT or world-space depth",g_gpu.ray_shadows()?"Low":"Off");
++#endif
++}
++
++static void ai_set(int mode) {
++#ifdef SF3_CONTROLLER_SUPPORT
++    if(mode<0 || mode>3 || (mode && !g_ai_ready[mode-1])){sat_note("AI graphics: selected GPU pack unavailable");return;}
++    g_ai_mode=mode;
++    g_settings.set("display","ai_graphics",mode==0?"off":mode==1?"video":mode==2?"anime":"general");
++    host_settings_save();
++    if(g_last)upload_frame(*g_last);
++    sat_note("AI graphics: %s; matching world and character artwork, original menus retained",choice_name(M_AI_GRAPHICS,mode));
++#endif
++}
++
  static void menu_activate(MenuId id) {
      switch (id) {
      case M_RESUME: menu_close(); break;
@@ -1206,20 +1268,28 @@ index feded39..56047a0 100644
 +    case M_REPLAY_SAVE: replay_action(false); break;
 +    case M_REPLAY_LOAD: replay_action(true); break;
 +    case M_CAPTURE: capture_issue(); break;
-+    case M_PAD: case M_STYLE: case M_RESOLUTION: case M_ASPECT: case M_SPEED: case M_AA: choose(id, choice_at(id) + 1); break;
++    case M_PAD: case M_STYLE: case M_RESOLUTION: case M_ASPECT: case M_SPEED: case M_AA: case M_RAY: case M_AI_GRAPHICS: choose(id, choice_at(id) + 1); break;
      case M_SIZE: {
          int size = g_settings.number("touch", "size") + 10;
          pad_size_set(size > 200 ? 50 : size);
-@@ -580,7 +1032,7 @@ static void menu_activate(MenuId id) {
+@@ -580,7 +1094,7 @@ static void menu_activate(MenuId id) {
  
  // Left and right: a step along a choice or the slider, a switch set off or on.
  static void menu_adjust(MenuId id, int dir) {
 -    if (id == M_PAD || id == M_STYLE) choose(id, choice_at(id) + dir);
-+    if (id == M_PAD || id == M_STYLE || id==M_RESOLUTION || id==M_ASPECT || id==M_SPEED || id==M_AA) choose(id, choice_at(id) + dir);
++    if (id == M_PAD || id == M_STYLE || id==M_RESOLUTION || id==M_ASPECT || id==M_SPEED || id==M_AA || id==M_RAY || id==M_AI_GRAPHICS) choose(id, choice_at(id) + dir);
      else if (id == M_SIZE) pad_size_set(g_settings.number("touch", "size") + 10 * dir);
      else if (id == M_MENU_BUTTON) setting_change("menu_button", dir > 0 ? "true" : "false");
  }
-@@ -656,11 +1108,23 @@ static void on_event(const SDL_Event& e) {
+@@ -599,6 +1113,7 @@ static void menu_tap(float x, float y, SDL_FingerID finger) {
+         g_menu_at = (int)i;
+         SDL_FRect a = control_area(l, r);
+         if (r.control == Control::Choice && inside(a, x, y)) {
++            if(r.id==M_AI_GRAPHICS) {menu_adjust(r.id,x<a.x+a.w/2?-1:1);return;}
+             for (int k = 0; k < choice_count(r.id); ++k)
+                 if (inside(segment(l, r, k), x, y)) choose(r.id, k);
+         } else if (r.control == Control::Slider && inside(a, x, y)) {
+@@ -656,11 +1171,23 @@ static void on_event(const SDL_Event& e) {
      case SDL_EVENT_GAMEPAD_REMOVED:
          pad_removed(e.gdevice.which);
          break;
@@ -1244,7 +1314,7 @@ index feded39..56047a0 100644
              break;
          }
          bool back = k == SDL_SCANCODE_AC_BACK || (k == SDL_SCANCODE_ESCAPE && !escape_is_a_button());
-@@ -686,10 +1150,21 @@ static void on_event(const SDL_Event& e) {
+@@ -686,10 +1213,20 @@ static void on_event(const SDL_Event& e) {
          break;
      }
      case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -1261,14 +1331,26 @@ index feded39..56047a0 100644
 +            else if (inside(replay_bar_button(3), x, y)) menu_open();
 +            else if(inside(replay_bar_button(4),x,y))resolution_set(1);
 +            else if(inside(replay_bar_button(5),x,y))resolution_set(2);
-+            else if(inside(replay_bar_button(6),x,y))resolution_set(4);
-+            else if(inside(replay_bar_button(7),x,y))resolution_set(5);
-+            else if(inside(replay_bar_button(8),x,y))speed_set(g_game_speed%3+1);
++            else if(inside(replay_bar_button(6),x,y))resolution_set(5);
++            else if(inside(replay_bar_button(7),x,y))speed_set(g_game_speed%3+1);
 +#endif
          }
          break;
      case SDL_EVENT_FINGER_DOWN:
-@@ -876,6 +1351,7 @@ static void draw_menu() {
+@@ -841,6 +1378,12 @@ static void draw_menu() {
+         case Control::Choice: {
+             ui_fill_rounded(a, a.h / 2, well);
+             int at = choice_at(r.id);
++            if(r.id==M_AI_GRAPHICS) {
++                ui_text(a.x+12*u,cy,18*u,"‹",muted,true);
++                ui_text(a.x+a.w-12*u,cy,18*u,"›",muted,true);
++                ui_text(a.x+a.w/2,cy,14*u,choice_name(r.id,at),text,true);
++                break;
++            }
+             for (int k = 0; k < choice_count(r.id); ++k) {
+                 SDL_FRect s = segment(l, r, k);
+                 if (k == at) ui_fill_rounded({s.x + 3 * u, s.y + 3 * u, s.w - 6 * u, s.h - 6 * u}, (s.h - 6 * u) / 2, accent);
+@@ -876,6 +1419,7 @@ static void draw_menu() {
  }
  
  static SDL_FRect g_dst;                         // where the picture goes
@@ -1276,7 +1358,7 @@ index feded39..56047a0 100644
  
  // While --resume plays its presses: the game going by at speed, dimmed, under a card saying what the
  // run is getting to and how far it has got.
-@@ -894,12 +1370,49 @@ static void draw_catching_up() {
+@@ -894,12 +1438,53 @@ static void draw_catching_up() {
  }
  
  // The last picture and what goes over it.
@@ -1287,7 +1369,7 @@ index feded39..56047a0 100644
 +        int bar=(int)replay_bar_height(), height=std::max(1,g_out_h-bar);
 +        bool wide=false;
 +#ifdef SF3_CONTROLLER_SUPPORT
-+        wide=vdp1_gpu_active() && g_gpu_wide;
++        wide=gpu_picture_active() && g_gpu_wide;
 +#endif
 +        const int aw=wide?16:4,ah=wide?9:3;
 +        int sw=g_out_w, sh=sw*ah/aw;
@@ -1312,7 +1394,11 @@ index feded39..56047a0 100644
 +    if(int result=state_write_result()) SDL_SetWindowTitle(g_win,result>0 ? "SFIII native - Native state saved (F9 to load)" : "SFIII native - Native state save failed; previous state retained");
 +    if (g_tex) {SDL_SetTextureScaleMode(g_tex,g_integer?SDL_SCALEMODE_NEAREST:SDL_SCALEMODE_LINEAR);SDL_RenderTexture(g_ren, g_tex, nullptr, &g_dst);}
 +#ifdef SF3_CONTROLLER_SUPPORT
-+    if(vdp1_gpu_active() && g_gpu_tex) {SDL_SetTextureScaleMode(g_gpu_tex,g_integer?SDL_SCALEMODE_NEAREST:SDL_SCALEMODE_LINEAR);SDL_RenderTexture(g_ren,g_gpu_tex,nullptr,&g_dst);}
++    if(gpu_picture_active() && g_gpu_tex) {
++        SDL_SetTextureScaleMode(g_gpu_tex,g_integer?SDL_SCALEMODE_NEAREST:SDL_SCALEMODE_LINEAR);
++        SDL_RenderTexture(g_ren,g_gpu_tex,nullptr,&g_dst);
++        if(g_ai_mode && g_ai_tex) {SDL_SetTextureScaleMode(g_ai_tex,g_integer?SDL_SCALEMODE_NEAREST:SDL_SCALEMODE_LINEAR);SDL_RenderTexture(g_ren,g_ai_tex,nullptr,&g_dst);}
++    }
 +#endif
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    ui_fill_rounded({0, 0, (float)g_out_w, replay_bar_height()}, 0, rgba(0.07f, 0.08f, 0.11f, 1));
@@ -1328,7 +1414,7 @@ index feded39..56047a0 100644
      if (sat_resuming()) draw_catching_up();
      if (g_menu_open) draw_menu();
      else {
-@@ -912,15 +1425,21 @@ static void draw() {
+@@ -912,15 +1497,21 @@ static void draw() {
          ui_text(g_out_w / 2.0f, 44 * u, 17 * u, "Saving…", rgba(1, 1, 1, 0.95f), true);
      }
      SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
@@ -1353,7 +1439,7 @@ index feded39..56047a0 100644
      while (g_menu_open) {
          SDL_Event e;
          {
-@@ -931,38 +1450,86 @@ static void menu_loop() {
+@@ -931,38 +1522,95 @@ static void menu_loop() {
          HostCall in("SDL_Delay");
          SDL_Delay(16);
      }
@@ -1371,10 +1457,19 @@ index feded39..56047a0 100644
  
 +static void upload_frame(const Frame& f) {
 +#ifdef SF3_CONTROLLER_SUPPORT
-+    vdp1_hd_collect(vdp1_gpu_active() && !sat_resuming());
-+    if(vdp1_gpu_active()) {
++    vdp1_hd_collect(gpu_picture_active() && !sat_resuming());
++    if(gpu_picture_active()) {
 +        Frame expanded;g_gpu_wide=vdp1_widescreen() && vdp2_compose_wide(expanded,&f);
-+        g_gpu_tex=g_gpu.render(g_gpu_wide?expanded:f,vdp1_render_scale());
++        const Frame& shown=g_gpu_wide?expanded:f;
++        g_gpu_tex=g_gpu.render(shown,vdp1_render_scale());
++        g_ai_tex=nullptr;
++        if(g_gpu_tex && g_ai_mode && g_ai_ready[g_ai_mode-1]) {
++            g_ai_tex=g_ai_gpu[g_ai_mode-1].render(shown,g_ai_assets[g_ai_mode-1]);
++            if(!g_ai_tex) {
++                sat_note("AI world texture overlay failed: %s; original GPU picture retained",SDL_GetError());
++                g_ai_mode=0;
++            }
++        }
 +        if(g_gpu_tex)return;
 +        sat_note("Geometry GPU render failed: %s; CPU reference fallback",SDL_GetError());
 +        g_gpu_active=false;vdp1_gpu_available(false);vdp1_hd_collect(false);
@@ -1435,7 +1530,7 @@ index feded39..56047a0 100644
 +    }
 +#endif
 +#ifdef SF3_CONTROLLER_SUPPORT
-+    if(const char* shot=std::getenv("SF3_GPU_CAPTURE_AT")) if(vdp1_gpu_active() && sat_vblanks()==std::strtoull(shot,nullptr,10)) {
++    if(const char* shot=std::getenv("SF3_GPU_CAPTURE_AT")) if(gpu_picture_active() && sat_vblanks()==std::strtoull(shot,nullptr,10)) {
 +        Frame result;
 +        if(g_gpu.capture(result))write_png(g_cfg.out+"/gpu-shot-"+std::to_string(sat_vblanks())+".png",result);
 +        else sat_note("GPU capture failed: %s",SDL_GetError());
@@ -1445,7 +1540,7 @@ index feded39..56047a0 100644
 +#ifdef SF3_CONTROLLER_SUPPORT
 +        // The SDL GPU renderer submits its command buffer at present/readback.
 +        // A device wait alone leaves its recording buffer open across frames.
-+        Frame completed;if(vdp1_gpu_active() && !g_gpu.capture(completed))sat_fatal("Offscreen GPU completion: %s",SDL_GetError());
++        Frame completed;if(gpu_picture_active() && !g_gpu.capture(completed))sat_fatal("Offscreen GPU completion: %s",SDL_GetError());
 +#endif
 +        SDL_RenderPresent(g_ren); // Retire GPU frame resources while hidden.
 +        events();return;
@@ -1461,7 +1556,7 @@ index feded39..56047a0 100644
      events();
      if (g_menu_open) menu_loop();
  }
-@@ -973,14 +1540,25 @@ void host_present(const Frame& f) {
+@@ -973,14 +1621,25 @@ void host_present(const Frame& f) {
  }
  
  void host_pace(uint64_t now) {
@@ -1507,10 +1602,10 @@ index 80d7730..23f8231 100644
          base += t - due;
          return {};
 diff --git a/runtime/src/host/settings.cpp b/runtime/src/host/settings.cpp
-index 15eaa96..b4bce6b 100644
+index 15eaa96..75308ad 100644
 --- a/runtime/src/host/settings.cpp
 +++ b/runtime/src/host/settings.cpp
-@@ -13,9 +13,21 @@ static const char kDefaults[] = R"(; saturn-recomp's settings, read when a game
+@@ -13,9 +13,23 @@ static const char kDefaults[] = R"(; saturn-recomp's settings, read when a game
  ; win over this file.
  
  [display]
@@ -1530,17 +1625,20 @@ index 15eaa96..b4bce6b 100644
 +aspect = 4:3
 +; Optional edge-aware 1080p presentation; original assets retain their detail.
 +hd = false
++; Local replacement packs only; unmatched textures keep their original art.
++ai_graphics = video
  
  [audio]
  ; percent
-@@ -80,8 +92,8 @@ multitap = 0
+@@ -80,8 +94,9 @@ multitap = 0
  )";
  
  // The values a word may take, by key.
 -static const struct { const char* key; const char* values[3]; } kChoices[] = {
 -    {"controls", {"auto", "on", "off"}}, {"style", {"western", "japanese"}}};
 +static const struct { const char* key; const char* values[4]; } kChoices[] = {
-+    {"controls", {"auto", "on", "off"}}, {"style", {"western", "japanese"}}, {"internal_scale", {"1","2","4","5"}}, {"aspect", {"4:3","16:9"}}};
++    {"controls", {"auto", "on", "off"}}, {"style", {"western", "japanese"}}, {"internal_scale", {"1","2","4","5"}}, {"aspect", {"4:3","16:9"}},
++    {"ai_graphics", {"off","video","anime","general"}}};
  
  // The range a number may take, by key.
  static const struct { const char* key; int lo, hi; } kRanges[] = {

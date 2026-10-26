@@ -58,7 +58,18 @@ if ($ReplayLatest) {
     $ReplayCheckpoint = Join-Path $replayRoot $name
 }
 $previousEnvironment = @{}
-foreach ($name in @('SF3_CONTROLLER_DIR', 'SF3_RAM_DUMP', 'SF3_CRASH_DIR', 'SF3_REPLAY_ROOT', 'SF3_REPLAY_SEED', 'SF3_STATE_ROOT', 'SF3_STATE_ID')) {
+$artworkEnvironment = @{}
+if (Test-Path -LiteralPath (Join-Path $Work 'ai-packs.json')) {
+    $artworkHelper = Join-Path $Work 'ai-packs-helper.py'
+    $artworkProfiles = Join-Path $Work 'ai-profiles'
+    $pythonFile = Join-Path $Work 'save-import-python.txt'
+    if (-not (Test-Path -LiteralPath $artworkHelper) -or -not (Test-Path -LiteralPath $pythonFile)) { throw 'Prepare this game with the updated application before attaching optional graphics.' }
+    $artworkPython = [IO.File]::ReadAllText($pythonFile).Trim()
+    $resolvedArtwork = & $artworkPython -X utf8 -B $artworkHelper env --game-dir $Work --profiles $artworkProfiles
+    if ($LASTEXITCODE -ne 0) { throw 'Optional graphics could not be validated. Choose Use original graphics in the launcher, or reattach a matching builder report.' }
+    $artworkEnvironment = $resolvedArtwork | ConvertFrom-Json
+}
+foreach ($name in @('SF3_CONTROLLER_DIR', 'SF3_RAM_DUMP', 'SF3_CRASH_DIR', 'SF3_REPLAY_ROOT', 'SF3_REPLAY_SEED', 'SF3_STATE_ROOT', 'SF3_STATE_ID', 'SF3_AI_VIDEO_DIR', 'SF3_AI_ASSET_DIR', 'SF3_AI_NATURAL_DIR')) {
     $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 $result = 1
@@ -145,6 +156,10 @@ try {
         $env:SF3_REPLAY_SEED = $seed
         $env:SF3_STATE_ROOT = $nativeStateRoot
         $env:SF3_STATE_ID = $buildId + ':' + $discId
+        foreach ($name in @('SF3_AI_VIDEO_DIR','SF3_AI_ASSET_DIR','SF3_AI_NATURAL_DIR')) {
+            $value = if ($artworkEnvironment -is [Collections.IDictionary]) { $artworkEnvironment[$name] } else { $artworkEnvironment.$name }
+            [Environment]::SetEnvironmentVariable($name, [string]$value, 'Process')
+        }
         try {
             & $exe @options
             $result = $LASTEXITCODE

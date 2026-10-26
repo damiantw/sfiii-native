@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 sys.dont_write_bytecode = True
 from prepare_posix import APP, PAYLOAD, common, lock, package_root
 from run_posix import selected_build
+from ai_packs import install_selection, detach_selection
 
 # Accepted disc revision profiles (profiles/*.json ids) per game slot; the first is the recommended disc.
 PROFILES = (('scenario1-usa-v1_001', 'scenario1-usa-translation-v25_1'),
@@ -36,8 +37,8 @@ class Launcher:
         if self.config.is_file():
             self.preferences.update(json.loads(self.config.read_text()))
         root.title('Shining Force III Native')
-        root.geometry('850x440')
-        root.minsize(740,400)
+        root.geometry('850x490')
+        root.minsize(740,450)
         frame = ttk.Frame(root,padding=20)
         frame.pack(fill='both',expand=True)
         frame.columnconfigure(1,weight=1)
@@ -63,11 +64,17 @@ class Launcher:
         self.import_button=ttk.Button(bar,text='Import saves',command=self.import_saves)
         self.cancel=ttk.Button(bar,text='Cancel setup',command=self.cancel_setup)
         for button in [self.prepare,self.play,self.controller,self.test,self.import_button,self.cancel]:button.pack(side='left',padx=(0,7))
+        artwork=ttk.Frame(frame)
+        artwork.grid(row=5,column=0,columnspan=3,sticky='w')
+        self.artwork=ttk.Button(artwork,text='Attach optional graphics',command=self.attach_artwork)
+        self.artwork.pack(side='left',padx=(0,7))
+        self.original_art=ttk.Button(artwork,text='Use original graphics',command=self.detach_artwork)
+        self.original_art.pack(side='left')
         self.state=tk.StringVar(value='Choose your supported disc, then prepare the game.')
-        ttk.Label(frame,textvariable=self.state,wraplength=780).grid(row=5,column=0,columnspan=3,sticky='w',pady=5)
+        ttk.Label(frame,textvariable=self.state,wraplength=780).grid(row=6,column=0,columnspan=3,sticky='w',pady=5)
         self.progress=ttk.Progressbar(frame,mode='indeterminate')
-        self.progress.grid(row=6,column=0,columnspan=3,sticky='ew',pady=10)
-        ttk.Label(frame,text='Experimental Linux/macOS preview. Keep a backup of your game-data folder.\nNo game assets or BIOS included. Setup and compilation run locally with bundled tools.',wraplength=780).grid(row=7,column=0,columnspan=3,sticky='w')
+        self.progress.grid(row=7,column=0,columnspan=3,sticky='ew',pady=10)
+        ttk.Label(frame,text='Experimental Linux/macOS preview. Keep a backup of your game-data folder.\nNo game assets or BIOS included. Setup and compilation run locally with bundled tools.',wraplength=780).grid(row=8,column=0,columnspan=3,sticky='w')
         self.active=max(0,min(len(PROFILES)-1,int(self.preferences.get('selected',0))))
         self.selection.current(self.active)
         self.restore()
@@ -105,7 +112,7 @@ class Launcher:
     def refresh(self):
         busy=self.process is not None
         ready=not busy and self.ready()
-        for button in [self.play,self.controller,self.test,self.import_button]:button.configure(state='normal' if ready else 'disabled')
+        for button in [self.play,self.controller,self.test,self.import_button,self.artwork,self.original_art]:button.configure(state='normal' if ready else 'disabled')
         self.prepare.configure(state='disabled' if busy else 'normal')
         self.cancel.configure(state='normal' if busy and self.task=='prepare' else 'disabled')
         self.selection.configure(state='disabled' if busy else 'readonly')
@@ -145,6 +152,23 @@ class Launcher:
 
     def play_game(self):
         self.start([PAYLOAD/'python/bin/python3','-X','utf8','-B',APP/'desktop/run_posix.py','--work',self.work.get()],'game')
+
+    def attach_artwork(self):
+        report=filedialog.askopenfilename(title='Select locally generated packs-report.json',filetypes=[('Artwork pack report','*.json')])
+        if not report:return
+        try:
+            with lock(Path(self.work.get())):
+                install_selection(Path(report),Path(self.work.get()),APP/'profiles')
+            self.state.set('Optional artwork attached. Select AI graphics in the game menu. Menus and unmatched artwork stay original.')
+        except (OSError,ValueError,KeyError,TypeError) as error:
+            messagebox.showerror('Could not attach artwork',str(error),parent=self.root)
+
+    def detach_artwork(self):
+        try:
+            with lock(Path(self.work.get())):detach_selection(Path(self.work.get()))
+            self.state.set('Original graphics selected. Previous artwork selection was preserved.')
+        except (OSError,ValueError) as error:
+            messagebox.showerror('Could not change artwork',str(error),parent=self.root)
 
     def controller_tool(self,mode):
         env={**os.environ,'SF3_CONTROLLER_DIR':self.work.get()}
