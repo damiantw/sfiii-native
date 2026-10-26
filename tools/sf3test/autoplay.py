@@ -131,7 +131,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -157,7 +157,9 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     stood still at 22,26 until the Masked Monk walked up and poisoned him; the poison then drained him).
     `avoid` (round 19, opt-in): (x, y, r): the leader and protected units walk out of the tiles within r
     of (x, y) (Sc2 Ch6 Garvin fight: a scripted blast at ~525.6k (1.003) / ~495.5k (2.000) zeroes every
-    unit, both sides, around 33-41,33-45, and Medion started at 36,45 and stayed there)."""
+    unit, both sides, around 33-41,33-45, and Medion started at 36,45 and stayed there).
+    `focus` (round 19, opt-in): enemy slots the other units path to first while alive (Sc3 Ch7 dock fight:
+    the Masked Monk, enemy 1, was never attacked and poisoned Julian, then Synbios)."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     pol.pathing = pathing
@@ -167,6 +169,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     pol.protect = tuple(protect or ())
     pol.keep_away = keep_away or 0
     pol.avoid = tuple(avoid) if avoid else None
+    pol.focus = tuple(focus or ())
     presses, events = [], []
     fell, watch_base = [], (mm.get('units') or {}).get('force') if watch else None
     done, last_key, same, turn = 0, None, 0, 0
@@ -616,6 +619,10 @@ def aimed_turn(side, units, pol, press):
         else:
             cast_pick = True
         pol.explored = getattr(pol, 'explored', 0) + 1
+    if goal is live and getattr(pol, 'focus', ()):
+        fx = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k in pol.focus and k not in phantoms]
+        if fx:
+            goal = fx
 
     def dist(p):
         return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)

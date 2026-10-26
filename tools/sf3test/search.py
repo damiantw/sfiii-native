@@ -164,7 +164,7 @@ def run_args(job, state=None):
 def _play(s, job, frames, seed, explore):
     return autoplay.play(s, job['profile'], frames, seed, walker=True, rearm=20, idle_over_turns=60,
                          pathing=True, explore=explore,
-                         leader=job.get('leader'), protect=job.get('protect'), keep_away=job.get('keep_away', 0), avoid=job.get('avoid'),
+                         leader=job.get('leader'), protect=job.get('protect'), keep_away=job.get('keep_away', 0), avoid=job.get('avoid'), focus=job.get('focus'),
                          watch=tuple([job['leader']] + list(job.get('protect') or ())) if job.get('watch_fall') else None)
 
 
@@ -295,7 +295,7 @@ def search(a):
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
-                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), state_id=state_id, W=a.window, L=a.look,
+                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), focus=getattr(a, 'focus', None), state_id=state_id, W=a.window, L=a.look,
                   progress=getattr(a, 'progress', False), root_pos=root_pos,
                   root_active=root_active, root_flag_bits=common_fb)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
