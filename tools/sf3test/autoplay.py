@@ -132,7 +132,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None, escort=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -172,6 +172,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     pol.avoid = tuple(avoid) if avoid else None
     pol.focus = tuple(focus or ())
     pol.heal, pol.heal_at, pol.heal_fail, pol.heal_check = tuple(heal or ()), heal_at or LEADER_SAFE, {}, None
+    pol.escort = escort
     presses, events = [], []
     fell, watch_base = [], (mm.get('units') or {}).get('force') if watch else None
     done, last_key, same, turn = 0, None, 0, 0
@@ -440,6 +441,7 @@ def hud_up(frame, run_min=48):
     return rows >= 4
 
 
+ESCORT_R = 4                          # --escort: enemies this close to the escorted unit are the targets
 SIGS = {}                             # force table -> {slot: panel name bits}, kept across play() calls
 SIG_TOL = 20                          # name-line pixels two looks at one unit's panel may differ by
 
@@ -472,7 +474,14 @@ def panel_sig(frame, run_min=48):
                     x0 = x - run
                     while x0 > 0 and blue(*px(x0 - 1, y)):
                         x0 -= 1
-                    if y + 16 > h or x0 + 90 > w:
+                    if y + 22 > h or x0 + 90 > w:
+                        return None
+                    # round 27 (v71 probe): the attack scene shows the defender's name panel up top
+                    # too (Gracia's, while a Masked Pegasus struck her), so her 'turn' cast into the
+                    # scene. Only the field panel has the land-effect box beside it on the left
+                    le = sum(1 for yy in range(y, y + 20) for xx in range(max(0, x0 - 50), max(0, x0 - 3))
+                             if blue(*px(xx, yy)))
+                    if le < 150:
                         return None
                     bits = tuple(1 if sum(px(xx, yy)) > 600 else 0
                                  for yy in range(y + 2, y + 16) for xx in range(x0 + 2, x0 + 90))
@@ -720,10 +729,18 @@ def aimed_turn(side, units, pol, press):
         pol.recentred = getattr(pol, 'recentred', 0) + 1
         return tap(('B',), gap=60)
     pol.cursor_b = 0
-    if not moved and getattr(pol, 'heal', ()):
+    if not moved and (getattr(pol, 'heal', ()) or getattr(pol, 'leader', None) is not None or getattr(pol, 'protect', None)):
         who = panel_unit(pol, panel_sig(side.frame()), list(before))
         if who is not None and heal_due(rd, units, pol, who):
             return heal_cast(rd, units, pol, who)
+        lead0 = pol.leader if getattr(pol, 'leader', None) in before else min(before)
+        if who is not None and (who == lead0 or who in (getattr(pol, 'protect', None) or ())):
+            # round 27 (Sc3 Ch7 dock fight v71): Gracia boxed in at 20,26 by teammates was never
+            # probed, so she never retreated and three enemies closed on her; every level-8 candidate
+            # fell the same way. Her panel names her: take the cautious branch (its retreat path
+            # crosses teammates)
+            moved = [who]
+            pol.named = getattr(pol, 'named', 0) + 1
     if not moved:
         # Nothing moved: a message (C), a menu left open (B), or (round 11) a unit that cannot
         # step (enemies, teammates or terrain all round). The ring opens on C without a step too, so
@@ -758,10 +775,22 @@ def aimed_turn(side, units, pol, press):
         else:
             cast_pick = True
         pol.explored = getattr(pol, 'explored', 0) + 1
+    picked = goal is not live                      # a search candidate's random enemy
     if goal is live and getattr(pol, 'focus', ()):
         fx = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k in pol.focus and k not in phantoms]
         if fx:
             goal = fx
+    esc = getattr(pol, 'escort', None)
+    if esc is not None and esc in before and esc != me and not hold_back and not picked:
+        # round 27 (Sc3 Ch7 dock fight, probes ap71b-f): Gracia (31) takes no player turns (the game
+        # moves her), stays at 20,26 and the church follows when she falls; three enemies closed on
+        # her while the force chased the far ones. --escort: enemies within ESCORT_R of her come
+        # first, and with none near the unit walks next to her (filling the tiles enemies would take)
+        ex, ey = before[esc]
+        near = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k not in phantoms
+                and abs(x - ex) + abs(y - ey) <= ESCORT_R]
+        goal = near or [before[esc]]
+        pol.escorting = getattr(pol, 'escorting', 0) + 1
 
     def dist(p):
         return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)

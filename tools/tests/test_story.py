@@ -187,7 +187,7 @@ class StoryTest(unittest.TestCase):
             w, h = 320, 240
             px = bytearray(w * h * 3)
             for y in range(10, 40):
-                for x in range(100, 260):
+                for x in list(range(60, 90)) + list(range(100, 260)):    # land-effect box, panel
                     px[(y * w + x) * 3:(y * w + x) * 3 + 3] = bytes((20, 30, 120))
             for y in range(14, 24):
                 for x in text_x:
@@ -195,6 +195,11 @@ class StoryTest(unittest.TestCase):
             return N(width=w, height=h, rgb=bytes(px))
         julian, gracia, monk = frame(range(110, 130)), frame(range(140, 170)), frame(range(110, 150), red=True)
         sj, sg, sm = (autoplay.panel_sig(f) for f in (julian, gracia, monk))
+        scene = bytearray(julian.rgb)                    # an attack scene: no land-effect box
+        for y in range(10, 40):
+            for x in range(60, 90):
+                scene[(y * 320 + x) * 3:(y * 320 + x) * 3 + 3] = bytes(3)
+        self.assertIsNone(autoplay.panel_sig(N(width=320, height=240, rgb=bytes(scene))))
         self.assertFalse(sj[1]); self.assertTrue(sm[1])
         self.assertEqual(sj, autoplay.panel_sig(julian))
         pol = autoplay.Policy(1)
@@ -225,6 +230,37 @@ class StoryTest(unittest.TestCase):
         self.assertIn((autoplay.RING['magic'],), [b for b, _ in out])
         self.assertEqual(pol.heal_check, (31, 11))
         self.assertEqual(pol.casts, 1)
+
+    def test_escort_draws_units_to_it(self):
+        # invented roster: slot 9 is escorted (the game moves it); with an enemy near it the mover
+        # walks to that enemy, not the nearer far-off one; with none near it walks next to slot 9
+        from unittest import mock
+        from sf3test import autoplay
+        for enemies, want in (([(0, 3, 5, 0, 10), (1, 12, 12, 0, 10)], (12, 12)), ([(0, 1, 1, 0, 10)], (10, 13))):
+            force = {2: (5, 5), 9: (10, 13)}
+
+            def read_units(rd, base, live=None):
+                if base == 'E':
+                    return enemies
+                return [(k, x, y, 0, 10) for k, (x, y) in force.items()]
+
+            def press(btn, n):
+                if btn and btn[0] in autoplay.DIRS:
+                    force[2] = autoplay.step_of(force[2], btn[0])
+
+            class Side:
+                read = None
+                def frame(self):
+                    return None
+            pol = autoplay.Policy(1)
+            pol.pathing, pol.escort, pol.leader = True, 9, 9
+            with mock.patch.object(autoplay.memory_map, 'read_units', read_units), \
+                    mock.patch.object(autoplay, 'panel_share', lambda f: 0.0), \
+                    mock.patch.object(autoplay, 'is_hurt', lambda *a: False):
+                autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, press)
+            x, y = force[2]
+            self.assertLessEqual(abs(x - want[0]) + abs(y - want[1]), 2, (enemies, force))
+            self.assertEqual(pol.escorting, 1)
 
     def test_hurt_leader_retreats(self):
         # invented roster: the leader (lowest slot) is hurt with an enemy two tiles away; its turn
