@@ -23,6 +23,7 @@
 !/docs/DEVELOPMENT.md
 !/docs/DESKTOP.md
 !/docs/POSIX.md
+!/docs/translation-patcher.md
 !/native/
 !/profiles/
 /profiles/*
@@ -35,6 +36,7 @@
 !/profiles/scenario3-v25_1-redump.json
 !/tools/
 /tools/*
+!/tools/sf3patch/
 !/tools/audit-modules.py
 !/tools/build-headless.ps1
 !/tools/build-scenario1.ps1

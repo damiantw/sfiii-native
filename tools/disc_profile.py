@@ -17,7 +17,7 @@ def identify(disc, manifest, profiles=ROOT/'profiles'):
     raise ValueError('Unsupported disc contents: '+disc.ip.product+' '+disc.ip.version+
                      '. This build supports Scenario 1 USA V1.001, and the Translation Project V25.1 default patch of the Redump '
                      'Scenario 1 USA, Scenario 2 (V1.003 or V2.000) and Scenario 3 discs, plus the registered Scenario 2 v24 / '
-                     'Scenario 3 v25.1 dumps. Patch with the official wizard and its default selection.')
+                     'Scenario 3 v25.1 dumps. Patch with tools/sf3patch or the official wizard and its default selection.')
 
 def verify_inventory(work, profile):
     manifest = json.loads((Path(work)/'manifest.json').read_text())
