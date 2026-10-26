@@ -142,7 +142,7 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
         }
         float minx=xy[0],maxx=xy[0],miny=xy[1],maxy=xy[1];
         for(int k=1;k<4;++k){minx=std::min(minx,xy[2*k]);maxx=std::max(maxx,xy[2*k]);miny=std::min(miny,xy[2*k+1]);maxy=std::max(maxy,xy[2*k+1]);}
-        data[at+33]=uint32_t(std::clamp((maxx-minx)*(maxy-miny),1.0f,1000000.0f));
+        data[at+35]=uint32_t(std::clamp((maxx-minx)*(maxy-miny),1.0f,1000000.0f));   // area for ray shadows (33/34 are the dot steps)
         minx+=f.origin_x;maxx+=f.origin_x;
         if(maxx<-.5f || maxy<-.5f || minx>f.w || miny>f.h)continue;
         const int x0=std::clamp(int(std::floor((minx-1)/tile_size)),0,int(columns)-1),x1=std::clamp(int(std::floor((maxx+1)/tile_size)),0,int(columns)-1);

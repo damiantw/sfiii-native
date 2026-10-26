@@ -112,7 +112,7 @@ float4 ray_shadow(Input input,float4 base) {
     int2 cell=int2(min(uint2(input.position.xy)/scale,uint2(w-1,h-1)));
     uint p=S(4)+(uint(cell.y)*w+uint(cell.x))*10,owner=S(p+8),mode=S(p+3);
     if(mode==0 || (mode&0x100) || owner==0 || owner>S(3))return base;
-    uint q=S(5)+(owner-1)*40,flags=S(q+25),area=S(q+33);
+    uint q=S(5)+(owner-1)*40,flags=S(q+25),area=S(q+35);
     if(flags==0xFFFFFFFF || ((flags>>16)&15)!=2 || area<120)return base;
     float strength=0;
     [loop]for(int step=1;step<=8;++step) {
@@ -123,7 +123,7 @@ float4 ray_shadow(Input input,float4 base) {
         if(blocker<=owner || blocker>S(3))continue;
         uint block_q=S(5)+(blocker-1)*40;
         if(S(block_q+25)==0xFFFFFFFF)continue;
-        uint block_area=S(block_q+33);
+        uint block_area=S(block_q+35);
         if(block_area>0 && block_area*3<area*2) {
             strength=.24*(1.0-float(step)/10.0);
             break;
