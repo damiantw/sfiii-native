@@ -29,15 +29,18 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 
-# Area labels by module name. Evidence for the X0nn ones is in docs/testing-plan.md and the project
-# notes (loader call sites, strings, the scenes that load them); anything else falls to a name pattern.
+# Area labels by module name: best guesses from when each module runs and from its own debug/error
+# text, not verified per function. Anything else falls to a name pattern.
 NAMED = {
     'BOOT': 'core (1ST.BIN: boot, kernel, CD loader, shared engine)',
-    'X002': 'scene loader', 'X003': 'town/field loop', 'X008': 'scene/event objects',
-    'X009': 'title', 'X014': 'battle: spell/special effect loader',
-    'X017': 'town talk/dialog', 'X021': 'town overlay init', 'X023': 'menus: shop (buy/sell/repair/deals)',
-    'X024': 'menus: HQ (depot)', 'X026': 'menus: HQ depot / sprite+palette', 'X033': 'church (save, promotion, revive)',
-    'X046': 'debug: effect viewer', 'X049': 'cutscene: movie/credits player (Cinepak)',
+    'X001': 'debug: face/switch viewer', 'X002': 'scene loader', 'X003': 'town/field loop',
+    'X004': 'battle: 3D objects/trajectories', 'X005': 'battle: 3D textures/motion', 'X008': 'scene/event objects',
+    'X009': 'title/attract (Cinepak)', 'X013': 'battle: setup (MKBTL)', 'X014': 'battle: spell/special effect loader',
+    'X017': 'menus: member item/magic/equip lists', 'X018': 'menus: HQ item storage', 'X021': 'town overlay init',
+    'X022': 'sprite object manager (CG area)', 'X023': 'menus: shop (buy/sell/repair/deals)', 'X024': 'menus: HQ (depot)',
+    'X026': 'menus: item icons/sprites', 'X027': 'blacksmith (Sc3)', 'X032': 'save/load (backup RAM)',
+    'X033': 'church (save, promotion, revive)', 'X039': 'sound: PCM stream', 'X044': 'gallery/viewer mode',
+    'X046': 'debug: effect/animation viewer', 'X049': 'cutscene: movie/credits player (Cinepak)',
     'X1OPMOV': 'cutscene: opening movie',
 }
 PATTERNS = [
