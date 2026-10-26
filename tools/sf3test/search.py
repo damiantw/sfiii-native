@@ -47,8 +47,10 @@ def unit_hp(read, units):
     return out
 
 
-def metrics(units_now, root, leader):
-    """Battle standing against the root roster (`root` a unit_hp result at the search start)."""
+def metrics(units_now, root, leader, protect=()):
+    """Battle standing against the root roster (`root` a unit_hp result at the search start).
+    `protect` (round 19): more force slots whose fall loses the battle (Sc3 Ch7 dock fight: the
+    guest Julian, slot 7; his fall sends the force to the church while Synbios is still up)."""
     f, e = units_now['force'], units_now['enemies']
     e_top = sum(max(m, h, 1) for h, m in root['enemies'].values()) or 1
     e_left = sum(e.get(k, (0, 0))[0] for k in root['enemies'])
@@ -58,8 +60,9 @@ def metrics(units_now, root, leader):
     deaths = sum(1 for k in root['force'] if f.get(k, (0, 0))[0] <= 0)
     lh, lm = f.get(leader, (0, 1))
     lroot = max(root['force'].get(leader, (1, 1)))
+    lost = [k for k in (protect or ()) if k in root['force'] and f.get(k, (0, 0))[0] <= 0]
     return dict(enemy_left=e_left / e_top, kills=kills, force_left=f_left / f_top, deaths=deaths,
-                leader=lh / max(lm, lroot, 1), leader_down=lh <= 0,
+                leader=lh / max(lm, lroot, 1), leader_down=lh <= 0 or bool(lost),
                 won=bool(root['enemies']) and kills == len(root['enemies']))
 
 
@@ -117,7 +120,7 @@ def run_args(job, state=None):
 def _play(s, job, frames, seed, explore):
     return autoplay.play(s, job['profile'], frames, seed, walker=True, rearm=20, idle_over_turns=60,
                          pathing=True, explore=explore,
-                         leader=job.get('leader'))
+                         leader=job.get('leader'), protect=job.get('protect'))
 
 
 def candidate(job):
@@ -146,7 +149,7 @@ def candidate(job):
         for _ in range(30):
             s.step()
         reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
-        m1 = metrics(unit_hp(s.read, units), job['root'], job['leader'])
+        m1 = metrics(unit_hp(s.read, units), job['root'], job['leader'], job.get('protect'))
         m1.update(goal=bool(reached), reset=bool(p['resets']), left=left_battle(s.read, job, reached))
         state = out / 'commit.state'
         if not save_state(r, state):
@@ -167,7 +170,7 @@ def candidate(job):
                    m_commit=m1, reached=reached)
         if job['L'] and not reached and score(m1) > -1e6:
             p2 = _play(s, job, job['L'], job['seed'] + 7919, 0.0)
-            m2 = metrics(unit_hp(s.read, units), job['root'], job['leader'])
+            m2 = metrics(unit_hp(s.read, units), job['root'], job['leader'], job.get('protect'))
             r2 = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
             m2.update(goal=bool(r2), reset=bool(p2['resets']), left=left_battle(s.read, job, r2))
             if battle_over(s.read, job, m2, S.end_hashes(s, job['profile']).get('flag_bits', 0)):
@@ -239,7 +242,7 @@ def search(a):
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
-                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, state_id=state_id, W=a.window, L=a.look,
+                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), state_id=state_id, W=a.window, L=a.look,
                   progress=getattr(a, 'progress', False), root_pos=root_pos,
                   root_active=root_active, root_flag_bits=common_fb)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
@@ -332,7 +335,7 @@ def resync(a, S, start, mm, units, out, lv, common, n):
             s.step()
         here, hv = S.end_hashes(s, a.profile), r.vblank  # hash at lv['v'], before save_state steps on
         reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
-        m = metrics(unit_hp(s.read, units), common['root'], common['leader'])
+        m = metrics(unit_hp(s.read, units), common['root'], common['leader'], common.get('protect'))
         m.update(goal=bool(reached), reset=False, left=left_battle(s.read, common, reached))
         if battle_over(s.read, common, m, S.end_hashes(s, a.profile).get('flag_bits', 0)):
             m.update(won=True, over=True)

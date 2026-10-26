@@ -251,6 +251,18 @@ class StoryTest(unittest.TestCase):
         self.assertFalse(search.battle_over(field, dict(job, root_active=None), m, 18))
         self.assertIsNone(M.in_battle(field, M.lookup('scenario1-usa-v25_1')))
 
+    def test_protected_fall_loses(self):
+        from sf3test import search
+        root = dict(force={31: (40, 40), 7: (13, 42)}, enemies={0: (40, 40)})
+        up = dict(force={31: (35, 40), 7: (13, 42)}, enemies={0: (40, 40)})
+        julian_gone = dict(force={31: (35, 40)}, enemies={0: (40, 40)})
+        self.assertFalse(search.metrics(up, root, 31, [7])['leader_down'])
+        self.assertFalse(search.metrics(julian_gone, root, 31)['leader_down'])
+        m = search.metrics(julian_gone, root, 31, [7])
+        self.assertTrue(m['leader_down'])
+        self.assertEqual(search.score(m), -1e6)
+        self.assertFalse(search.metrics(julian_gone, root, 31, [9])['leader_down'])   # not in the root roster
+
     def test_is_hurt(self):
         from sf3test import autoplay, memory_map as M
         rec = bytearray(M.UNIT_STRIDE * 2)

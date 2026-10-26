@@ -460,6 +460,7 @@ def main():
     q.add_argument('--max-backs', type=int, default=40)
     q.add_argument('--progress', action='store_true', help='also score story progress outside battle: +1000 per new map id reached, +10 per story flag bit (post-battle walks, e.g. the Sc3 Flagship deck)')
     q.add_argument('--leader', type=int, help='force slot whose fall loses the battle (default: the lowest slot at the root; Sc3 Flagship: 31)')
+    q.add_argument('--protect', type=int, nargs='+', help='more force slots whose fall loses the battle; they also play cautious (Sc3 Ch7 dock fight: the guest Julian, 7)')
     q.add_argument('--no-left', action='store_true', help='do not score battle id 0 as Egress/defeat (Sc2 V1.003: its map/battle bytes do not track in Ch6)')
     q.add_argument('--resync', action='store_true', help='after each level, replay the committed pads straight from the save and continue from that run (save-state restores are not exact)')
     q.add_argument('--stall', type=int, default=8, help='stop when the best score is flat this many levels (0: never)')

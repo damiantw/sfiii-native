@@ -130,7 +130,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0, leader=None):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -154,6 +154,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     pol.cast = bool(assist)
     pol.explore = explore
     pol.leader = leader
+    pol.protect = tuple(protect or ())
     presses, events = [], []
     done, last_key, same, turn = 0, None, 0, 0
     prev = None
@@ -609,7 +610,7 @@ def aimed_turn(side, units, pol, press):
     # enemies (through teammates, to a free tile)
     cautious = False
     lead = pol.leader if getattr(pol, 'leader', None) in before else min(before)
-    if me == lead:
+    if me == lead or me in (getattr(pol, 'protect', None) or ()):
         press(('B',), 6)
         press((), 20)
         cautious = True
