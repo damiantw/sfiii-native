@@ -2537,7 +2537,7 @@ index 91d606c..212e2c5 100644
  void scsp_state(State& s);
  void tasks_state(State& s);
 diff --git a/runtime/src/sound/scsp.cpp b/runtime/src/sound/scsp.cpp
-index b40fefc..8369242 100644
+index b40fefc..74c2091 100644
 --- a/runtime/src/sound/scsp.cpp
 +++ b/runtime/src/sound/scsp.cpp
 @@ -34,8 +34,7 @@
@@ -3118,6 +3118,15 @@ index b40fefc..8369242 100644
      return (uint16_t)((g_com[4] & 0xF800) | ca << 7 | sgc << 5 | eg);
  }
  
+@@ -496,7 +526,7 @@ uint16_t read16(uint32_t off) {
+     }
+     if (off >= 0x600 && off < 0x680) return (uint16_t)g_stack[(off - 0x600) >> 1];
+     if (off >= 0x700 && off < 0x780) return (uint16_t)g_dsp.coef[(off - 0x700) >> 1];
+-    if (off >= 0x780 && off < 0x800) return g_dsp.madrs[(off - 0x780) >> 1 & 31];
++    if (off >= 0x780 && off < 0x7C0) return g_dsp.madrs[(off - 0x780) >> 1];   // 0x7C0-0x7FF: no register
+     if (off >= 0x800 && off < 0xC00) return g_dsp.mpro[(off - 0x800) >> 1];
+     auto half = [&](int32_t v) { return (uint16_t)(off & 2 ? v & 0xFFFF : (uint32_t)v >> 16); };
+     if (off >= 0xC00 && off < 0xE00) return half(g_dsp.temp[(off >> 2) & 0x7F]);
 @@ -514,24 +544,11 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
          int w = off >> 1 & 15;
          if (w >= 12) return;
@@ -3148,6 +3157,15 @@ index b40fefc..8369242 100644
          return;
      }
      if (off < 0x430) {
+@@ -566,7 +583,7 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
+     auto merge = [&](uint16_t old) { return (uint16_t)((old & ~mask) | (v & mask)); };
+     if (off >= 0x600 && off < 0x680) { int32_t& x = g_stack[(off - 0x600) >> 1]; x = (int16_t)merge((uint16_t)x); return; }
+     if (off >= 0x700 && off < 0x780) { int16_t& x = g_dsp.coef[(off - 0x700) >> 1]; x = (int16_t)merge((uint16_t)x); return; }
+-    if (off >= 0x780 && off < 0x800) { uint16_t& x = g_dsp.madrs[(off - 0x780) >> 1 & 31]; x = merge(x); return; }
++    if (off >= 0x780 && off < 0x7C0) { uint16_t& x = g_dsp.madrs[(off - 0x780) >> 1]; x = merge(x); return; }
+     if (off >= 0x800 && off < 0xC00) {
+         uint16_t& x = g_dsp.mpro[(off - 0x800) >> 1];
+         x = merge(x);
 @@ -590,13 +607,17 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
  void scsp_reset() {
      static bool tables;
@@ -4955,10 +4973,10 @@ index 0000000..64371d5
 +}
 diff --git a/runtime/tests/scsp_test.cpp b/runtime/tests/scsp_test.cpp
 new file mode 100644
-index 0000000..4da6913
+index 0000000..9a4d3a7
 --- /dev/null
 +++ b/runtime/tests/scsp_test.cpp
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,245 @@
 +// The SCSP and the sound 68000 against numbers measured on Beetle Saturn as a black box (its output
 +// and save states only).
 +#include <cstring>
@@ -5191,6 +5209,18 @@ index 0000000..4da6913
 +        CHECK_EQ(scsp_get_internal(SCSP_LOST, 0), from == 9 ? 1u : 0u);
 +        CHECK_EQ(scsp_get_internal(SCSP_ADDR, 0), from == 9 ? 11u : 0u);
 +    }
++}
++
++// MADRS is 32 words at 0x780-0x7BF; 0x7C0-0x7FF holds no register. A sound driver that clears the
++// whole 0x700-0x7FF block after setting MADRS (Shining Force III's) must keep its delay taps.
++TEST(writes_past_madrs_leave_the_delay_addresses_alone) {
++    scsp_reset();
++    scsp_write(0x782, 0x1234, 2);
++    scsp_write(0x7C2, 0x0000, 2);
++    scsp_write(0x7FE, 0xFFFF, 2);
++    CHECK_EQ(scsp_read(0x782, 2), 0x1234u);
++    CHECK_EQ(scsp_read(0x7BE, 2), 0u);
++    CHECK_EQ(scsp_read(0x7C2, 2), 0u);
 +}
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
 index de3d7ec..a14fa32 100644
