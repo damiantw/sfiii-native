@@ -140,7 +140,11 @@ def candidate(job):
         if job.get('progress'):
             # story progress outside battle: new map ids seen and story flag bits set
             new_maps = {e[1] for e in p['events'] if e[1] not in (-1, map0)}
-            m1.update(new_maps=len(new_maps), flag_bits=end.get('flag_bits', 0))
+            # how far the force has walked from where it stood at the search root (finds doors)
+            pos = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(s.read, units['force'], units.get('live'))}
+            spread = max([abs(x - job['root_pos'][k][0]) + abs(y - job['root_pos'][k][1])
+                          for k, (x, y) in pos.items() if k in job['root_pos']] or [0])
+            m1.update(new_maps=len(new_maps), flag_bits=end.get('flag_bits', 0), spread=spread)
         res.update(actions=[a for a in s.actions if a[0] >= job['v']], v=r.vblank, end=end, state=str(state),
                    backup=job['backup'],
                    m_commit=m1, reached=reached)
@@ -153,7 +157,7 @@ def candidate(job):
             m2 = m1
         res.update(m_look=m2, score=score(m1) if m1.get('goal') or score(m1) <= -1e6 else score(m2))
         if job.get('progress') and res['score'] > -1e6:
-            res['score'] += 1000 * m1['new_maps'] + 10 * m1['flag_bits']
+            res['score'] += 1000 * m1['new_maps'] + 10 * m1['flag_bits'] + 2 * m1['spread']
     except Exception as e:
         res.update(error=repr(e)[:300], score=-2e6)
     finally:
@@ -200,6 +204,7 @@ def search(a):
     for _ in range(30):
         rs.step()
     root = unit_hp(rs.read, units)
+    root_pos = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rs.read, units['force'], units.get('live'))}
     root_battle = rs.read(mm['battle_id'], 1)[0]
     leader = getattr(a, 'leader', None)
     if leader is None or leader not in root['force']:
@@ -213,7 +218,7 @@ def search(a):
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
                   profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, state_id=state_id, W=a.window, L=a.look,
-                  progress=getattr(a, 'progress', False))
+                  progress=getattr(a, 'progress', False), root_pos=root_pos)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
     levels = [dict(state=str(st0), v=v0, actions=base_actions, end=root_end, ranked=[], pick=0, score=0,
                    backup=str(out / 'states' / 'root.backup.bin'))]
