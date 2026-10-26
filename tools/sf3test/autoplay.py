@@ -23,6 +23,7 @@ TAP = 6                 # frames a tap is held
 GAP = 10                # frames between taps
 STUCK_CHECKS = 6        # unchanged picture samples before the escape phrase
 SAMPLE = 30             # frames between picture samples
+WATCH_EVERY = 30  # round 19: frames between --watch-fall HP samples
 
 
 def frame_key(frame):
@@ -130,7 +131,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -147,7 +148,10 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     path (see plan_step) instead of greedily. `explore` (round 5, search candidates): the share of
     battle turns that aim at a random enemy, hold back or cast instead of the greedy choice.
     `leader` (round 19): the force slot whose fall loses the battle; default the lowest on-field slot
-    (Sc3 Ch7 dock fight: a guest in slot 7 sat below Synbios' 31 and was kept back as the leader)."""
+    (Sc3 Ch7 dock fight: a guest in slot 7 sat below Synbios' 31 and was kept back as the leader).
+    `watch` (round 19, opt-in): force slots whose HP is sampled every WATCH_EVERY frames; a fall is
+    returned in 'fell' as (frame offset, slot) even when the game revives the unit before the end (Sc2
+    Ch6 Garvin fight: Medion fell, the church restored him to full HP, and the window end looked fine)."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     pol.pathing = pathing
@@ -156,6 +160,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     pol.leader = leader
     pol.protect = tuple(protect or ())
     presses, events = [], []
+    fell, watch_base = [], (mm.get('units') or {}).get('force') if watch else None
     done, last_key, same, turn = 0, None, 0, 0
     prev = None
     held = None
@@ -186,6 +191,11 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
         for _ in range(n):
             side.step()
             done += 1
+            if watch_base and done % WATCH_EVERY == 0:
+                for k in watch:
+                    a = watch_base + k * memory_map.UNIT_STRIDE + memory_map.UNIT_HP
+                    if int.from_bytes(side.read(a, 2), 'big') == 0 and k not in [x for _, x in fell]:
+                        fell.append((done, k))
             if done % SAMPLE == 0:
                 k = frame_key(side.frame())
                 same = same + 1 if k == last_key else 0
@@ -308,7 +318,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
             if done >= frames:
                 break
     script = script_text(presses)
-    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, casts=pol.casts, pokes=pokes, legs=blocked, areas=areas, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
+    return dict(fell=fell, presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, casts=pol.casts, pokes=pokes, legs=blocked, areas=areas, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
                 script=script)
 
 

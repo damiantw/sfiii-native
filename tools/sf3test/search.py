@@ -120,7 +120,8 @@ def run_args(job, state=None):
 def _play(s, job, frames, seed, explore):
     return autoplay.play(s, job['profile'], frames, seed, walker=True, rearm=20, idle_over_turns=60,
                          pathing=True, explore=explore,
-                         leader=job.get('leader'), protect=job.get('protect'))
+                         leader=job.get('leader'), protect=job.get('protect'),
+                         watch=tuple([job['leader']] + list(job.get('protect') or ())) if job.get('watch_fall') else None)
 
 
 def candidate(job):
@@ -151,6 +152,8 @@ def candidate(job):
         reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
         m1 = metrics(unit_hp(s.read, units), job['root'], job['leader'], job.get('protect'))
         m1.update(goal=bool(reached), reset=bool(p['resets']), left=left_battle(s.read, job, reached))
+        if p.get('fell'):  # --watch-fall: a fall inside the window loses, even if revived by the end
+            m1.update(leader_down=True, fell=p['fell'])
         state = out / 'commit.state'
         if not save_state(r, state):
             raise RuntimeError('state not written')
@@ -173,6 +176,8 @@ def candidate(job):
             m2 = metrics(unit_hp(s.read, units), job['root'], job['leader'], job.get('protect'))
             r2 = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
             m2.update(goal=bool(r2), reset=bool(p2['resets']), left=left_battle(s.read, job, r2))
+            if p2.get('fell'):
+                m2.update(leader_down=True, fell=p2['fell'])
             if battle_over(s.read, job, m2, S.end_hashes(s, job['profile']).get('flag_bits', 0)):
                 m2.update(won=True, over=True)
         else:
@@ -242,7 +247,7 @@ def search(a):
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
-                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), state_id=state_id, W=a.window, L=a.look,
+                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), state_id=state_id, W=a.window, L=a.look,
                   progress=getattr(a, 'progress', False), root_pos=root_pos,
                   root_active=root_active, root_flag_bits=common_fb)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
