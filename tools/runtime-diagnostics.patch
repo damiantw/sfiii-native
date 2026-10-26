@@ -1,5 +1,5 @@
 diff --git a/runtime/include/saturn/sh2.h b/runtime/include/saturn/sh2.h
-index 1219a02..9bbb945 100644
+index 1219a02..7f8af90 100644
 --- a/runtime/include/saturn/sh2.h
 +++ b/runtime/include/saturn/sh2.h
 @@ -11,9 +11,11 @@
@@ -23,7 +23,7 @@ index 1219a02..9bbb945 100644
      int      cpu;                       // 0 master, 1 slave
  };
  
-@@ -59,7 +61,22 @@ uint32_t sh2_mmio_read(uint32_t a, int size);           // what sh2_io_* does no
+@@ -59,7 +61,40 @@ uint32_t sh2_mmio_read(uint32_t a, int size);           // what sh2_io_* does no
  void     sh2_mmio_write(uint32_t a, uint32_t v, int size);
  
  // A safe point: loop back-edges, calls, and `ldc ...,sr` (the mask may drop).
@@ -40,6 +40,24 @@ index 1219a02..9bbb945 100644
 +// fitted to Beetle's Sc1 battle-start counter plateaus). Larger is a slower CPU.
 +inline int32_t g_sh2_mem_q = [] { const char* v = std::getenv("SF3_MEM_Q"); return v ? (int32_t)std::atol(v) : 8; }();
 +#define SH2_CYC(c, n, m) ((c).budget -= (n) * 4 + (m) * g_sh2_mem_q)
++// Block coverage, only in builds generated with block coverage on (tools/generate.py --block-coverage):
++// each block of recompiled code stores 1 into its module's hit bytes as it is entered, a byte per CPU
++// (index 2*block + cpu). Builds generated without it emit no SH2_BLK and register no table, so this costs
++// nothing there. The tables register themselves at static initialisation (sh2_block_coverage_add, core.cpp);
++// --coverage FILE then also writes FILE's .blocks.tsv beside it (machine.cpp).
++struct SH2BlockCoverage {
++    const SH2Module* module;
++    const uint32_t* addr;               // each block's first SH-2 address, by block index
++    const uint32_t* func;               // the function (entry address) each block belongs to
++    const uint16_t* insns;              // each block's instructions (its delay slot included)
++    uint32_t n;
++    uint8_t* hit;                       // 2*n bytes: [2*k] master, [2*k+1] slave
++    SH2BlockCoverage* next;
++};
++void sh2_block_coverage_add(SH2BlockCoverage* table);
++const SH2BlockCoverage* sh2_block_coverage();      // every registered table, a list
++struct SH2BlockCoverageRegistrar { explicit SH2BlockCoverageRegistrar(SH2BlockCoverage* t) { sh2_block_coverage_add(t); } };
++#define SH2_BLK(c, k) (blk[2 * (k) + ((c).cpu & 1)] = 1)
 +extern std::atomic<bool> g_state_requested;
 +extern const bool g_sh2_native_states;
 +void state_native_point(SH2Context& c, uint32_t pc);
@@ -151,7 +169,7 @@ index 0000000..712a96c
 +    ~SH2CallFrame() { g_sh2_frames->pop(depth); }
 +};
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..1097156 100644
+index cb6af72..5de23d4 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,7 +3,10 @@
@@ -212,7 +230,18 @@ index cb6af72..1097156 100644
      return nullptr;
  }
  
-@@ -113,42 +124,116 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -88,6 +99,10 @@ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc) {
+     return ~crc;
+ }
+ 
++static SH2BlockCoverage* g_block_tables;   // constant-initialised: safe from any static constructor
++void sh2_block_coverage_add(SH2BlockCoverage* table) { table->next = g_block_tables; g_block_tables = table; }
++const SH2BlockCoverage* sh2_block_coverage() { return g_block_tables; }
++
+ const SH2Module* sh2_module(const char* name) {
+     for (int i = 0; i < g_sh2_nmodules; ++i)
+         if (!std::strcmp(g_sh2_modules[i]->name, name)) return g_sh2_modules[i];
+@@ -113,42 +128,116 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -313,7 +342,7 @@ index cb6af72..1097156 100644
 +    uint8_t slots[2]; int n = 0;
 +    for (int slot = 0; slot < kSlots; ++slot) {
 +        const SH2Module* m = g_active[slot];
-+        if (!m || addr - m->base >= m->size) continue;
+         if (!m || addr - m->base >= m->size) continue;
 +        if (n == 2) return f;                            // unusual overlap: not cached
 +        slots[n++] = (uint8_t)slot;
 +        if (has_entry(m, addr)) break;
@@ -326,7 +355,7 @@ index cb6af72..1097156 100644
 +static SH2Func lookup_slow(uint32_t addr) {
 +    for (int slot=0;slot<kSlots;++slot) {
 +        const SH2Module* m=g_active[slot];
-         if (!m || addr - m->base >= m->size) continue;
++        if (!m || addr - m->base >= m->size) continue;
 +        // Overlay transitions can call an interior export already present in
 +        // the old dispatch table. A changed header triggers full-image identity
 +        // before trusting that entry. Data-only mutation retains its owner.
@@ -342,7 +371,7 @@ index cb6af72..1097156 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -183,12 +268,57 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -183,12 +272,57 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  
@@ -1643,7 +1672,7 @@ index 15eaa96..75308ad 100644
  // The range a number may take, by key.
  static const struct { const char* key; int lo, hi; } kRanges[] = {
 diff --git a/runtime/src/machine/agent.cpp b/runtime/src/machine/agent.cpp
-index 8f7fc01..663e008 100644
+index 8f7fc01..a59600a 100644
 --- a/runtime/src/machine/agent.cpp
 +++ b/runtime/src/machine/agent.cpp
 @@ -16,7 +16,9 @@
@@ -1671,7 +1700,7 @@ index 8f7fc01..663e008 100644
      say("vblank " + std::to_string(sat_vblanks()));
      std::string line;
      while (read_line(line)) {
-@@ -115,6 +125,22 @@ void agent_poll() {
+@@ -115,6 +125,28 @@ void agent_poll() {
          } else if (cmd == "read") read_memory(args);
          else if (cmd == "write") write_memory(args);
          else if (cmd == "frame") send_frame();
@@ -1691,6 +1720,12 @@ index 8f7fc01..663e008 100644
 +            say(out);
 +        }
 +        else if (cmd == "statehash") say("statehash" + state_part_hashes());
++        else if (cmd == "coverage") {
++            // coverage PATH: the --coverage file (and, in a block coverage build, PATH's .blocks.tsv) now
++            std::string path;
++            if (!(args >> path)) say("error coverage PATH");
++            else { machine_write_coverage(path); say("ok"); }
++        }
          else if (cmd == "quit") break;
          else say("error no command " + cmd);
      }
@@ -2224,7 +2259,7 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..894bbdb 100644
+index a17d926..ef202b9 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
 @@ -1,11 +1,11 @@
@@ -2465,7 +2500,7 @@ index a17d926..894bbdb 100644
  }
  
  // SINIT: the master pulses the slave's FRT input capture
-@@ -460,16 +589,27 @@ void slave_kick() {
+@@ -460,16 +589,50 @@ void slave_kick() {
  // The clock and the multitap are the run's own settings, but a dump goes on with the ones it was made with.
  void machine_state(State& s) {
      uint8_t ip[16];
@@ -2493,13 +2528,41 @@ index a17d926..894bbdb 100644
 +        g_slave_thread = true;
 +        std::thread(slave_main).detach();
 +    }
++}
++
++// Block coverage builds only (sh2.h, SH2BlockCoverage): FILE.tsv's blocks go to FILE.blocks.tsv,
++// "MODULE CRC BLOCK FUNCTION INSTRUCTIONS MASTER SLAVE" a block, MASTER/SLAVE 1 once that CPU entered it.
++// Only addresses and counts: no image bytes. Nothing is written by a build without the tables.
++static void write_block_coverage(const std::string& path) {
++    const SH2BlockCoverage* t = sh2_block_coverage();
++    if (path.empty() || !t) return;
++    std::string out = path;
++    if (out.size() > 4 && out.compare(out.size() - 4, 4, ".tsv") == 0) out.resize(out.size() - 4);
++    out += ".blocks.tsv";
++    std::string part = out + ".part";
++    FILE* f = std::fopen(part.c_str(), "w");
++    if (!f) { sat_note("coverage: cannot write %s", part.c_str()); return; }
++    std::fprintf(f, "# module crc block function insns master slave\n");
++    for (; t; t = t->next)
++        for (uint32_t k = 0; k < t->n; ++k)
++            std::fprintf(f, "%s %08X %08X %08X %u %d %d\n", t->module->name, t->module->crc, t->addr[k], t->func[k],
++                         t->insns[k], t->hit[2 * k] ? 1 : 0, t->hit[2 * k + 1] ? 1 : 0);
++    std::fclose(f);
++    std::error_code e;
++    std::filesystem::rename(part, out, e);
++    if (e) sat_note("coverage: cannot replace %s: %s", out.c_str(), e.message().c_str());
  }
  
  // --coverage FILE: "MODULE ADDRESS INSTRUCTIONS RAN" for every recompiled function, RAN 1 or 0.
-@@ -490,6 +630,30 @@ static void write_coverage(const std::string& path) {
+@@ -488,6 +651,33 @@ static void write_coverage(const std::string& path) {
+     std::error_code e;
+     std::filesystem::rename(part, path, e);
      if (e) sat_note("coverage: cannot replace %s: %s", path.c_str(), e.message().c_str());
- }
- 
++    write_block_coverage(path);
++}
++
++void machine_write_coverage(const std::string& path) { write_coverage(path); }
++
 +void machine_capture_debug(const std::string& directory) {
 +    for (auto item : {std::pair<const char*, const uint8_t*>{"wram-high.bin", g_wram_h}, {"wram-low.bin", g_wram_l}}) {
 +        FILE* f = std::fopen((directory + "/" + item.first).c_str(), "wb");
@@ -2522,12 +2585,10 @@ index a17d926..894bbdb 100644
 +    std::fclose(f);
 +    mmio_log_write(directory + "/hw-log.txt");
 +    write_coverage(directory + "/coverage.tsv");
-+}
-+
+ }
+ 
  // --checkpoint SECONDS: coverage written again every SECONDS of the host's time, so a run that is
- // killed rather than stopped still leaves what it ran.
- static void checkpoint_due() {
-@@ -512,6 +676,7 @@ static void checkpoint_due() {
+@@ -512,6 +702,7 @@ static void checkpoint_due() {
  static const int kModemLine = 12;
  
  void master_poll_devices() {
@@ -2535,7 +2596,7 @@ index a17d926..894bbdb 100644
      uint64_t now = sat_now();
      video_tick(now);
      writes_due();
-@@ -529,16 +694,24 @@ void master_poll_devices() {
+@@ -529,16 +720,24 @@ void master_poll_devices() {
  }
  
  void sh2_poll(SH2Context& c) {
@@ -2562,7 +2623,7 @@ index a17d926..894bbdb 100644
  }
  
  static int g_int_depth;
-@@ -555,6 +728,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -555,6 +754,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
      c.r[15] -= 4; st32(c.r[15], sh2_get_sr(c));
      c.r[15] -= 4; st32(c.r[15], kIntPC);
      c.imask = level;
@@ -2570,7 +2631,7 @@ index a17d926..894bbdb 100644
      if (bios_is_dispatcher(vec, target)) {
          bios_dispatch(c, vec);
      } else {
-@@ -568,10 +742,14 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -568,10 +768,14 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
  }
  
  void sh2_sleep(SH2Context& c, uint32_t pc) {
@@ -2587,7 +2648,7 @@ index a17d926..894bbdb 100644
          if (scu_deliver(c) | onchip_deliver(c)) return;
      }
      sat_fatal("sleep at %08X: nothing woke it", pc);
-@@ -584,6 +762,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
+@@ -584,6 +788,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
  
  void sh2_bad_return(SH2Context& c, uint32_t expected) {
      if (tasks_pending()) { tasks_route(c, expected); return; }
@@ -2599,7 +2660,7 @@ index a17d926..894bbdb 100644
      sat_fatal("returned to %08X, expected %08X", c.pc, expected);
  }
  
-@@ -644,6 +827,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -644,6 +853,7 @@ int saturn_main(const SaturnConfig& cfg) {
      }
      g_master = SH2Context{};
      g_master.budget = kBudget;
@@ -2607,7 +2668,7 @@ index a17d926..894bbdb 100644
      video_init();
      sound_init();
      cd_init();
-@@ -658,7 +842,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -658,7 +868,7 @@ int saturn_main(const SaturnConfig& cfg) {
      else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
      for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
      bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
@@ -2616,7 +2677,7 @@ index a17d926..894bbdb 100644
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
-@@ -704,3 +888,11 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -704,3 +914,11 @@ int saturn_main(const SaturnConfig& cfg) {
      std::fflush(stdout);
      std::_Exit(0);                  // the slave's thread is parked: do not wait for it
  }
@@ -2826,7 +2887,7 @@ index 33a2cdd..cb37688 100644
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..5895f33 100644
+index 6cbd98f..44fb6ad 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -2847,7 +2908,7 @@ index 6cbd98f..5895f33 100644
  uint64_t sat_vblanks();
  inline bool sat_resuming() { return g_cfg.resume && sat_vblanks() < g_cfg.resume; }   // --resume's script still plays
  void sat_trace(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
-@@ -103,7 +107,12 @@ void slave_off();                   // SSHOFF: held in reset
+@@ -103,7 +107,13 @@ void slave_off();                   // SSHOFF: held in reset
  void slave_idle_check(uint32_t ftcsr);   // the slave read its FTCSR: yield if nothing is there
  void slave_kick();                  // SINIT: the slave's input capture, and the CPU to it
  void master_poll_devices();
@@ -2857,10 +2918,11 @@ index 6cbd98f..5895f33 100644
 +struct BusQuiet { BusQuiet() { ++g_bus_quiet; } ~BusQuiet() { --g_bus_quiet; } };
  bool state_slave_busy();            // the slave is on: no dump can be taken (state.cpp)
 +void machine_capture_debug(const std::string& directory);
++void machine_write_coverage(const std::string& path);   // the agent's "coverage PATH"
  
  // ---- dumps of the machine (state.cpp; state.h for the parts) ----------------------------------
  void state_enable();                // the run has safe moments: a game's task switch
-@@ -112,10 +121,20 @@ void state_poll();                  // from the master's polls: dumps due, a sto
+@@ -112,10 +122,20 @@ void state_poll();                  // from the master's polls: dumps due, a sto
  void state_point(SH2Context& c);    // a safe moment: c's registers and PC are all the run needs to go on
  void state_stop(const char* why);   // the run stops at the next dump, or soon without one
  void state_finish();                // the last dump written
@@ -2881,7 +2943,7 @@ index 6cbd98f..5895f33 100644
  
  // ---- the BIOS (bios.cpp) -----------------------------------------------------------
  void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
-@@ -206,6 +225,7 @@ void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size);
+@@ -206,6 +226,7 @@ void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size);
  void onchip_input_capture(int cpu);   // SINIT/MINIT: the FRT's input-capture flag
  void onchip_reset(int cpu);
  void onchip_set_clock(bool dots352);   // SMPC's CKCHG: φ at 352 dots' rate or 320's
@@ -2889,7 +2951,7 @@ index 6cbd98f..5895f33 100644
  uint64_t onchip_phi_clocks(uint64_t ns);   // φ's clocks in `ns`: the FRT's and the watchdog's time base
  bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if due and above c's mask; taken?
  
-@@ -213,11 +233,17 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
+@@ -213,11 +234,17 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
  void video_init();
  void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
  void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
@@ -7773,15 +7835,15 @@ index 8229575..6a5ab11 100644
      sprites_over_green();
      reg(0xE2, 0x0001);
 diff --git a/src/saturnrecomp/recomp/__main__.py b/src/saturnrecomp/recomp/__main__.py
-index de3d7ec..a14fa32 100644
+index de3d7ec..b19f032 100644
 --- a/src/saturnrecomp/recomp/__main__.py
 +++ b/src/saturnrecomp/recomp/__main__.py
-@@ -114,18 +114,42 @@ def volatile_literals(prog):
+@@ -114,19 +114,44 @@ def volatile_literals(prog):
  
  class Module:
      def __init__(self, name, path, base, seeds=(), hooks=(), runtime_literals=False, callable_entry=False,
 -                 unwind_returns=False):
-+                 unwind_returns=False, native_states=False, stack_return_calls=()):
++                 unwind_returns=False, native_states=False, stack_return_calls=(), block_coverage=False):
          self.name, self.path, self.base = name, path, base
          self.hooks = frozenset(hooks)
          self.runtime_literals = runtime_literals
@@ -7820,9 +7882,11 @@ index de3d7ec..a14fa32 100644
 +                self.resume[e] = points
 +        self.entries = sorted(set(self.primary) | {a for points in self.resume.values() for a in points})
          self.files, self.sites, self.unknown, self.rows = [], {}, [], []
++        self.block_coverage, self.blocks = block_coverage, []     # [(address, function, instructions)]
          self.n_ins = self.n_calls = 0
  
-@@ -154,9 +178,10 @@ class Module:
+     def generate(self, out, per_file, comments, log):
+@@ -154,10 +179,14 @@ class Module:
              self.files.append(name)
              buf, places, count, idx = [], [], 0, idx + 1
  
@@ -7832,10 +7896,23 @@ index de3d7ec..a14fa32 100644
              fn = prog.funcs[e]
 -            body = E.Body(prog, fn, entries, volatile, comments, self.hooks & set(fn.code), self.unwind_returns)
 +            body = E.Body(prog, fn, entries, volatile, comments, self.hooks & set(fn.code), self.unwind_returns, self.resume.get(e, ()), self.stack_return_calls)
++            if self.block_coverage:
++                body.block_base = len(self.blocks)
              lines = body.emit()
++            self.blocks += [(a, e, n) for a, n in getattr(body, "blocks", ())]
              lines.insert(1, "    ran[%d] = 1;" % i)              # for --coverage: this function has run
              buf.append("\n".join(lines))
-@@ -190,7 +215,7 @@ class Module:
+             places.append((e, [(a, k + (k >= 1), kind) for a, k, kind in body.locations]))
+@@ -181,6 +210,8 @@ class Module:
+             f.write('#pragma once\n#include "saturn/sh2.h"\n\nnamespace %s {\n' % self.ns)
+             for e in self.entries:
+                 f.write("void %s(SH2Context& c);\n" % E.fname(e))
++            if self.block_coverage:
++                f.write("extern uint8_t blk[];\n")
+             f.write("extern uint8_t ran[];\nextern const SH2Module module;\n}  // namespace %s\n" % self.ns)
+         with Out(os.path.join(out, self.ns + "_table.cpp")) as f:
+             f.write('#include "%s_funcs.h"\n\nnamespace %s {\n\n' % (self.ns, self.ns))
+@@ -190,10 +221,21 @@ class Module:
              f.write("};\n\n")
              f.write("uint8_t ran[%d];\n" % len(self.entries))
              f.write("static const uint16_t sizes[] = {%s};\n\n"
@@ -7844,13 +7921,30 @@ index de3d7ec..a14fa32 100644
              f.write('extern const SH2Module module = {"%s", 0x%08Xu, %du, 0x%08Xu, funcs, %d, ran, sizes, %s};\n'
                      % (self.name, self.base, len(self.data), self.crc, len(self.entries),
                         "true" if self.callable_entry else "false"))
-@@ -256,13 +281,14 @@ endif()
++            if self.block_coverage and self.blocks:
++                n = len(self.blocks)
++                col = lambda fmt, k: ", ".join(fmt % b[k] for b in self.blocks)
++                f.write("\nuint8_t blk[%d];\n" % (2 * n))
++                f.write("static const uint32_t blk_addr[] = {%s};\n" % col("0x%Xu", 0))
++                f.write("static const uint32_t blk_func[] = {%s};\n" % col("0x%Xu", 1))
++                f.write("static const uint16_t blk_insns[] = {%s};\n" % col("%d", 2))
++                f.write("static SH2BlockCoverage blocks = {&module, blk_addr, blk_func, blk_insns, %du, blk, nullptr};\n" % n)
++                f.write("static SH2BlockCoverageRegistrar register_blocks(&blocks);\n")
++            elif self.block_coverage:
++                f.write("\nuint8_t blk[1];\n")
+             f.write("\n}  // namespace %s\n" % self.ns)
+         self.files.append(self.ns + "_table.cpp")
+ 
+@@ -256,13 +298,16 @@ endif()
  
  
  def generate(specs, out, per_file=8000, comments=True, optest=False, log=print, hooks=None, tasks=None,
 -             runtime_literals=None, callable_entries=None, unwind_returns=None, task_switches=()):
-+             runtime_literals=None, callable_entries=None, unwind_returns=None, task_switches=(), native_states=False, stack_return_calls=None):
-     """hooks: {program name: [address, ...]}, see --hook. tasks: (setjmp, longjmp), see --tasks.
+-    """hooks: {program name: [address, ...]}, see --hook. tasks: (setjmp, longjmp), see --tasks.
++             runtime_literals=None, callable_entries=None, unwind_returns=None, task_switches=(), native_states=False, stack_return_calls=None,
++             block_coverage=False):
++    """block_coverage: mark every block as it runs (sh2.h, SH2BlockCoverage), for coverage builds only.
++    hooks: {program name: [address, ...]}, see --hook. tasks: (setjmp, longjmp), see --tasks.
      task_switches: [(save, save_key, resume_sp, switch, switch_key)], config.TaskSwitch's fields."""
      hooks = hooks or {}
      runtime_literals = runtime_literals or set()
@@ -7860,16 +7954,17 @@ index de3d7ec..a14fa32 100644
      t0 = time.time()
      os.makedirs(out, exist_ok=True)
      if optest:
-@@ -273,7 +299,7 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
+@@ -273,7 +318,8 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
      for name, path, base, seeds in specs:
          t = time.time()
          m = Module(name, path, base, seeds, hooks.get(name, ()), name in runtime_literals,
 -                   name in callable_entries, name in unwind_returns)
-+                   name in callable_entries, name in unwind_returns, native_states, stack_return_calls.get(name, ()))
++                   name in callable_entries, name in unwind_returns, native_states, stack_return_calls.get(name, ()),
++                   block_coverage)
          m.generate(out, per_file, comments, log)
          missing = m.hooks - {a for f in m.prog.funcs.values() for a in f.code}
          if missing:
-@@ -288,6 +314,7 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
+@@ -288,6 +334,7 @@ def generate(specs, out, per_file=8000, comments=True, optest=False, log=print,
          for m in modules:
              f.write("    &%s::module,\n" % m.ns)
          f.write("};\nextern const int g_sh2_nmodules = %d;\n" % len(modules))
@@ -7877,6 +7972,23 @@ index de3d7ec..a14fa32 100644
          f.write("extern const uint32_t g_sh2_tasks[2] = {0x%08X, 0x%08X};\n" % (tasks or (0, 0)))
          rows = [", ".join("0x%X" % v for v in s) for s in task_switches] or ["0, 0, 0, 0, 0"]
          f.write("extern const SH2TaskSwitch g_sh2_task_switches[] = {%s};\n" % ", ".join("{%s}" % r for r in rows))
+@@ -333,13 +380,15 @@ def main(argv=None):
+     ap.add_argument("--optest", action="store_true", help="add saturn-recomp's instruction test module")
+     ap.add_argument("--hook", action="append", default=[], help="NAME:ADDR,...: sh2_hook after these instructions")
+     ap.add_argument("--tasks", help="SETJMP:LONGJMP, the game's own task switch, built in")
++    ap.add_argument("--block-coverage", action="store_true", help="mark every block as it runs (coverage builds)")
+     a = ap.parse_args(argv)
+     hooks = {}
+     for h in a.hook:
+         name, _, addrs = h.partition(":")
+         hooks.setdefault(name, []).extend(int(x, 16) for x in addrs.split(",") if x)
+     tasks = tuple(int(x, 16) for x in a.tasks.split(":")) if a.tasks else None
+-    generate([parse_spec(s) for s in a.programs], a.out, a.per_file, not a.no_comments, a.optest, hooks=hooks, tasks=tasks)
++    generate([parse_spec(s) for s in a.programs], a.out, a.per_file, not a.no_comments, a.optest, hooks=hooks, tasks=tasks,
++             block_coverage=a.block_coverage)
+ 
+ 
+ if __name__ == "__main__":
 diff --git a/src/saturnrecomp/recomp/discover.py b/src/saturnrecomp/recomp/discover.py
 index 3396388..70e2000 100644
 --- a/src/saturnrecomp/recomp/discover.py
@@ -7902,7 +8014,7 @@ index 3396388..70e2000 100644
                      else:
                          if slot not in f.code:
 diff --git a/src/saturnrecomp/recomp/emit.py b/src/saturnrecomp/recomp/emit.py
-index 4cf69d5..7c8e179 100644
+index 4cf69d5..90ee831 100644
 --- a/src/saturnrecomp/recomp/emit.py
 +++ b/src/saturnrecomp/recomp/emit.py
 @@ -16,8 +16,11 @@ into a C++ function:
@@ -7964,11 +8076,16 @@ index 4cf69d5..7c8e179 100644
  
  class Body:
      """One discovered function as C++.
-@@ -268,17 +300,32 @@ class Body:
+@@ -268,17 +300,37 @@ class Body:
      its own ("insn") as well when something jumps to it.
      """
  
 -    def __init__(self, prog, f, entries, volatile=frozenset(), comments=True, hooks=frozenset(), unwind_returns=False):
++    # Block coverage (generate(block_coverage=True)): the module's index of this function's first
++    # block; emit() then marks each block it enters with SH2_BLK and lists (address, instructions) in
++    # `blocks`. None (the default) emits nothing extra.
++    block_base = None
++
 +    def __init__(self, prog, f, entries, volatile=frozenset(), comments=True, hooks=frozenset(), unwind_returns=False, resume_points=(), stack_return_calls=()):
          self.p, self.f, self.img = prog, f, prog.img
          self.entries, self.volatile, self.comments = entries, volatile, comments
@@ -7998,7 +8115,7 @@ index 4cf69d5..7c8e179 100644
  
      # -- analysis
      def _resolve(self):
-@@ -328,15 +375,20 @@ class Body:
+@@ -328,15 +380,20 @@ class Body:
          if t not in self.f.code:
              return "{ %s }" % self._tail(t)
          if t <= src:
@@ -8022,7 +8139,7 @@ index 4cf69d5..7c8e179 100644
  
      def _call(self, t):
          if t in self.entries:
-@@ -371,16 +423,16 @@ class Body:
+@@ -371,16 +428,16 @@ class Body:
                  cases.append("case %s: goto L_%08X;" % (_h(v), v))
                  back |= v <= a
              elif v in self.entries:
@@ -8044,7 +8161,7 @@ index 4cf69d5..7c8e179 100644
          code = self.f.code
          self._fallback = sorted(a for a in code if a not in self.slots)
          for a, ins in self.ops.items():
-@@ -402,7 +454,7 @@ class Body:
+@@ -402,7 +459,7 @@ class Body:
          if op not in BRANCHES:
              return self._stmt(ins), a + 2
          if op in ("bt", "bf"):
@@ -8053,7 +8170,7 @@ index 4cf69d5..7c8e179 100644
          slot = self._stmt(self.img.insn(a + 2))
          if slot == ";":
              slot = ""
-@@ -410,21 +462,31 @@ class Body:
+@@ -410,21 +467,31 @@ class Body:
          ret = _h(a + 4)
          check = "if (c.pc != %s) return;" % ret if self.unwind_returns else "SH2_RET(c, %s);" % ret
          if op in ("bt/s", "bf/s"):
@@ -8090,8 +8207,11 @@ index 4cf69d5..7c8e179 100644
          if op == "rte":
              return ("{ const uint32_t x = ld32(c.r[15]); c.r[15] += 4; sh2_set_sr(c, ld32(c.r[15]) & 0x3F3u); "
                      "c.r[15] += 4; %sc.pc = x; return; }" % s), None
-@@ -436,13 +498,44 @@ class Body:
+@@ -434,15 +501,50 @@ class Body:
+         """The C++ function, as a list of lines."""
+         labels = self.labels()
          code = self.f.code
++        self.blocks = []
          order = sorted(a for a in code if a not in self.slots or a in labels or a == self.f.entry)
          lines = ["void %s(SH2Context& c) {" % fname(self.f.entry)]
 +        if self.resume_points:
@@ -8112,16 +8232,16 @@ index 4cf69d5..7c8e179 100644
 +            if lead:
 +                # A block: this instruction up to the next label or branch,
 +                # charged as it is entered.
-+                cyc = mem = 0
++                cyc = mem = nins = 0
 +                for b in order[i:]:
 +                    if b != a and (b in labels or b in late):
 +                        break
 +                    insb = self.ops[b]
 +                    n, m = cycles(insb)
-+                    cyc, mem = cyc + n, mem + m
++                    cyc, mem, nins = cyc + n, mem + m, nins + 1
 +                    if insb.delay and b + 2 in code:
 +                        n, m = cycles(self.img.insn(b + 2))
-+                        cyc, mem = cyc + n, mem + m
++                        cyc, mem, nins = cyc + n, mem + m, nins + 1
 +                    if insb.op in BRANCHES:
 +                        break
 +                # A state point comes before the charge: a loaded state
@@ -8131,11 +8251,14 @@ index 4cf69d5..7c8e179 100644
 +                    lines.append("    SH2_STATE_POINT(c, %s);" % _h(a))
 +                    pointed = a
 +                lines.append("    SH2_CYC(c, %d, %d);" % (cyc, mem))
++                if self.block_base is not None:
++                    lines.append("    SH2_BLK(c, %d);" % (self.block_base + len(self.blocks)))
++                    self.blocks.append((a, nins))
 +                lead = False
              text, succ = self._insn(a)
              ins = self.ops[a]
              if self.comments:
-@@ -453,7 +546,11 @@ class Body:
+@@ -453,7 +555,11 @@ class Body:
              self.locations.append((a, len(lines), "insn"))
              if ins.delay and a + 2 in code:
                  self.locations.append((a + 2, len(lines), "slot"))
@@ -8147,7 +8270,7 @@ index 4cf69d5..7c8e179 100644
              nxt = order[i + 1] if i + 1 < len(order) else None
              if succ is not None and succ != nxt:
                  if succ in code:
-@@ -462,4 +559,7 @@ class Body:
+@@ -462,4 +568,7 @@ class Body:
                  else:
                      lines.append("    " + self._tail(succ))
          lines.append("}")
@@ -8155,6 +8278,50 @@ index 4cf69d5..7c8e179 100644
 +            for a in sorted(self.resume_points | {self.f.entry}):
 +                lines.append("void %s(SH2Context& c) { body_%08X(c, %s); }" % (fname(a), self.f.entry, _h(a)))
          return lines
+diff --git a/tests/test_block_coverage.py b/tests/test_block_coverage.py
+new file mode 100644
+index 0000000..442a4fa
+--- /dev/null
++++ b/tests/test_block_coverage.py
+@@ -0,0 +1,38 @@
++from conftest import BASE, assemble
++
++from saturnrecomp import sh2
++from saturnrecomp.recomp import discover
++from saturnrecomp.recomp import emit as E
++
++NOP, RTS = 0x0009, 0x000B
++CODE = assemble(
++    NOP, NOP, 0x8BFD,                            # L: nop; nop; bf L
++    0xB001, NOP,                                 # bsr Y
++    RTS, NOP,
++    RTS, NOP,                                    # Y
++)
++
++
++def body(block_base=None):
++    img = sh2.Image(CODE, BASE)
++    prog = discover.Program(img, [BASE])
++    b = E.Body(prog, prog.funcs[BASE], set(prog.funcs))
++    b.block_base = block_base
++    return b, [l.strip() for l in b.emit()]
++
++
++def test_off_by_default_emits_nothing_extra():
++    _, off = body()
++    assert not any(l.startswith("SH2_BLK(") for l in off)
++
++
++def test_every_charged_block_is_marked_once_in_order():
++    b, on = body(block_base=10)
++    _, off = body()
++    marks = [l for l in on if l.startswith("SH2_BLK(")]
++    charges = [i for i, l in enumerate(on) if l.startswith("SH2_CYC(")]
++    assert len(marks) == len(charges) == len(b.blocks)
++    assert marks == ["SH2_BLK(c, %d);" % (10 + k) for k in range(len(marks))]
++    assert all(on[i + 1].startswith("SH2_BLK(") for i in charges)
++    assert [l for l in on if not l.startswith("SH2_BLK(")] == off      # the code itself is unchanged
++    assert b.blocks[0][0] == BASE and all(n >= 1 for _, n in b.blocks)
 diff --git a/tests/test_state_points.py b/tests/test_state_points.py
 new file mode 100644
 index 0000000..2af6ff8

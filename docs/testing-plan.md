@@ -90,6 +90,7 @@ The audited profiles compile far more programs than routes reach (upstream notes
   - % of X1 scenes and battles reached
   - number of *untranslated* instructions the reference executed (target: 0)
   - unresolved indirect targets (target: 0)
+- **Block coverage (opt-in).** `tools/generate.py --block-coverage` builds a binary where each recompiled block sets a "first time run" byte, kept separately for the master and slave SH-2 (the 68k sound CPU is interpreted and is not counted). The default build emits the same code as before, so the mode costs nothing when it is off. With the flag on, `--coverage FILE.tsv` also writes `FILE.blocks.tsv` at exit, with one row per block: module, image CRC, block, function, instructions, master and slave. The agent command `coverage PATH` writes both files during a run. The marks only write host memory, so game state, frames and audio match a build without the flag. `tools/sf3-block-coverage.py scenario --name N --runs TAG=GLOB…` combines dumps into a JSON report: blocks and instructions hit, coverage per module, what each run group added, and the largest never-run functions labelled by area. `summary` prints a table over several reports. The dumps hold only addresses and counts, but they are still disc-derived run output, so keep them outside the repository.
 - Track these as a burndown in the private report directory. Publish only aggregate numbers (no addresses tied to disc bytes needed) in docs.
 
 ## Layer 5: memory-reading scripted bot (breadth between checkpoints)
