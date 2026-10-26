@@ -442,6 +442,7 @@ def hud_up(frame, run_min=48):
 
 
 ESCORT_R = 4                          # --escort: enemies this close to the escorted unit are the targets
+ESCORT_GUARD = 8                      # --escort: units ring the escort while an enemy is this close
 SIGS = {}                             # force table -> {slot: panel name bits}, kept across play() calls
 SIG_TOL = 20                          # name-line pixels two looks at one unit's panel may differ by
 
@@ -791,12 +792,16 @@ def aimed_turn(side, units, pol, press):
         # fell alone, so the protected units are escorted too (--escort 31 7)
         near = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k not in phantoms
                 and any(abs(x - before[e][0]) + abs(y - before[e][1]) <= ESCORT_R for e in esc)]
+        # v73: from 287k the enemies sat back 8+ tiles from the ring and every candidate scored the
+        # same for 4 levels (a stalemate), so the ring only holds while an enemy is within
+        # ESCORT_GUARD of an escorted slot; farther off, units attack as usual
+        gap = {e: min(abs(before[e][0] - x) + abs(before[e][1] - y) for x, y in live) for e in esc}
         if near:
             goal = near
-        else:
-            exposed = min(esc, key=lambda e: min(abs(before[e][0] - x) + abs(before[e][1] - y) for x, y in live))
-            goal = [before[exposed]]
-        pol.escorting = getattr(pol, 'escorting', 0) + 1
+            pol.escorting = getattr(pol, 'escorting', 0) + 1
+        elif min(gap.values()) <= ESCORT_GUARD:
+            goal = [before[min(esc, key=gap.get)]]
+            pol.escorting = getattr(pol, 'escorting', 0) + 1
 
     def dist(p):
         return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)

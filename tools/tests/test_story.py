@@ -236,7 +236,7 @@ class StoryTest(unittest.TestCase):
         # walks to that enemy, not the nearer far-off one; with none near it walks next to slot 9
         from unittest import mock
         from sf3test import autoplay
-        for enemies, want in (([(0, 3, 5, 0, 10), (1, 12, 12, 0, 10)], (12, 12)), ([(0, 1, 1, 0, 10)], (10, 13))):
+        for enemies, want in (([(0, 3, 5, 0, 10), (1, 12, 12, 0, 10)], (12, 12)), ([(0, 10, 6, 0, 10)], (10, 13)), ([(0, 1, 1, 0, 10)], (1, 1))):
             force = {2: (5, 5), 9: (10, 13)}
 
             def read_units(rd, base, live=None):
@@ -260,7 +260,7 @@ class StoryTest(unittest.TestCase):
                 autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, press)
             x, y = force[2]
             self.assertLessEqual(abs(x - want[0]) + abs(y - want[1]), 2, (enemies, force))
-            self.assertEqual(pol.escorting, 1)
+            self.assertEqual(getattr(pol, "escorting", 0), 0 if want == (1, 1) else 1)   # an enemy far off: attack
 
     def test_escort_several_guards_the_exposed_one(self):
         # invented roster: slots 9 and 7 escorted; no enemy near either; 7 is nearer the enemy, so
@@ -271,7 +271,7 @@ class StoryTest(unittest.TestCase):
 
         def read_units(rd, base, live=None):
             if base == 'E':
-                return [(0, 0, 0, 0, 10)]
+                return [(0, 2, 2, 0, 10)]
             return [(k, x, y, 0, 10) for k, (x, y) in force.items()]
 
         def press(btn, n):
