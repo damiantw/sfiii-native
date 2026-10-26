@@ -1872,7 +1872,7 @@ index 5b42ace..6c3c482 100644
      }
  }
 diff --git a/runtime/src/machine/cdblock.cpp b/runtime/src/machine/cdblock.cpp
-index cd80763..2685fc2 100644
+index cd80763..95a62e4 100644
 --- a/runtime/src/machine/cdblock.cpp
 +++ b/runtime/src/machine/cdblock.cpp
 @@ -19,6 +19,7 @@
@@ -1891,23 +1891,29 @@ index cd80763..2685fc2 100644
  static uint64_t g_seek_from, g_seek_until;      // --accurate-drive: a play's seek, BUSY then SEEK, until PLAY
  static int g_getlen = 2048;
  static std::deque<int16_t> g_cdda;              // the audio played, not yet taken by the SCSP (L, R)
-@@ -207,6 +209,15 @@ static void play_ended() {
+@@ -207,6 +209,21 @@ static void play_ended() {
          g_play_done = 0;
          return;
      }
 +    if (g_cfg.accurate_drive && !g_audio_play) {
-+        // Mednafen's drive (black box, Sc1's first battle load): after the last sector it reports
-+        // BUSY, without PEND, and PAUSE comes 9.3-14.9 ms after its head passes the end, i.e. two
-+        // sectors' time at 2x. Ours ends one sector after the last delivery: one sector more.
++        // Mednafen's drive (black box: Sc1's first battle load, and a probe polling the status
++        // every 0.13 ms over plays of 1-20 sectors at several FADs): after the last sector it
++        // reports BUSY, without PEND, and PAUSE + PEND come 14.87-15.00 ms after that sector's
++        // CSCT, the same for every play. Ours ends one sector after the last delivery, so PAUSE
++        // comes 8.237 ms after this, 14.90 ms after the last sector. SF3_CD_BUSY_US=N: N us.
 +        g_status = ST_BUSY;
-+        g_pause_at = sat_now() + 1000000000ull / (uint64_t)cd_data_rate();
++        static const uint64_t busy_ns = [] {
++            const char* v = std::getenv("SF3_CD_BUSY_US");
++            return v ? (uint64_t)std::atoll(v) * 1000 + 1 : 8237001ull;
++        }();
++        g_pause_at = sat_now() + busy_ns;
 +        sat_trace("CD: play ended at FAD %u, pausing", g_fad);
 +        return;
 +    }
      g_status = ST_PAUSE;
      g_hirq |= PEND;
      sat_trace("CD: play ended at FAD %u", g_fad);
-@@ -238,6 +249,7 @@ void cd_tick() {
+@@ -238,6 +255,7 @@ void cd_tick() {
      } else if (g_fs_done && now >= g_seek_from) {
          g_status = ST_SEEK;
      }
@@ -1915,7 +1921,7 @@ index cd80763..2685fc2 100644
      if (g_status == ST_BUSY && g_seek_until && now >= g_seek_from) g_status = ST_SEEK;
      if (g_status == ST_SEEK && g_seek_until && now >= g_seek_until) {
          g_status = ST_PLAY;
-@@ -261,7 +273,13 @@ void cd_tick() {
+@@ -261,7 +279,13 @@ void cd_tick() {
          }
      }
      if (now >= g_next_peri) {                   // the periodic report
@@ -1930,7 +1936,7 @@ index cd80763..2685fc2 100644
          g_hirq |= SCDQ;
          if (!g_cmd_busy) {
              report();
-@@ -329,7 +347,7 @@ static void fs_read(uint32_t fad, uint32_t size) {
+@@ -329,7 +353,7 @@ static void fs_read(uint32_t fad, uint32_t size) {
      g_seek_from = now + busy;
      g_seek_until = 0;
      g_fad = fad + n;
@@ -1939,7 +1945,7 @@ index cd80763..2685fc2 100644
      g_cdrom_clear_at = now + kCdromClearNs;
      g_fs_data_at = g_fs_done - n * (1000000000ull / cd_data_rate());
  }
-@@ -363,9 +381,18 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
+@@ -363,9 +387,18 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
      g_play_done = 0;
      g_seek_until = 0;
      g_fs_done = 0;
@@ -1947,18 +1953,18 @@ index cd80763..2685fc2 100644
      if (g_cfg.accurate_drive) {
          uint64_t busy;
          g_seek_until = g_play_t0 + cd_seek_ns(head, g_fad, g_audio_play ? 75 : 150, &busy);
-+        // A data read's first sector comes 1.5 ms later than the seek model says: fitted to
-+        // Mednafen (black box) on 7 battle loads' counter starts (sum of misses 14 frames, against
-+        // 18 at 0 ms and 31 at 3 ms) with the CPU at φ's rate and slices ending at VBlank edges.
-+        // SF3_CD_FIRST_US=N: N us instead.
++        // A data read's first sector comes when the seek model says: Mednafen's (black box) first
++        // CSCT matches it with no offset. (An earlier +1.5 ms fit made up for PAUSE coming too soon
++        // after a play's end; see play_ended.) With both, the 7 battle loads' counter starts miss
++        // Mednafen by 0/0/-4/0/-1/-2/-1 frames (sum 8, was 14). SF3_CD_FIRST_US=N: N us later.
 +        static const int64_t first_ns = [] {
-+            const char* v = std::getenv("SF3_CD_FIRST_US"); return (v ? std::atoll(v) : 1500) * 1000;
++            const char* v = std::getenv("SF3_CD_FIRST_US"); return (v ? std::atoll(v) : 0) * 1000;
 +        }();
 +        if (!g_audio_play) g_seek_until += first_ns;
          g_seek_from = g_play_t0 + busy;
          g_status = ST_BUSY;
      }
-@@ -410,7 +437,7 @@ static void command() {
+@@ -410,7 +443,7 @@ static void command() {
          g_hirq |= CMOK;
          break;
      case 0x04:                                  // Initialize CD System
@@ -1967,7 +1973,7 @@ index cd80763..2685fc2 100644
          if (cr1 & 0x10) sat_trace("CD: 1x speed asked for (kept at 2x)");
          report();
          g_hirq |= CMOK | ESEL;
-@@ -431,12 +458,12 @@ static void command() {
+@@ -431,12 +464,12 @@ static void command() {
          break;
      case 0x11: {                                // Seek Disc
          uint32_t pos = (uint32_t)(cr1 & 0xFF) << 16 | cr2;
@@ -1982,7 +1988,7 @@ index cd80763..2685fc2 100644
          }
          report();
          g_hirq |= CMOK;
-@@ -587,7 +614,7 @@ static void command() {
+@@ -587,7 +620,7 @@ static void command() {
          report(); g_hirq |= CMOK;
          break;
      }
@@ -1991,7 +1997,7 @@ index cd80763..2685fc2 100644
      case 0xE0: report(); g_hirq |= CMOK | EFLS | CSCT; break;                 // Authenticate Device
      case 0xE1: answer(status_hi(), 4, 0, 0); g_hirq |= CMOK; break;                 // a Saturn disc
      default:
-@@ -615,7 +642,7 @@ static uint16_t next_word() {
+@@ -615,7 +648,7 @@ static uint16_t next_word() {
  void cd_init() {
      reset_all();
      g_cddev = 0;                                // as the BIOS leaves it after reading the boot files
@@ -2000,7 +2006,7 @@ index cd80763..2685fc2 100644
      g_fad = 150;
      g_seek_until = 0;
      g_fs_done = 0;
-@@ -680,5 +707,6 @@ void cdblock_state(State& s) {
+@@ -680,5 +713,6 @@ void cdblock_state(State& s) {
  }
  
  void cddrive_state(State& s) { s(g_seek_from), s(g_seek_until); }
