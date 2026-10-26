@@ -444,6 +444,7 @@ def hud_up(frame, run_min=48):
 
 
 ESCORT_R = 4                          # --escort: enemies this close to the escorted unit are the targets
+HEAL_WALK = 6                         # --heal-item: a hurt ward this close draws the carrier to it
 ESCORT_GUARD = 8                      # --escort: units ring the escort while an enemy is this close
 SIGS = {}                             # force table -> {slot: panel name bits}, kept across play() calls
 SIG_TOL = 20                          # name-line pixels two looks at one unit's panel may differ by
@@ -828,6 +829,13 @@ def aimed_turn(side, units, pol, press):
                 press((), 40)
             pol.item_heals = getattr(pol, 'item_heals', 0) + 1
             return heal_cast(rd, units, pol, me, ring='item', target=hurt[0])
+        far = [e for e in wards if abs(before[e][0] - before[me][0]) + abs(before[e][1] - before[me][1]) <= HEAL_WALK
+               and is_hurt(rd, units['force'], e, pol.heal_at)]
+        if far:
+            # v78: Gracia sat at 11/35 for 70 backtracks with the item carriers a few tiles off; a
+            # hurt ward within HEAL_WALK draws the carrier next to it (the item goes on next turn)
+            goal = [before[min(far, key=lambda e: unit_hp_of(rd, units['force'], e))]]
+            pol.item_walks = getattr(pol, 'item_walks', 0) + 1
 
     def dist(p):
         return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)

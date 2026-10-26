@@ -265,10 +265,10 @@ class StoryTest(unittest.TestCase):
     def test_heal_item_on_hurt_escort_beside(self):
         # invented roster: slot 2 carries a heal item, escorted slot 9 beside it is hurt: slot 2 uses
         # its first item (ring Items) and the check watches 9's HP, charging a miss to 2; with 9
-        # two tiles off it does not
+        # three tiles off it walks next to 9 instead
         from unittest import mock
         from sf3test import autoplay
-        for spot, want in (((5, 6), True), ((5, 8), False)):
+        for spot, want in (((5, 6), True), ((8, 5), False)):
             force = {2: (5, 5), 9: spot}
 
             def read_units(rd, base, live=None):
@@ -295,6 +295,9 @@ class StoryTest(unittest.TestCase):
             self.assertEqual(used, want, spot)
             if want:
                 self.assertEqual(pol.heal_check, (9, 8, 2))
+            else:                                   # two tiles off: walk next to it instead
+                self.assertEqual(getattr(pol, 'item_walks', 0), 1)
+                self.assertLessEqual(abs(force[2][0] - 8) + abs(force[2][1] - 5), 2, force)
 
     def test_escort_several_guards_the_exposed_one(self):
         # invented roster: slots 9 and 7 escorted; no enemy near either; 7 is nearer the enemy, so
