@@ -613,6 +613,14 @@ def aimed_turn(side, units, pol, press):
     if me == lead or me in (getattr(pol, 'protect', None) or ()):
         press(('B',), 6)
         press((), 20)
+        if not hud_up(side.frame()):
+            # round 19 (Sc3 Ch7 dock fight, Julian at 22,26): this B put the unit back and also left
+            # the free cursor up (no unit panel), so the retreat steps moved the cursor and the C
+            # presses opened members' status panels, every turn for 30k VBlanks. A second B puts
+            # the cursor back on the unit (its panel returns) and the steps move the unit again
+            press(('B',), 6)
+            press((), 40)
+            pol.recentred = getattr(pol, 'recentred', 0) + 1
         cautious = True
         pol.cautious = getattr(pol, 'cautious', 0) + 1
         now = pos()
