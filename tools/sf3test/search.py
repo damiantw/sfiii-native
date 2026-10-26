@@ -53,10 +53,14 @@ def metrics(units_now, root, leader, protect=()):
     guest Julian, slot 7; his fall sends the force to the church while Synbios is still up)."""
     f, e = units_now['force'], units_now['enemies']
     e_top = sum(max(m, h, 1) for h, m in root['enemies'].values()) or 1
-    e_left = sum(e.get(k, (0, 0))[0] for k in root['enemies'])
+    # cap each slot at its root top: mid-attack scenes can leave a garbage HP word in a record
+    # (Sc3 dock fight v61: force_left read 354.96 during Edmund's barrel attack)
+    def cap(now, k, r):
+        return max(0, min(now.get(k, (0, 0))[0], max(r[k][0], r[k][1], 1)))
+    e_left = sum(cap(e, k, root['enemies']) for k in root['enemies'])
     kills = sum(1 for k in root['enemies'] if e.get(k, (0, 0))[0] <= 0)
     f_top = sum(max(m, h, 1) for h, m in root['force'].values()) or 1
-    f_left = sum(f.get(k, (0, 0))[0] for k in root['force'])
+    f_left = sum(cap(f, k, root['force']) for k in root['force'])
     deaths = sum(1 for k in root['force'] if f.get(k, (0, 0))[0] <= 0)
     lh, lm = f.get(leader, (0, 1))
     lroot = max(root['force'].get(leader, (1, 1)))

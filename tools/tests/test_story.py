@@ -234,6 +234,8 @@ class StoryTest(unittest.TestCase):
         self.assertTrue(won['won'])
         self.assertGreater(search.score(won), search.score(hit))
         self.assertEqual(search.score(dict(same, goal=True)), 1e6)
+        junk = search.metrics({'force': {0: (60, 60), 1: (13000, 40)}, 'enemies': {5: (100, 100), 6: (50, 50)}}, root, 0)
+        self.assertEqual(junk['force_left'], 1.0)
 
     def test_battle_over_from_active_byte(self):
         from sf3test import search, memory_map as M
