@@ -394,6 +394,11 @@ def search(a):
                 done_goal = True
                 print(f"search: {'goal ' + ','.join(best['reached']) if best.get('reached') else 'battle won'} at VBlank {best['v']}", flush=True)
                 break
+        else:
+            # round 28 (v70, Sc1): the loop ran out of rounds (--max-levels counts backtracked rounds
+            # too) and exited 1 with no message, which looked like a crash
+            print(f"search: stopped after {len(log)} rounds (--max-levels {a.max_levels}) at VBlank "
+                  f"{levels[-1]['v']} ({levels[-1]['v'] - v0} of --frames {a.frames})", flush=True)
     write_segment(a, out, start, load, h, levels[-1], S)
     if done_goal or stalled:
         finalize(a, out)
