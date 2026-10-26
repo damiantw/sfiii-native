@@ -49,6 +49,7 @@ class Policy:
         self.pathing, self.blocked, self.blocked_key = False, {}, None
         self.att_miss, self.last_attack = {}, None
         self.explore = 0.0
+        self.heal, self.heal_at, self.heal_fail, self.heal_check, self.sigs = (), 0.6, {}, None, {}
 
     def town(self):
         r = self.rng.random()
@@ -131,7 +132,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -170,6 +171,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     pol.keep_away = keep_away or 0
     pol.avoid = tuple(avoid) if avoid else None
     pol.focus = tuple(focus or ())
+    pol.heal, pol.heal_at, pol.heal_fail, pol.heal_check = tuple(heal or ()), heal_at or LEADER_SAFE, {}, None
     presses, events = [], []
     fell, watch_base = [], (mm.get('units') or {}).get('force') if watch else None
     done, last_key, same, turn = 0, None, 0, 0
@@ -438,6 +440,68 @@ def hud_up(frame, run_min=48):
     return rows >= 4
 
 
+SIGS = {}                             # force table -> {slot: panel name bits}, kept across play() calls
+SIG_TOL = 20                          # name-line pixels two looks at one unit's panel may differ by
+
+
+def panel_sig(frame, run_min=48):
+    """(bits, enemy) for the unit panel at the top of the picture, or None when none is up. bits is
+    the white text of the name line (14 rows by 88 pixels from the panel's left edge), the same for
+    one unit from turn to turn (the HP digits sit below it); enemy is a red name (enemy panels).
+    Round 27 (Sc3 Ch7 dock fight): Gracia stood boxed in at 20,26 all fight, so the probe never saw
+    her move and her turns never reached the cautious or --heal branch; her panel names her."""
+    if frame is None:
+        return None
+    w, h, rgb = frame.width, frame.height, frame.rgb
+
+    def px(x, y):
+        i = (y * w + x) * 3
+        return rgb[i], rgb[i + 1], rgb[i + 2]
+
+    def blue(r, g, b):
+        return b >= 60 and b > r + 35 and b > g + 20 and r < 70
+
+    for y in range(h * 3 // 100, h // 4):
+        run, prev = 0, None
+        for x in range(w // 4, w * 7 // 8):
+            r, g, b = px(x, y)
+            ok = blue(r, g, b)
+            if ok and prev and abs(b - prev[1]) <= 2 and abs(g - prev[0]) <= 2:
+                run += 1
+                if run >= run_min:
+                    x0 = x - run
+                    while x0 > 0 and blue(*px(x0 - 1, y)):
+                        x0 -= 1
+                    if y + 16 > h or x0 + 90 > w:
+                        return None
+                    bits = tuple(1 if sum(px(xx, yy)) > 600 else 0
+                                 for yy in range(y + 2, y + 16) for xx in range(x0 + 2, x0 + 90))
+                    red = sum(1 for yy in range(y, min(h, y + 22)) for xx in range(x0, x0 + 90)
+                              for (rr, gg, bb) in (px(xx, yy),) if rr > 170 and gg < 110 and bb < 110)
+                    return bits, red >= 12
+            else:
+                run = 0
+            prev = (g, b) if ok else None
+    return None
+
+
+def panel_unit(pol, sig, slots, tol=SIG_TOL):
+    """The force slot whose learned panel name matches sig (None when unknown or an enemy panel).
+    A force panel no learned name matches belongs to the one on-field slot not learned yet, when
+    exactly one is left (a unit boxed in from the first turn)."""
+    if not sig or sig[1]:
+        return None
+    sigs = pol.sigs
+    for k, b in sigs.items():
+        if sum(p != q for p, q in zip(b, sig[0])) <= tol:
+            return k
+    left = [k for k in slots if k not in sigs]
+    if len(left) == 1 and len(sigs) >= 1:
+        sigs[left[0]] = sig[0]
+        return left[0]
+    return None
+
+
 def battle_outcome(rd, units):
     """'won' when no enemy on the field has HP left, 'lost' when no force unit has, else None."""
     enemies = memory_map.read_units(rd, units['enemies'], units.get('live'))
@@ -546,12 +610,36 @@ def retreat_path(p, live, allies, blocked, reach=5, size=64):
     return best
 
 
+def unit_hp_of(read, table, slot):
+    e = read(table + slot * memory_map.UNIT_STRIDE + memory_map.UNIT_HP, 2)
+    return int.from_bytes(e, 'big')
+
+
+def unit_mp_of(read, table, slot):
+    return read(table + slot * memory_map.UNIT_STRIDE + memory_map.UNIT_MP, 1)[0]
+
+
 def is_hurt(read, table, slot, share):
     """True when force record `slot` has less than `share` of its max HP."""
     e = read(table + slot * memory_map.UNIT_STRIDE, memory_map.UNIT_STRIDE)
     hp = int.from_bytes(e[memory_map.UNIT_HP:memory_map.UNIT_HP + 2], 'big')
     top = int.from_bytes(e[memory_map.UNIT_MAX_HP:memory_map.UNIT_MAX_HP + 2], 'big')
     return top > 0 and hp < share * top
+
+
+def heal_due(rd, units, pol, me):
+    """A --heal unit below heal_at with MP for a first-level cast, whose casts have not failed twice."""
+    return (me in getattr(pol, 'heal', ()) and pol.heal_fail.get(me, 0) < 2
+            and is_hurt(rd, units['force'], me, pol.heal_at) and unit_mp_of(rd, units['force'], me) >= 3)
+
+
+def heal_cast(rd, units, pol, me):
+    """Ring Magic, first spell, first level, default target (the caster itself for Heal); the next
+    turn checks the caster's HP rose (pol.heal_check)."""
+    pol.heal_check = (me, unit_hp_of(rd, units['force'], me))
+    pol.casts += 1
+    return ([(('C',), 6), ((), 30), ((RING['magic'],), 6), ((), 14)]
+            + [(('C',), 6), ((), 30)] * 4 + tap(('C',), gap=40) * 4)
 
 
 def aimed_turn(side, units, pol, press):
@@ -570,6 +658,7 @@ def aimed_turn(side, units, pol, press):
         pol.blocked, pol.blocked_key, pol.phantoms = {}, key, set()
         pol.turn = 0
         pol.att_miss, pol.last_attack = {}, None
+        pol.sigs = SIGS.setdefault(units['force'], {})
     phantoms = getattr(pol, 'phantoms', set())
     hp_of = {k: hp for k, x, y, f, hp in enemies}
     la = getattr(pol, 'last_attack', None)
@@ -586,6 +675,15 @@ def aimed_turn(side, units, pol, press):
                 pol.phantoms = phantoms = phantoms | set(keys)
         else:
             pol.att_miss.pop(keys, None)
+    hc = getattr(pol, 'heal_check', None)
+    if hc:
+        # --heal: a cast that left the caster's HP no higher was not a heal (first spell not Heal, no
+        # MP, a message): two of those and that unit retreats instead from then on
+        pol.heal_check = None
+        if unit_hp_of(rd, units['force'], hc[0]) <= hc[1]:
+            pol.heal_fail[hc[0]] = pol.heal_fail.get(hc[0], 0) + 1
+        else:
+            pol.heals = getattr(pol, 'heals', 0) + 1
     live = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k not in phantoms]
     if not live:
         return tap(('C',), gap=30) * 4
@@ -607,6 +705,10 @@ def aimed_turn(side, units, pol, press):
             t = learn_turn(d, (now[moved[0]][0] - before[moved[0]][0], now[moved[0]][1] - before[moved[0]][1]))
             if t is not None:
                 pol.turn = t
+            if moved[0] not in getattr(pol, 'sigs', {}):
+                sg = panel_sig(side.frame())
+                if sg and not sg[1]:
+                    pol.sigs[moved[0]] = sg[0]
             break
     turn = getattr(pol, 'turn', 0)
     if not moved and not hud_up(side.frame()) and getattr(pol, 'cursor_b', 0) < 2:
@@ -618,6 +720,10 @@ def aimed_turn(side, units, pol, press):
         pol.recentred = getattr(pol, 'recentred', 0) + 1
         return tap(('B',), gap=60)
     pol.cursor_b = 0
+    if not moved and getattr(pol, 'heal', ()):
+        who = panel_unit(pol, panel_sig(side.frame()), list(before))
+        if who is not None and heal_due(rd, units, pol, who):
+            return heal_cast(rd, units, pol, who)
     if not moved:
         # Nothing moved: a message (C), a menu left open (B), or (round 11) a unit that cannot
         # step (enemies, teammates or terrain all round). The ring opens on C without a step too, so
@@ -682,6 +788,12 @@ def aimed_turn(side, units, pol, press):
         cautious = True
         pol.cautious = getattr(pol, 'cautious', 0) + 1
         now = pos()
+        if me in now and heal_due(rd, units, pol, me):
+            # round 27 (Sc3 Ch7 dock fight v69): Gracia (31) went 35 -> 23 -> 11 HP over the first
+            # levels and every later candidate fell under the --guard-hp floor; retreating alone never
+            # brought her HP back. A --heal unit below heal_at casts its first spell, first level, on
+            # the default target (the caster itself for Heal), before it would retreat
+            return heal_cast(rd, units, pol, me)
         ka = getattr(pol, 'keep_away', 0)
         threats = [(x, y) for k, x, y, f, hp in enemies if hp > 1 and k not in phantoms]
         near_threat = bool(ka and me in now and threats and

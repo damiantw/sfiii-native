@@ -465,6 +465,7 @@ def main():
     q.add_argument('--keep-away', type=int, default=0, help='the leader/protected units retreat whenever a live enemy is within N tiles, and each one ending a window that close costs 1.5 (Sc3 Ch7 dock fight: the Masked Monk poisoned Julian)')
     q.add_argument('--avoid', type=lambda t: tuple(int(v) for v in t.split(',')), help='X,Y,R: the leader/protected units walk out of the tiles within R of X,Y, and each one ending a window there costs 3 (Sc2 Ch6: scripted blast zone)')
     q.add_argument('--focus', type=int, nargs='+', help='enemy slots the force paths to first while they live (Sc3 Ch7 dock fight: the Masked Monk, 1)')
+    q.add_argument('--heal', type=int, nargs='+', help='force slots that cast their first spell on themselves when hurt (below --guard-hp + 0.3, else 0.6) before retreating; a cast that heals nothing twice turns it off for that slot (Sc3 dock: Gracia, 31)')
     q.add_argument('--guard-hp', type=float, help='a candidate that leaves the leader or a --protect slot below this share of its HP at the search root loses (backtracks) (Sc3 dock fight v66)')
     q.add_argument('--max-deaths', type=int, help='a candidate with more fallen force units than this loses (backtracks) (Sc1 battle 29, v62b: 8 of 11 fell, 3 left against a 491-HP boss)')
     q.add_argument('--keep-alts', type=int, help='each level below the stack top keeps only its next N untried candidates (with --prune: caps disk per level)')

@@ -175,6 +175,57 @@ class StoryTest(unittest.TestCase):
         self.assertIn(('B',), log)
         self.assertEqual(force[2], start)
 
+    def test_panel_names_boxed_in_unit_and_heals(self):
+        # invented roster and pictures: slot 31 never moves (boxed in), slot 7 does and its panel
+        # is learned; a force panel matching no learned name is the one slot left (31), which is
+        # hurt with MP, so its turn casts (ring Magic) instead of idling; an enemy panel names nobody
+        from unittest import mock
+        from types import SimpleNamespace as N
+        from sf3test import autoplay
+
+        def frame(text_x, red=False):
+            w, h = 320, 240
+            px = bytearray(w * h * 3)
+            for y in range(10, 40):
+                for x in range(100, 260):
+                    px[(y * w + x) * 3:(y * w + x) * 3 + 3] = bytes((20, 30, 120))
+            for y in range(14, 24):
+                for x in text_x:
+                    px[(y * w + x) * 3:(y * w + x) * 3 + 3] = bytes((250, 60, 60) if red else (250, 250, 250))
+            return N(width=w, height=h, rgb=bytes(px))
+        julian, gracia, monk = frame(range(110, 130)), frame(range(140, 170)), frame(range(110, 150), red=True)
+        sj, sg, sm = (autoplay.panel_sig(f) for f in (julian, gracia, monk))
+        self.assertFalse(sj[1]); self.assertTrue(sm[1])
+        self.assertEqual(sj, autoplay.panel_sig(julian))
+        pol = autoplay.Policy(1)
+        pol.sigs = {7: sj[0]}
+        self.assertIsNone(autoplay.panel_unit(pol, sm, [7, 31]))
+        self.assertEqual(autoplay.panel_unit(pol, sj, [7, 31]), 7)
+        self.assertEqual(autoplay.panel_unit(pol, sg, [7, 31]), 31)
+        self.assertEqual(autoplay.panel_unit(pol, sg, [7, 31, 40]), 31)   # learned now
+        force = {7: (1, 1), 31: (5, 5)}
+
+        def read_units(rd, base, live=None):
+            if base == 'E':
+                return [(0, 9, 9, 0, 10)]
+            return [(k, x, y, 0, 10) for k, (x, y) in force.items()]
+
+        class Side:
+            read = None
+            def frame(self):
+                return gracia
+        pol.heal, pol.heal_at = (31,), 0.7
+        with mock.patch.object(autoplay.memory_map, 'read_units', read_units), \
+                mock.patch.object(autoplay, 'panel_share', lambda f: 0.0), \
+                mock.patch.object(autoplay, 'SIGS', {'F': dict(pol.sigs)}), \
+                mock.patch.object(autoplay, 'is_hurt', lambda *a: True), \
+                mock.patch.object(autoplay, 'unit_mp_of', lambda *a: 20), \
+                mock.patch.object(autoplay, 'unit_hp_of', lambda *a: 11):
+            out = autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, lambda b, n: None)
+        self.assertIn((autoplay.RING['magic'],), [b for b, _ in out])
+        self.assertEqual(pol.heal_check, (31, 11))
+        self.assertEqual(pol.casts, 1)
+
     def test_hurt_leader_retreats(self):
         # invented roster: the leader (lowest slot) is hurt with an enemy two tiles away; its turn
         # walks it away from the enemy instead of holding still
