@@ -16,7 +16,9 @@ from run_posix import selected_build
 from ai_packs import install_selection, detach_selection
 
 # Accepted disc revision profiles (profiles/*.json ids) per game slot; the first is the recommended disc.
-PROFILES = (('scenario1-usa-v1_001',), ('scenario2-translation-v24',), ('scenario3-translation-v25_1',))
+PROFILES = (('scenario1-usa-v1_001', 'scenario1-usa-translation-v25_1'),
+            ('scenario2-translation-v25_1-v2_000', 'scenario2-translation-v25_1-v1_003', 'scenario2-translation-v24'),
+            ('scenario3-translation-v25_1-redump', 'scenario3-translation-v25_1'))
 # Default data folders keep their original names so existing game data stays where it was.
 DATA_FOLDERS = ('Scenario1-USA', 'Scenario2-v24', 'Scenario3-v25_1')
 
@@ -41,7 +43,7 @@ class Launcher:
         frame.pack(fill='both',expand=True)
         frame.columnconfigure(1,weight=1)
         ttk.Label(frame,text='Shining Force III Native',font=('',22,'bold')).grid(row=0,column=0,columnspan=3,sticky='w',pady=(0,18))
-        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 USA V1.001','Scenario 2 Translation Project v24 (experimental)','Scenario 3 Translation Project v25.1 (experimental)'])
+        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 USA (V1.001 or Translation Project V25.1)','Scenario 2 Translation Project V25.1 / v24 (experimental)','Scenario 3 Translation Project V25.1 (experimental)'])
         self.selection.grid(row=1,column=1,sticky='ew',pady=5)
         ttk.Label(frame,text='Game').grid(row=1,column=0,sticky='w',padx=(0,12))
         self.cue, self.work = tk.StringVar(), tk.StringVar()
