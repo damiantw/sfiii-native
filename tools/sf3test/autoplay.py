@@ -46,6 +46,7 @@ class Policy:
         self.attacks = 0
         self.cast, self.casts, self.tried = False, 0, {}
         self.pathing, self.blocked, self.blocked_key = False, {}, None
+        self.att_miss, self.last_attack = {}, None
         self.explore = 0.0
 
     def town(self):
@@ -129,7 +130,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -144,12 +145,15 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     hand-over (long battle openings and boss dialogue used to end battles as 'idle' for good).
     `idle_over_turns` overrides IDLE_OVER. `pathing` (round 26) walks battle units along a planned
     path (see plan_step) instead of greedily. `explore` (round 5, search candidates): the share of
-    battle turns that aim at a random enemy, hold back or cast instead of the greedy choice."""
+    battle turns that aim at a random enemy, hold back or cast instead of the greedy choice.
+    `leader` (round 19): the force slot whose fall loses the battle; default the lowest on-field slot
+    (Sc3 Ch7 dock fight: a guest in slot 7 sat below Synbios' 31 and was kept back as the leader)."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     pol.pathing = pathing
     pol.cast = bool(assist)
     pol.explore = explore
+    pol.leader = leader
     presses, events = [], []
     done, last_key, same, turn = 0, None, 0, 0
     prev = None
@@ -340,6 +344,7 @@ STEP = {'RIGHT': (1, 0), 'LEFT': (-1, 0), 'UP': (0, 1), 'DOWN': (0, -1)}
 # UP = Attack, LEFT = Magic, RIGHT = Item, DOWN = Hold. Attack with no one in reach says
 # 'There is no target...'; with a target, the next C picks the highlighted enemy and the next C confirms.
 OUTCOME_HOLD = 600
+MISS_PHANTOM = 3
 RING = {'attack': 'UP', 'magic': 'LEFT', 'item': 'RIGHT', 'hold': 'DOWN'}
 
 
@@ -513,7 +518,23 @@ def aimed_turn(side, units, pol, press):
     key = tuple(sorted(e[0] for e in enemies))           # a new battle (enemy roster): forget edges
     if key != pol.blocked_key:
         pol.blocked, pol.blocked_key, pol.phantoms = {}, key, set()
+        pol.att_miss, pol.last_attack = {}, None
     phantoms = getattr(pol, 'phantoms', set())
+    hp_of = {k: hp for k, x, y, f, hp in enemies}
+    la = getattr(pol, 'last_attack', None)
+    if la:
+        # round 19 (Sc3 Ch7 dock fight): stale enemy records left from the harbour fight sit next to
+        # force units; Attack on one finds no target and the turn never ends, so every candidate
+        # replayed the same loop. An attack that leaves the adjacent records' HP unchanged MISS_PHANTOM
+        # times marks them as phantoms for this battle
+        keys, hp0 = la
+        pol.last_attack = None
+        if sum(hp_of.get(k, 0) for k in keys) == hp0:
+            pol.att_miss[keys] = pol.att_miss.get(keys, 0) + 1
+            if pol.att_miss[keys] >= MISS_PHANTOM:
+                pol.phantoms = phantoms = phantoms | set(keys)
+        else:
+            pol.att_miss.pop(keys, None)
     live = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k not in phantoms]
     if not live:
         return tap(('C',), gap=30) * 4
@@ -587,7 +608,8 @@ def aimed_turn(side, units, pol, press):
     # attacks what is already in reach; below LEADER_SAFE of max HP it walks away from the
     # enemies (through teammates, to a free tile)
     cautious = False
-    if me == min(before):
+    lead = pol.leader if getattr(pol, 'leader', None) in before else min(before)
+    if me == lead:
         press(('B',), 6)
         press((), 20)
         cautious = True
@@ -703,6 +725,11 @@ def aimed_turn(side, units, pol, press):
         pol.attacks += 1
         pol.casts += 1
     elif adjacent:
+        mp = pos().get(me)
+        keys = tuple(sorted(k for k, x, y, f, hp in enemies if hp > 0 and k not in getattr(pol, 'phantoms', set()) and mp
+                            and abs(x - mp[0]) + abs(y - mp[1]) <= 1))
+        if keys:
+            pol.last_attack = (keys, sum(hp_of.get(k, 0) for k in keys))
         press((RING['attack'],), 6)
         press((), 14)
         press(('C',), 6)

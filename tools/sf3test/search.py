@@ -116,7 +116,8 @@ def run_args(job, state=None):
 
 def _play(s, job, frames, seed, explore):
     return autoplay.play(s, job['profile'], frames, seed, walker=True, rearm=20, idle_over_turns=60,
-                         pathing=True, explore=explore)
+                         pathing=True, explore=explore,
+                         leader=job.get('leader'))
 
 
 def candidate(job):
