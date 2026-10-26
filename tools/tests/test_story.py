@@ -235,6 +235,14 @@ class StoryTest(unittest.TestCase):
             self.assertEqual(search.prune_dead(c, levels), 4)
             self.assertEqual(sorted(p.name for p in c.iterdir()), ['0000-0', '0002-0'])
 
+    def test_keep_alts_caps_frontier(self):
+        from sf3test import search
+        levels = [dict(state='r', ranked=[dict(state='a/x', score=5), dict(state='b/x', score=4), dict(state='c/x', score=3),
+                                          dict(state='d/x', score=2)], pick=0), dict(state='a/x', ranked=[], pick=0)]
+        search.cap_alternatives(levels, 1)
+        self.assertEqual([c['state'] for c in levels[0]['ranked']], ['a/x', 'b/x'])
+        self.assertEqual({str(p) for p in search.live_dirs(levels)}, {'a', 'b'})
+
     def test_threat_costs_score(self):
         from sf3test import search
         m = dict(goal=False, leader_down=False, won=False, enemy_left=0.5, kills=1, force_left=1.0, deaths=0, leader=1.0)

@@ -140,6 +140,14 @@ def live_dirs(levels):
     return keep
 
 
+def cap_alternatives(levels, n):
+    """--keep-alts N (round 27, Sc1 v62b grew to 2.3 GB, v67 ~38 MB a level under --prune): each level
+    below the top keeps only its next N untried ranked candidates; the rest are never backtracked to
+    (and --prune deletes their saves)."""
+    for lv in levels[:-1]:
+        lv['ranked'] = lv['ranked'][:lv['pick'] + 1 + n]
+
+
 def prune_dead(cdir, levels):
     """--prune: delete the candidate dirs the search can never return to (a long search kept a 5 MB
     save per candidate, ~4 GB/h)."""
@@ -317,6 +325,8 @@ def search(a):
     log, backs, done_goal, stalled = [], 0, False, False
     with ProcessPoolExecutor(a.jobs) as ex:
         while levels[-1]['v'] - v0 < a.frames and len(log) < a.max_levels:
+            if getattr(a, 'keep_alts', None) is not None:
+                cap_alternatives(levels, a.keep_alts)
             if getattr(a, 'prune', False):
                 prune_dead(out / 'c', levels)
             cur = levels[-1]
