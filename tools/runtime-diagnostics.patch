@@ -60,7 +60,7 @@ index 566fcfd..d5bb5fc 100644
          else if (!std::strcmp(a, "--peek") && more) cfg.peek = argv[++i];
          else if (!std::strcmp(a, "--coverage") && more) cfg.coverage = argv[++i];
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..08eaa4b 100644
+index cb6af72..84e443a 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,7 +3,9 @@
@@ -73,7 +73,7 @@ index cb6af72..08eaa4b 100644
  #include <cstring>
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
-@@ -113,42 +115,59 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +115,111 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -81,6 +81,11 @@ index cb6af72..08eaa4b 100644
 +static const int kSlots = 64;
  static const SH2Module* g_active[kSlots];
 +static uint64_t g_active_heads[kSlots];
++// Bumped by every change to g_active or g_active_heads: a remembered lookup holds for one generation.
++static uint64_t g_active_gen = 1;
++struct LookupEntry { uint32_t addr = 0; uint8_t n = 0; uint8_t slots[2] = {}; uint64_t gen = 0; SH2Func fn = nullptr; };
++static LookupEntry g_lookup[8192];
++static inline uint32_t lookup_index(uint32_t addr) { return ((addr >> 1) ^ (addr >> 14)) & 8191u; }
 +static uint64_t module_head(const SH2Module* m) {
 +    uint8_t* p=m ? host(m->base):nullptr;
 +    if(!p) return 0;
@@ -114,9 +119,24 @@ index cb6af72..08eaa4b 100644
  int sh2_active_slots() { return kSlots; }
  const SH2Module* sh2_active_slot(int i) { return g_active[i]; }
 -void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m; }
-+void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m;g_active_heads[i]=module_head(m); }
++// module_head memoised per slot: the same 64 header bytes give the same hash, so a lookup compares
++// the bytes (a few vector compares) and hashes only when they changed. Exactly module_head(m).
++static const SH2Module* g_head_mod[kSlots];
++static uint8_t g_head_bytes[kSlots][64];
++static uint64_t g_head_hash[kSlots];
++static uint64_t module_head_cached(int slot, const SH2Module* m) {
++    uint8_t* p=m ? host(m->base):nullptr;
++    if(!p) return 0;
++    size_t n=m->size<64 ? m->size:64;
++    if(g_head_mod[slot]==m && std::memcmp(p,g_head_bytes[slot],n)==0) return g_head_hash[slot];
++    uint64_t h=module_head(m);
++    std::memcpy(g_head_bytes[slot],p,n);g_head_mod[slot]=m;g_head_hash[slot]=h;
++    return h;
++}
++void sh2_set_active_slot(int i, const SH2Module* m) { g_active[i] = m;g_active_heads[i]=module_head(m);++g_active_gen; }
  
  void sh2_activate(const SH2Module* m) {
++    ++g_active_gen;
      for (auto& a : g_active)
          if (a && a->base < m->base + m->size && m->base < a->base + a->size) a = nullptr;
 -    for (auto& a : g_active)
@@ -126,27 +146,59 @@ index cb6af72..08eaa4b 100644
      std::fprintf(stderr, "saturn-recomp: more than %d modules active\n", kSlots);
  }
  
++static SH2Func lookup_slow(uint32_t addr);
++
  SH2Func sh2_lookup(uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;           // code run cache-through
 -    for (const SH2Module* m : g_active) {
++    LookupEntry& e = g_lookup[lookup_index(addr)];
++    if (e.addr == addr && e.gen == g_active_gen) {
++        // The slots the scan passes that hold addr: their headers must still be the ones they
++        // were activated with, as lookup_slow checks; any change takes the slow path and its effects.
++        bool same = true;
++        for (int k = 0; k < e.n && same; ++k) {
++            const SH2Module* m = g_active[e.slots[k]];
++            if (m->callable_entry) same = module_head_cached(e.slots[k], m) == g_active_heads[e.slots[k]];
++        }
++        if (same) return e.fn;
++    }
++    uint64_t gen = g_active_gen;
++    SH2Func f = lookup_slow(addr);
++    if (!f || gen != g_active_gen) return f;
++    // Remember the result with every slot the scan met that holds addr (normally one).
++    uint8_t slots[2]; int n = 0;
++    for (int slot = 0; slot < kSlots; ++slot) {
++        const SH2Module* m = g_active[slot];
+         if (!m || addr - m->base >= m->size) continue;
++        if (n == 2) return f;                            // unusual overlap: not cached
++        slots[n++] = (uint8_t)slot;
++        if (has_entry(m, addr)) break;
++    }
++    e.addr = addr; e.gen = g_active_gen; e.fn = f; e.n = (uint8_t)n; e.slots[0] = slots[0]; e.slots[1] = n > 1 ? slots[1] : 0;
++    return f;
++}
++
++// The scan over the active slots in order; the first holding addr with an entry there gives it.
++static SH2Func lookup_slow(uint32_t addr) {
 +    for (int slot=0;slot<kSlots;++slot) {
 +        const SH2Module* m=g_active[slot];
-         if (!m || addr - m->base >= m->size) continue;
++        if (!m || addr - m->base >= m->size) continue;
 +        // Overlay transitions can call an interior export already present in
 +        // the old dispatch table. A changed header triggers full-image identity
 +        // before trusting that entry. Data-only mutation retains its owner.
-+        uint64_t head=module_head(m);
++        uint64_t head=m->callable_entry ? module_head_cached(slot,m) : 0;
 +        if(m->callable_entry && head!=g_active_heads[slot]) {
 +            bool exact=false;
 +            const SH2Module* loaded=sh2_identify_containing(addr,&exact);
++            ++g_active_gen;
 +            if(!exact) {g_active[slot]=nullptr;return nullptr;}
 +            g_active_heads[slot]=head;
-+            if(exact && loaded && loaded!=m) {sh2_activate(loaded);return sh2_lookup(addr);}
++            if(exact && loaded && loaded!=m) {sh2_activate(loaded);return lookup_slow(addr);}
 +        }
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -185,10 +204,31 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -185,10 +256,31 @@ static bool inside_loaded_program(uint32_t addr) {
  
  void sh2_call(SH2Context& c, uint32_t addr) {
      if (addr >> 29 == 1) addr &= 0x1FFFFFFFu;
@@ -169,7 +221,7 @@ index cb6af72..08eaa4b 100644
 +            for (int slot=0;slot<kSlots;++slot) {
 +                const SH2Module* active=g_active[slot];
 +                if (active && active->base == addr && active->callable_entry && has_entry(active, addr)) {
-+                    if(module_head(active)!=g_active_heads[slot]) {g_active[slot]=nullptr;continue;}
++                    if(module_head(active)!=g_active_heads[slot]) {g_active[slot]=nullptr;++g_active_gen;continue;}
 +                    m = active;
 +                    break;
 +                }
@@ -2877,7 +2929,7 @@ index 0000000..2e324b1
 +
 +}  // namespace vdp1_steps
 diff --git a/runtime/src/video/vdp2.cpp b/runtime/src/video/vdp2.cpp
-index 4c8bcb1..c5f555d 100644
+index 4c8bcb1..8882583 100644
 --- a/runtime/src/video/vdp2.cpp
 +++ b/runtime/src/video/vdp2.cpp
 @@ -5,9 +5,10 @@
@@ -2892,7 +2944,7 @@ index 4c8bcb1..c5f555d 100644
  // NBG3); special priority and special colour calculation by screen or by
  // character, and colour calculation by the colour's MSB; colour calculation
  // of the top two layers (the top one's ratio or the second's, or add), with
-@@ -20,17 +21,23 @@
+@@ -20,17 +21,24 @@
  // dots), with double-density interlace composed as one picture of both
  // fields' lines (448, 480 or 512), the scroll screens a dot row a line;
  // shadows (normal, MSB and transparent) on the scroll screens, the back
@@ -2911,6 +2963,7 @@ index 4c8bcb1..c5f555d 100644
  #include "state.h"
  #include "video.h"
 +#include <array>
++#include <atomic>
  #include <algorithm>
  #include <cstring>
  #include <vector>
@@ -2920,7 +2973,7 @@ index 4c8bcb1..c5f555d 100644
  
  uint8_t g_vdp2_vram[0x80000], g_vdp2_cram[0x1000], g_vdp2_regs[0x200];
  
-@@ -43,8 +50,12 @@ static int32_t signed_bits(uint32_t value, int bits) {
+@@ -43,8 +51,12 @@ static int32_t signed_bits(uint32_t value, int bits) {
      return (int32_t)((value & (sign * 2 - 1)) ^ sign) - (int32_t)sign;
  }
  
@@ -2935,7 +2988,7 @@ index 4c8bcb1..c5f555d 100644
      uint32_t table = (((uint32_t)(reg(0xBC) & 7) << 16 | reg(0xBE)) & ~0x41u) * 2;
      auto parameter = [&](uint32_t off, int bits, int shift) {
          return signed_bits(((uint32_t)vw(table + off) << 16 | vw(table + off + 2)) >> shift, bits);
-@@ -98,9 +109,10 @@ struct Pix {
+@@ -98,9 +110,10 @@ struct Pix {
      bool spr, scc;                              // the character's special priority and colour calculation bits
      bool msb;                                   // the colour data's MSB
      bool shade;                                 // an MSB shadow: the sprite dot at half brightness
@@ -2947,7 +3000,7 @@ index 4c8bcb1..c5f555d 100644
  
  // ---- the scroll screens ---------------------------------------------------------------------
  struct Nbg {
-@@ -118,8 +130,38 @@ struct Nbg {
+@@ -118,8 +131,38 @@ struct Nbg {
      int32_t sx, sy, dx, dy;                     // scroll and increments, 8 fraction bits
      uint8_t prio, ratio;
      bool cc, offset, offset_b;
@@ -2986,7 +3039,7 @@ index 4c8bcb1..c5f555d 100644
  static void setup_nbg(int n, Nbg& s) {
      s = Nbg{};
      uint16_t bgon = reg(0x20);
-@@ -171,6 +213,7 @@ static void setup_nbg(int n, Nbg& s) {
+@@ -171,6 +214,7 @@ static void setup_nbg(int n, Nbg& s) {
          s.sy = (int32_t)((reg(b + 4) & 0x7FF) << 8 | reg(b + 6) >> 8);
          s.dx = (int32_t)((reg(b + 8) & 7) << 8 | reg(b + 10) >> 8);
          s.dy = (int32_t)((reg(b + 12) & 7) << 8 | reg(b + 14) >> 8);
@@ -2994,7 +3047,7 @@ index 4c8bcb1..c5f555d 100644
      } else {
          uint32_t b = 0x90 + (n - 2) * 4;
          s.sx = (int32_t)(reg(b) & 0x7FF) << 8;
-@@ -199,6 +242,7 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
+@@ -199,6 +243,7 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
          if (!(w & 0x8000) && !s.opaque) return false;
          p.rgb = rgb555(w);
          p.msb = w >> 15;
@@ -3002,7 +3055,7 @@ index 4c8bcb1..c5f555d 100644
          return true;
      }
      default: {
-@@ -206,6 +250,7 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
+@@ -206,6 +251,7 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
          if (!(w & 0x80000000u) && !s.opaque) return false;
          p.rgb = (w & 0xFF) << 16 | (w & 0xFF00) | (w >> 16 & 0xFF);
          p.msb = w >> 31;
@@ -3010,7 +3063,7 @@ index 4c8bcb1..c5f555d 100644
          return true;
      }
      }
-@@ -216,7 +261,15 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
+@@ -216,7 +262,15 @@ static bool dot(const Nbg& s, uint32_t base, int x, int y, int width, uint32_t p
  }
  
  static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
@@ -3027,7 +3080,7 @@ index 4c8bcb1..c5f555d 100644
      if (s.bitmap) {
          sx &= (uint32_t)s.bm_w - 1;
          sy &= (uint32_t)s.bm_h - 1;
-@@ -267,6 +320,238 @@ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
+@@ -267,6 +321,238 @@ static bool nbg_pixel(const Nbg& s, int x, int y, Pix& p) {
      return dot(s, base, px & 7, py & 7, 8, pal, p);
  }
  
@@ -3266,7 +3319,7 @@ index 4c8bcb1..c5f555d 100644
  // ---- the sprite layer -----------------------------------------------------------------------
  struct SpriteType { int pr_shift, pr_mask, cc_shift, cc_mask, dc_mask; };
  static const SpriteType kTypes[16] = {
-@@ -292,6 +577,7 @@ static SpriteDot sprite_pixel(uint16_t d, Pix& p) {
+@@ -292,6 +578,7 @@ static SpriteDot sprite_pixel(uint16_t d, Pix& p) {
      SpriteDot kind = S_DOT;
      if (mixed && (d & 0x8000)) {
          p.rgb = rgb555(d);
@@ -3274,7 +3327,7 @@ index 4c8bcb1..c5f555d 100644
          p.prio = prio_of(0);
          p.ratio = ratio_of(0);
          msb = true;
-@@ -367,21 +653,23 @@ static void note_unsupported() {
+@@ -367,21 +654,23 @@ static void note_unsupported() {
      auto once = [&](int i, bool cond, const char* what, uint16_t v) {
          if (cond && !noted[i]) { noted[i] = fresh = true; sat_note("VDP2: %s (%04X) is not done", what, v); }
      };
@@ -3302,7 +3355,7 @@ index 4c8bcb1..c5f555d 100644
  static uint32_t apply_offset(uint32_t rgb, bool b) {
      uint32_t base = b ? 0x11A : 0x114;
      int out = 0;
-@@ -393,23 +681,60 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
+@@ -393,23 +682,63 @@ static uint32_t apply_offset(uint32_t rgb, bool b) {
      return (uint32_t)out;
  }
  
@@ -3316,6 +3369,9 @@ index 4c8bcb1..c5f555d 100644
 +        hd_fingerprint(f.hd->fingerprint,uint16_t(e.offset[0])|(uint64_t(uint16_t(e.offset[1]))<<16)|(uint64_t(uint16_t(e.offset[2]))<<32));
 +    }
 +}
++
++static bool g_serial_composition=std::getenv("SF3_SERIAL_COMPOSITION")!=nullptr;
++void vdp2_serial_composition(bool on) {g_serial_composition=on;}
 +
 +static void compose_frame(Frame& f,bool expand,const Frame* current=nullptr,bool reference_metadata=false) {
      uint16_t tvmd = reg(0x00);
@@ -3365,7 +3421,7 @@ index 4c8bcb1..c5f555d 100644
      back.offset = reg(0x110) >> 5 & 1;
      back.offset_b = reg(0x112) >> 5 & 1;
      back.ratio = (uint8_t)(reg(0x10E) >> 8 & 0x1F);
-@@ -420,7 +745,7 @@ void vdp2_compose(Frame& f) {
+@@ -420,7 +749,7 @@ void vdp2_compose(Frame& f) {
      Pix line_colour{};
      line_colour.ratio = (uint8_t)(reg(0x10E) & 0x1F);
      uint16_t sfprmd = reg(0xEA), sfccmd = reg(0xEE);
@@ -3374,7 +3430,7 @@ index 4c8bcb1..c5f555d 100644
                               (uint8_t)reg(0xD2), (uint8_t)(reg(0xD2) >> 8)};
      uint8_t cc_wctl = (uint8_t)(reg(0xD6) >> 8);
      uint16_t sdctl = reg(0xE2);
-@@ -428,10 +753,40 @@ void vdp2_compose(Frame& f) {
+@@ -428,10 +757,44 @@ void vdp2_compose(Frame& f) {
      // top or second image of a colour calculation
      static const int kGradLayer[8] = {L_SPRITE, -1, L_NBG0, -1, L_NBG1, L_NBG2, L_NBG3, -1};
      int grad = reg(0xEC) & 0x8000 && hreso < 2 && cram_mode() == 0 ? kGradLayer[reg(0xEC) >> 12 & 7] : -1;
@@ -3391,7 +3447,11 @@ index 4c8bcb1..c5f555d 100644
 +        && current->hd->effects.size()==current->px.size();
 +    // GPU metadata composition has independent rows. Keep the serial reference
 +    // and unsupported video paths, and merge provenance in original raster order.
-+    const bool parallel=gpu && !reference_metadata && std::thread::hardware_concurrency()>=4 && !std::getenv("SF3_SERIAL_COMPOSITION");
++    // Every row is a pure function of the video memory and registers, which nothing writes while
++    // the field is composed, so rows may be composed on any thread in any order: the picture is
++    // the same dot for dot. The GPU path merges provenance afterwards, in raster order.
++    static const unsigned hw_threads=std::thread::hardware_concurrency();
++    const bool parallel=!reference_metadata && hw_threads>=2 && !g_serial_composition;
 +    auto rows=[&,rbg,back,line_colour](int begin,int end) mutable {
      std::vector<uint32_t> blur(grad >= 0 ? f.w : 0);
 -    for (int y = 0; y < f.h; ++y) {
@@ -3416,7 +3476,7 @@ index 4c8bcb1..c5f555d 100644
          back.rgb = rgb555(vw(bk + (bk_lines ? (uint32_t)line * 2 : 0)));
          // a table word a line, a line of either field in double-density interlace
          line_colour.rgb = cram(vw(lc_table + (lc_lines ? (uint32_t)y * 2 : 0)) & 0x7FF, nullptr);
-@@ -439,35 +794,61 @@ void vdp2_compose(Frame& f) {
+@@ -439,35 +802,61 @@ void vdp2_compose(Frame& f) {
              // each dot averaged with the average of the two before it; a dot the screen does not draw is black
              auto avg = [](uint32_t a, uint32_t b) { return (a + b - ((a ^ b) & 0x010101)) >> 1; };
              uint32_t prev[2] = {0, 0};
@@ -3488,7 +3548,7 @@ index 4c8bcb1..c5f555d 100644
              for (int n = 0; n < 4; ++n) {
                  Pix& p = l[L_NBG0 + n];
                  p = {};
-@@ -485,10 +866,18 @@ void vdp2_compose(Frame& f) {
+@@ -485,10 +874,18 @@ void vdp2_compose(Frame& f) {
                  p.ratio = s.ratio; p.offset = s.offset; p.offset_b = s.offset_b;
                  consider(L_NBG0 + n);
              }
@@ -3509,7 +3569,7 @@ index 4c8bcb1..c5f555d 100644
              uint32_t rgb = t.rgb;
              if (top >= 0 && t.cc && !windowed(cc_wctl, win, x)) {
                  uint32_t out = 0;
-@@ -504,11 +893,136 @@ void vdp2_compose(Frame& f) {
+@@ -504,11 +901,142 @@ void vdp2_compose(Frame& f) {
              if (t.offset) rgb = apply_offset(rgb, t.offset_b);
              // A shadow halves the top screen under it when SDCTL enables that screen (bit 5: the back screen).
              bool shaded = top == L_SPRITE ? t.shade
@@ -3602,15 +3662,21 @@ index 4c8bcb1..c5f555d 100644
      }
 +    };
 +    if(parallel) {
-+        {
-+            std::array<std::jthread,3> workers;
-+            int next=1;
-+            try {for(;next<4;++next)workers[next-1]=std::jthread(rows,f.h*next/4,f.h*(next+1)/4);}
-+            catch(const std::system_error&) {} // Finish any unavailable worker chunks locally.
-+            rows(0,f.h/4);
-+            for(;next<4;++next)rows(f.h*next/4,f.h*(next+1)/4);
-+        } // Join every worker before hashing or handing pixels to the GPU.
-+        for(size_t at=0;at<f.px.size();++at)provenance_hash(f,at);
++        // Bands of rows handed out in turn, so a costly band (a rotated floor) does not hold the
++        // field back on one thread; each thread works with its own copy of the row state.
++        const int bands=16;
++        std::atomic<int> next_band{0};
++        auto work=[&next_band,&f,bands](decltype(rows) band_rows) {
++            for(int b;(b=next_band.fetch_add(1))<bands;) band_rows(f.h*b/bands,f.h*(b+1)/bands);
++        };
++        std::array<std::thread,3> workers;                       // up to 4 threads with this one
++        for(unsigned i=0;i+1<hw_threads && i<workers.size();++i) {
++            try {workers[i]=std::thread(work,rows);}
++            catch(const std::system_error&) {break;}     // Finish any unavailable worker's bands locally.
++        }
++        work(rows);
++        for(auto& w:workers) if(w.joinable()) w.join();  // every band done before hashing or handing pixels on
++        if(f.hd) for(size_t at=0;at<f.px.size();++at)provenance_hash(f,at);
 +    } else rows(0,f.h);
 +}
 +
@@ -3716,7 +3782,7 @@ index 88d1642..c9182c1 100644
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
 diff --git a/runtime/src/video/video.h b/runtime/src/video/video.h
-index ebaa466..ee8d771 100644
+index ebaa466..e8a91c3 100644
 --- a/runtime/src/video/video.h
 +++ b/runtime/src/video/video.h
 @@ -6,6 +6,7 @@
@@ -3727,7 +3793,7 @@ index ebaa466..ee8d771 100644
  
  // ---- VDP1 (vdp1.cpp) --------------------------------------------------------------------
  extern uint8_t g_vdp1_vram[0x80000];                 // big-endian, as the bus sees it
-@@ -17,23 +18,50 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
+@@ -17,23 +18,51 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
  void vdp1_vblank_out();                              // erase, frame change, the draw PTMR 2 asks for
  void vdp1_tick(uint64_t now);                        // the end of a draw
  uint16_t vdp1_dot(int x, int y, bool dd);           // the sprite dot VDP2 shows at x, line y (dd: double-density, 2 lines a framebuffer line)
@@ -3769,6 +3835,7 @@ index ebaa466..ee8d771 100644
  };
  void vdp2_compose(Frame& out);                       // the picture of the field that has just ended
 +void vdp2_compose_reference(Frame& out);             // diagnostic reference for GPU composition metadata
++void vdp2_serial_composition(bool on);               // rows on this thread alone (SF3_SERIAL_COMPOSITION); else bands of rows on 4 threads
 +uint64_t vdp2_cached_fields();
 +bool vdp2_compose_wide(Frame& out,const Frame* current_native=nullptr); // reuse this field's native center when available
  int vdp2_lines();                                    // 224, 240 or 256 (TVMD VRESO)
@@ -3780,16 +3847,19 @@ index ebaa466..ee8d771 100644
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
 diff --git a/runtime/tests/CMakeLists.txt b/runtime/tests/CMakeLists.txt
-index 39eb423..2a9884c 100644
+index 39eb423..ba52253 100644
 --- a/runtime/tests/CMakeLists.txt
 +++ b/runtime/tests/CMakeLists.txt
-@@ -8,5 +8,5 @@ if(NOT CMAKE_BUILD_TYPE)
+@@ -8,5 +8,8 @@ if(NOT CMAKE_BUILD_TYPE)
    set(CMAKE_BUILD_TYPE Release)
  endif()
  include(${CMAKE_CURRENT_LIST_DIR}/../runtime.cmake)
 -add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp)
 +add_executable(runtime_tests main.cpp no_modules.cpp vdp2_test.cpp bup_test.cpp pads_test.cpp settings_test.cpp touch_test.cpp pace_test.cpp frame_change_test.cpp modem_test.cpp scu_test.cpp cdrom_test.cpp cdblock_test.cpp clock_test.cpp vdp1_steps_test.cpp vdp1_raster_test.cpp)
  target_link_libraries(runtime_tests saturn_core saturn_machine saturn_host Threads::Threads)
++# runtime_bench: disc-free timings of the hot paths (invented modules, command tables, screens)
++add_executable(runtime_bench runtime_bench.cpp)
++target_link_libraries(runtime_bench saturn_core saturn_machine saturn_host Threads::Threads)
 diff --git a/runtime/tests/bup_test.cpp b/runtime/tests/bup_test.cpp
 index 6943552..0c64057 100644
 --- a/runtime/tests/bup_test.cpp
@@ -3823,6 +3893,327 @@ index 6943552..0c64057 100644
  }
  
  TEST(a_damaged_file_keeps_the_saves_before_the_damage) {
+diff --git a/runtime/tests/runtime_bench.cpp b/runtime/tests/runtime_bench.cpp
+new file mode 100644
+index 0000000..0603a4f
+--- /dev/null
++++ b/runtime/tests/runtime_bench.cpp
+@@ -0,0 +1,315 @@
++// runtime_bench: disc-free timings of the runtime's hot paths, for comparing hosts (Apple Silicon,
++// x86-64 Linux) and builds. No game code or game data: invented modules, command tables and
++// screens, fixed seeds. Each faster path is timed beside the path it stands in for, and its
++// output is checked against it; any difference fails the run.
++//   runtime_bench [--quick] [--markdown] [--json FILE]
++//
++// vdp1   VDP1 command tables drawn into the native framebuffer: the native line walk against
++//        the general walk (vdp1_reference_raster).
++// vdp2   VDP2 composition of a 320x224 field (two bitmap screens, sprites, colour calculation):
++//        bands of rows on worker threads against all rows on one thread.
++// lookup sh2_lookup over an invented module table with an overlay swapped at one address; also
++//        checks that the lookup cache sees a module header overwritten in memory.
++#include "saturn/sh2.h"
++#include "video.h"
++#include <algorithm>
++#include <array>
++#include <utility>
++#include <chrono>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <random>
++#include <string>
++#include <thread>
++#include <vector>
++
++// ---- an invented module table (what a game's generated modules.cpp defines) -----------------
++namespace {
++template <int N> void fn(SH2Context& c) { c.r[0] += N; }
++template <int... I> constexpr std::array<SH2Func, sizeof...(I)> fns(std::integer_sequence<int, I...>) { return {&fn<I>...}; }
++const auto kFns = fns(std::make_integer_sequence<int, 64>{});
++
++SH2Module g_boot{"BENCH_BOOT", 0x06004000, 0x40000, 0, nullptr, 0, nullptr, nullptr, false};
++SH2Module g_ova{"BENCH_OVA", 0x06050000, 0x20000, 0, nullptr, 0, nullptr, nullptr, true};
++SH2Module g_ovb{"BENCH_OVB", 0x06050000, 0x20000, 0, nullptr, 0, nullptr, nullptr, true};
++SH2Module g_low{"BENCH_LOW", 0x00200000, 0x40000, 0, nullptr, 0, nullptr, nullptr, true};
++std::vector<SH2FuncEntry> g_entries[4];
++}  // namespace
++
++extern const SH2Module* const g_sh2_modules[] = {&g_boot, &g_ova, &g_ovb, &g_low};
++extern const int g_sh2_nmodules = 4;
++extern const uint32_t g_sh2_tasks[2] = {0, 0};
++extern const SH2TaskSwitch g_sh2_task_switches[] = {{0, 0, 0, 0, 0}};
++extern const int g_sh2_ntask_switches = 0;
++
++namespace {
++
++using Clock = std::chrono::steady_clock;
++double ms_since(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
++
++struct Row { std::string group, name, unit; double base, fast; };
++std::vector<Row> g_rows;
++int g_failures;
++void fail(const char* what) { std::fprintf(stderr, "FAIL: %s\n", what); ++g_failures; }
++
++uint64_t fnv(const void* p, size_t n, uint64_t h = 1469598103934665603ull) {
++    for (size_t i = 0; i < n; ++i) { h ^= ((const uint8_t*)p)[i]; h *= 1099511628211ull; }
++    return h;
++}
++
++// ---- VDP1 -------------------------------------------------------------------------------
++void be16(uint32_t a, uint16_t v) { g_vdp1_vram[a & 0x7FFFF] = (uint8_t)(v >> 8); g_vdp1_vram[(a + 1) & 0x7FFFF] = (uint8_t)v; }
++
++struct Table {
++    uint32_t a = 0;
++    void cmd(uint16_t ctrl, uint16_t pmod, uint16_t colr, uint32_t srca, int w, int h, const int* xy, uint32_t grda = 0) {
++        be16(a, ctrl); be16(a + 2, 0); be16(a + 4, pmod); be16(a + 6, colr); be16(a + 8, (uint16_t)(srca / 8));
++        be16(a + 10, (uint16_t)((w / 8) << 8 | h));
++        for (int i = 0; i < 8; ++i) be16(a + 12 + i * 2, (uint16_t)(xy[i] & 0x1FFF));
++        be16(a + 28, (uint16_t)(grda / 8)); be16(a + 30, 0);
++        a += 0x20;
++    }
++    void end() { be16(a, 0x8000); }
++};
++
++// Textures from 0x20000: 16-bit RGB and 4-bit colour-table characters, transparent dots and all.
++void textures(std::mt19937& rng) {
++    for (uint32_t a = 0x20000; a < 0x80000; a += 2) {
++        uint32_t r = rng();
++        uint16_t v = (r & 7) == 0 ? 0 : (uint16_t)(0x8000 | (r >> 8 & 0x7FFF));
++        be16(a, v);
++    }
++    for (uint32_t a = 0x7F000; a < 0x7F800; a += 2) be16(a, (uint16_t)(0x8000 | (rng() & 0x7FFF)));   // colour tables
++    for (uint32_t a = 0x7F800; a < 0x80000; a += 2) be16(a, (uint16_t)(rng() & 0x7FFF));             // Gouraud tables
++}
++
++void scene(const char* name, std::mt19937& rng, Table& t) {
++    auto r = [&](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
++    int sys[8] = {0, 0, 0, 0, 319, 223, 0, 0};
++    t.cmd(0x0009, 0, 0, 0, 0, 0, sys);
++    int user[8] = {0, 0, 0, 0, 319, 223, 0, 0};
++    t.cmd(0x0008, 0, 0, 0, 0, 0, user);
++    int local[8] = {0, 0, 0, 0, 0, 0, 0, 0};
++    t.cmd(0x000A, 0, 0, 0, 0, 0, local);
++    std::string s = name;
++    auto tex = [&](int w, int h) { return (uint32_t)(0x20000 + r(0, (0x5E000 - w * h * 2) / 8) * 8); };
++    if (s == "sprites") {                       // normal sprites, 32x32, RGB and colour table
++        for (int i = 0; i < 400; ++i) {
++            int xy[8] = {r(-16, 304), r(-16, 208)};
++            bool lut = i & 1;
++            t.cmd((uint16_t)(0x0000 | r(0, 3) << 4), (uint16_t)((lut ? 1 : 5) << 3 | 0x80),
++                  (uint16_t)(lut ? (0x7F000 + r(0, 63) * 32) / 8 : 0), tex(32, 32), 32, 32, xy);
++        }
++    } else if (s == "scaled") {                 // scaled sprites, 32x32 to 16..64 on screen
++        for (int i = 0; i < 200; ++i) {
++            int x = r(-20, 300), y = r(-20, 200), w = r(16, 64), h = r(16, 64);
++            int xy[8] = {x, y, 0, 0, x + w, y + h};
++            t.cmd(0x0001, 5 << 3 | 0x80, 0, tex(32, 32), 32, 32, xy);
++        }
++    } else if (s == "floor") {                  // distorted sprites as perspective floor tiles, some shaded
++        for (int row = 0; row < 14; ++row)
++            for (int col = 0; col < 20; ++col) {
++                double y0 = 40 + row * row * 0.95, y1 = 40 + (row + 1) * (row + 1) * 0.95;
++                double s0 = 0.4 + row * 0.07, s1 = 0.4 + (row + 1) * 0.07;
++                auto px = [&](double c, double sc) { return (int)(160 + (c - 10) * 32 * sc); };
++                int xy[8] = {px(col, s0), (int)y0, px(col + 1, s0), (int)y0, px(col + 1, s1), (int)y1, px(col, s1), (int)y1};
++                bool shade = (row + col) % 3 == 0;
++                t.cmd(0x0002, (uint16_t)(5 << 3 | 0x80 | (shade ? 4 : 0)), 0, tex(32, 32), 32, 32, xy,
++                      0x7F800 + r(0, 255) * 8);
++            }
++    } else {                                    // untextured polygons: Gouraud, half-transparency
++        for (int i = 0; i < 300; ++i) {
++            int x = r(0, 300), y = r(0, 200);
++            int xy[8] = {x, y, x + r(5, 60), y + r(-10, 10), x + r(5, 60), y + r(5, 60), x + r(-10, 10), y + r(5, 60)};
++            uint16_t ccb = (uint16_t)(i % 4 == 0 ? 4 : i % 4 == 1 ? 3 : 0);
++            t.cmd(0x0004, (uint16_t)(0xC0 | ccb), (uint16_t)(0x8000 | r(0, 0x7FFF)), 0, 0, 0, xy, 0x7F800 + r(0, 255) * 8);
++        }
++    }
++    t.end();
++}
++
++uint64_t fb_hash(int* lit = nullptr) {
++    std::vector<uint16_t> fb(512 * 256);
++    for (int i = 0; i < 512 * 256; ++i) fb[i] = (uint16_t)vdp1_fb_read(i * 2, 2);
++    if (lit) *lit = (int)std::count_if(fb.begin(), fb.end(), [](uint16_t d) { return d != 0; });
++    return fnv(fb.data(), fb.size() * 2);
++}
++void fb_clear() { for (int i = 0; i < 512 * 256; ++i) vdp1_fb_write(i * 2, 0, 2); }
++
++void bench_vdp1(bool quick) {
++    vdp1_init();
++    vdp1_reg_write(0x00, 0, 2);                          // TVMR: 16 bits a pixel
++    vdp1_reg_write(0x02, 0, 2);
++    for (const char* name : {"sprites", "scaled", "floor", "polygons"}) {
++        std::mt19937 rng(1996);
++        std::memset(g_vdp1_vram, 0, sizeof g_vdp1_vram);
++        textures(rng);
++        Table t;
++        scene(name, rng, t);
++        const int draws = quick ? 10 : 150;
++        double ms[2];
++        uint64_t hash[2];
++        for (int reference = 1; reference >= 0; --reference) {
++            vdp1_reference_raster(reference);
++            fb_clear();
++            vdp1_reg_write(0x04, 1, 2);
++            int lit = 0;
++            hash[reference] = fb_hash(&lit);
++            if (lit < 320 * 224 / 5) fail((std::string("vdp1 ") + name + ": the invented scene did not draw").c_str());
++            if (std::getenv("BENCH_VERBOSE")) std::fprintf(stderr, "vdp1 %s: %d dots drawn\n", name, lit);
++            auto t0 = Clock::now();
++            for (int i = 0; i < draws; ++i) vdp1_reg_write(0x04, 1, 2);    // PTMR 1: draw now
++            ms[reference] = ms_since(t0) / draws;
++        }
++        vdp1_reference_raster(false);
++        if (hash[0] != hash[1]) fail((std::string("vdp1 ") + name + ": native walk differs from the general walk").c_str());
++        g_rows.push_back({"vdp1", name, "ms/draw", ms[1], ms[0]});
++    }
++}
++
++// ---- VDP2 -------------------------------------------------------------------------------
++void reg2(uint32_t off, uint16_t v) { g_vdp2_regs[off] = v >> 8; g_vdp2_regs[off + 1] = (uint8_t)v; }
++
++void bench_vdp2(bool quick) {
++    std::mt19937 rng(1998);
++    std::memset(g_vdp2_regs, 0, sizeof g_vdp2_regs);
++    for (auto& b : g_vdp2_vram) b = (uint8_t)rng();
++    for (size_t i = 0; i < sizeof g_vdp2_cram; i += 2) { uint16_t v = (uint16_t)(rng() & 0x7FFF); g_vdp2_cram[i] = v >> 8; g_vdp2_cram[i + 1] = (uint8_t)v; }
++    reg2(0x00, 0x8000);                          // TVMD: display on, 320x224
++    reg2(0x20, 0x0003);                          // BGON: NBG0, NBG1
++    reg2(0x28, 0x1212);                          // CHCTLA: NBG0 and NBG1 bitmaps, 256 colours, 512x256
++    reg2(0x3C, 0x0010);                          // MPOFN: NBG1's bitmap at 0x20000
++    reg2(0x78, 0x0001); reg2(0x7C, 0x0001);      // NBG0 zoom 1.0
++    reg2(0x88, 0x0001); reg2(0x8C, 0x0001);      // NBG1 zoom 1.0
++    reg2(0x80, 0x0013); reg2(0x84, 0x0007);      // NBG1 scrolled
++    reg2(0xF8, 0x0302);                          // PRINA: NBG0 2, NBG1 3
++    reg2(0xF0, 0x0505); reg2(0xF2, 0x0505); reg2(0xF4, 0x0505); reg2(0xF6, 0x0505);   // sprites 5
++    reg2(0xE0, 0x0020);                          // SPCTL: RGB and palette sprite dots
++    reg2(0xEC, 0x0002);                          // CCCTL: NBG1 colour calculation
++    reg2(0x108, 0x0C00);                         // CCRNA: NBG1 ratio
++    reg2(0xAC, 0x0003); reg2(0xAE, 0xFFFF);      // back screen at the end of VRAM
++    // VDP1 shows sprites: rectangles of RGB dots and transparent gaps
++    for (int y = 0; y < 256; ++y)
++        for (int x = 0; x < 512; ++x) {
++            bool on = ((x / 24 + y / 20) % 3) != 0;
++            vdp1_fb_write((uint32_t)(y * 512 + x) * 2, on ? (uint32_t)(0x8000 | ((x * 7 + y * 3) & 0x7FFF)) : 0, 2);
++        }
++    vdp1_vblank_out();
++    const int frames = quick ? 20 : 300;
++    double ms[2];
++    uint64_t hash[2];
++    for (int serial = 1; serial >= 0; --serial) {
++        vdp2_serial_composition(serial);
++        Frame f;
++        vdp2_compose(f);
++        hash[serial] = fnv(f.px.data(), f.px.size() * 4);
++        size_t lit = std::count_if(f.px.begin(), f.px.end(), [](uint32_t p) { return p != 0; });
++        if (f.w != 320 || f.h != 224 || lit < f.px.size() / 2) fail("vdp2: the invented screen did not show");
++        auto t0 = Clock::now();
++        for (int i = 0; i < frames; ++i) vdp2_compose(f);
++        ms[serial] = ms_since(t0) / frames;
++    }
++    vdp2_serial_composition(false);
++    if (hash[0] != hash[1]) fail("vdp2: rows composed on worker threads differ from one thread's");
++    g_rows.push_back({"vdp2", std::string("compose 320x224 (") + std::to_string(std::thread::hardware_concurrency()) + " hw threads)",
++                      "ms/field", ms[1], ms[0]});
++}
++
++// ---- sh2_lookup -------------------------------------------------------------------------
++uint8_t* mem(uint32_t a) { return a >> 20 == 0x060 ? g_wram_h + (a & 0xFFFFF) : g_wram_l + (a & 0xFFFFF); }
++
++void image(SH2Module& m, uint32_t seed, int stride, int offset) {
++    std::mt19937 rng(seed);
++    for (uint32_t i = 0; i < m.size; ++i) mem(m.base)[i] = (uint8_t)rng();
++    m.crc = sh2_crc32(mem(m.base), m.size);
++    auto& e = g_entries[&m == &g_boot ? 0 : &m == &g_ova ? 1 : &m == &g_ovb ? 2 : 3];
++    e.clear();
++    for (uint32_t a = (uint32_t)offset; a < m.size; a += (uint32_t)stride) e.push_back({m.base + a, kFns[(a / stride) & 63]});
++    m.funcs = e.data(); m.nfuncs = (uint32_t)e.size();
++}
++
++SH2Func expected(const SH2Module& m, uint32_t addr) {
++    for (uint32_t i = 0; i < m.nfuncs; ++i) if (m.funcs[i].addr == addr) return m.funcs[i].fn;
++    return nullptr;
++}
++
++void bench_lookup(bool quick) {
++    image(g_ovb, 3, 0x40, 0x10);                 // B's image first: its CRC from its own bytes
++    std::vector<uint8_t> ovb(mem(g_ovb.base), mem(g_ovb.base) + g_ovb.size);
++    image(g_boot, 1, 0x20, 0);
++    image(g_ova, 2, 0x40, 0);
++    image(g_low, 4, 0x30, 0);
++    sh2_activate(&g_boot); sh2_activate(&g_low); sh2_activate(&g_ova);
++    // a trace: hot functions called again and again, as a game's main loop does
++    std::mt19937 rng(2026);
++    std::vector<uint32_t> hot;
++    for (int i = 0; i < 1500; ++i) {
++        const SH2Module& m = i % 3 == 0 ? g_boot : i % 3 == 1 ? g_ova : g_low;
++        hot.push_back(m.funcs[rng() % m.nfuncs].addr);
++    }
++    std::vector<uint32_t> trace(1 << 16);
++    std::geometric_distribution<int> pick(0.01);
++    for (auto& a : trace) a = hot[std::min<int>(pick(rng), (int)hot.size() - 1)];
++    for (uint32_t a : hot) {
++        const SH2Module& m = a >> 20 == 0x002 ? g_low : a < g_ova.base ? g_boot : g_ova;
++        if (sh2_lookup(a) != expected(m, a)) { fail("lookup: wrong function"); break; }
++    }
++    const long n = quick ? 2000000 : 40000000;
++    uintptr_t sink = 0;
++    auto t0 = Clock::now();
++    for (long i = 0; i < n; ++i) sink += (uintptr_t)sh2_lookup(trace[i & 0xFFFF]);
++    double ns = ms_since(t0) * 1e6 / n;
++    if (!sink) fail("lookup: nothing found");
++    g_rows.push_back({"lookup", "sh2_lookup, 1500 hot entries", "ns/lookup", 0, ns});
++    // An overlay loaded over A (by the module loader, DMA or the CPU): an address that was A's
++    // entry must now come from B, or from nothing, exactly as without the cache.
++    const uint32_t a_only = g_ova.base + 0x40;               // A's entry, not B's
++    const uint32_t b_only = g_ovb.base + 0x50;               // B's entry, not A's
++    if (sh2_lookup(a_only) != expected(g_ova, a_only)) fail("lookup: A before the swap");
++    std::memcpy(mem(g_ovb.base), ovb.data(), ovb.size());
++    if (sh2_lookup(a_only) != nullptr) fail("lookup: A's entry still found after B was loaded over it");
++    if (sh2_lookup(b_only) != expected(g_ovb, b_only)) fail("lookup: B's entry after the swap");
++    // a header byte overwritten in place: an unknown image, so nothing is trusted there
++    mem(g_ovb.base)[5] ^= 0xFF;
++    if (sh2_lookup(b_only) != nullptr) fail("lookup: an entry found in an overwritten image");
++}
++
++}  // namespace
++
++int main(int argc, char** argv) {
++    bool quick = false, markdown = false;
++    const char* json = nullptr;
++    for (int i = 1; i < argc; ++i) {
++        if (!std::strcmp(argv[i], "--quick")) quick = true;
++        else if (!std::strcmp(argv[i], "--markdown")) markdown = true;
++        else if (!std::strcmp(argv[i], "--json") && i + 1 < argc) json = argv[++i];
++        else { std::fprintf(stderr, "usage: runtime_bench [--quick] [--markdown] [--json FILE]\n"); return 2; }
++    }
++    bench_lookup(quick);
++    bench_vdp1(quick);
++    bench_vdp2(quick);
++    if (markdown) {
++        std::printf("| group | case | unit | reference path | fast path | speed-up |\n|---|---|---|---:|---:|---:|\n");
++        for (auto& r : g_rows)
++            if (r.base > 0) std::printf("| %s | %s | %s | %.3f | %.3f | %.2fx |\n", r.group.c_str(), r.name.c_str(), r.unit.c_str(), r.base, r.fast, r.base / r.fast);
++            else std::printf("| %s | %s | %s | | %.2f | |\n", r.group.c_str(), r.name.c_str(), r.unit.c_str(), r.fast);
++    } else {
++        for (auto& r : g_rows)
++            if (r.base > 0) std::printf("%-7s %-34s %9.3f -> %9.3f %-9s (%.2fx)\n", r.group.c_str(), r.name.c_str(), r.base, r.fast, r.unit.c_str(), r.base / r.fast);
++            else std::printf("%-7s %-34s %9s    %9.2f %-9s\n", r.group.c_str(), r.name.c_str(), "", r.fast, r.unit.c_str());
++    }
++    if (json) {
++        FILE* f = std::fopen(json, "w");
++        if (f) {
++            std::fprintf(f, "{\"quick\": %s, \"rows\": [", quick ? "true" : "false");
++            for (size_t i = 0; i < g_rows.size(); ++i)
++                std::fprintf(f, "%s{\"group\": \"%s\", \"case\": \"%s\", \"unit\": \"%s\", \"reference\": %.4f, \"fast\": %.4f}", i ? ", " : "",
++                             g_rows[i].group.c_str(), g_rows[i].name.c_str(), g_rows[i].unit.c_str(), g_rows[i].base, g_rows[i].fast);
++            std::fprintf(f, "], \"failures\": %d}\n", g_failures);
++            std::fclose(f);
++        }
++    }
++    if (g_failures) std::fprintf(stderr, "%d check(s) failed\n", g_failures);
++    return g_failures ? 1 : 0;
++}
 diff --git a/runtime/tests/vdp1_raster_test.cpp b/runtime/tests/vdp1_raster_test.cpp
 new file mode 100644
 index 0000000..fb24b1d
