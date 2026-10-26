@@ -463,6 +463,7 @@ def main():
     q.add_argument('--protect', type=int, nargs='+', help='more force slots whose fall loses the battle; they also play cautious (Sc3 Ch7 dock fight: the guest Julian, 7)')
     q.add_argument('--watch-fall', action='store_true', help='sample the leader/protected HP during each window; a fall loses even if the game revives the unit by the window end (Sc2 Ch6: church)')
     q.add_argument('--keep-away', type=int, default=0, help='the leader/protected units retreat whenever a live enemy is within N tiles, and each one ending a window that close costs 1.5 (Sc3 Ch7 dock fight: the Masked Monk poisoned Julian)')
+    q.add_argument('--avoid', type=lambda t: tuple(int(v) for v in t.split(',')), help='X,Y,R: the leader/protected units walk out of the tiles within R of X,Y, and each one ending a window there costs 3 (Sc2 Ch6: scripted blast zone)')
     q.add_argument('--prune', action='store_true', help='delete candidate saves the search can never backtrack to (keeps the stack top and the untried alternatives)')
     q.add_argument('--no-left', action='store_true', help='do not score battle id 0 as Egress/defeat (Sc2 V1.003: its map/battle bytes do not track in Ch6)')
     q.add_argument('--resync', action='store_true', help='after each level, replay the committed pads straight from the save and continue from that run (save-state restores are not exact)')

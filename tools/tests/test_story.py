@@ -240,6 +240,11 @@ class StoryTest(unittest.TestCase):
         m = dict(goal=False, leader_down=False, won=False, enemy_left=0.5, kills=1, force_left=1.0, deaths=0, leader=1.0)
         self.assertAlmostEqual(search.score(m) - search.score(dict(m, threat=1)), 1.5)
 
+    def test_zone_costs_score(self):
+        from sf3test import search
+        m = dict(goal=False, leader_down=False, won=False, enemy_left=0.5, kills=1, force_left=1.0, deaths=0, leader=1.0)
+        self.assertAlmostEqual(search.score(m) - search.score(dict(m, in_zone=1)), 3)
+
     def test_search_metrics_and_score(self):
         from sf3test import search
         root = {'force': {0: (60, 60), 1: (40, 40)}, 'enemies': {5: (100, 100), 6: (50, 50)}}

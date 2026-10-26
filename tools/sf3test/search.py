@@ -79,6 +79,13 @@ def threat(read, units, guarded, reach):
                min(abs(fo[g][0] - x) + abs(fo[g][1] - y) for x, y in en) <= reach)
 
 
+def in_zone(read, units, guarded, zone):
+    """--avoid X,Y,R: how many guarded force slots end the window within R tiles of (X, Y); each costs 3."""
+    x0, y0, r = zone
+    fo = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(read, units['force'], units.get('live'))}
+    return sum(1 for g in guarded if g in fo and abs(fo[g][0] - x0) + abs(fo[g][1] - y0) <= r)
+
+
 def score(m):
     if m.get('goal'):
         return 1e6
@@ -87,7 +94,7 @@ def score(m):
     if m['won']:
         return 1e5
     return (4 * (1 - m['enemy_left']) + 1.0 * m['kills'] + 1.5 * m['force_left'] - 1.0 * m['deaths']
-            + 2 * m['leader'] - 1.5 * m.get('threat', 0))
+            + 2 * m['leader'] - 1.5 * m.get('threat', 0) - 3 * m.get('in_zone', 0))
 
 
 def left_battle(read, job, reached):
@@ -157,7 +164,7 @@ def run_args(job, state=None):
 def _play(s, job, frames, seed, explore):
     return autoplay.play(s, job['profile'], frames, seed, walker=True, rearm=20, idle_over_turns=60,
                          pathing=True, explore=explore,
-                         leader=job.get('leader'), protect=job.get('protect'), keep_away=job.get('keep_away', 0),
+                         leader=job.get('leader'), protect=job.get('protect'), keep_away=job.get('keep_away', 0), avoid=job.get('avoid'),
                          watch=tuple([job['leader']] + list(job.get('protect') or ())) if job.get('watch_fall') else None)
 
 
@@ -191,6 +198,8 @@ def candidate(job):
         m1.update(goal=bool(reached), reset=bool(p['resets']), left=left_battle(s.read, job, reached))
         if p.get('fell'):  # --watch-fall: a fall inside the window loses, even if revived by the end
             m1.update(leader_down=True, fell=p['fell'])
+        if job.get('avoid'):
+            m1.update(in_zone=in_zone(s.read, units, [job['leader']] + list(job.get('protect') or ()), job['avoid']))
         if job.get('keep_away'):
             m1.update(threat=threat(s.read, units, [job['leader']] + list(job.get('protect') or ()), job['keep_away']))
         state = out / 'commit.state'
@@ -286,7 +295,7 @@ def search(a):
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
-                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, state_id=state_id, W=a.window, L=a.look,
+                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), state_id=state_id, W=a.window, L=a.look,
                   progress=getattr(a, 'progress', False), root_pos=root_pos,
                   root_active=root_active, root_flag_bits=common_fb)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
