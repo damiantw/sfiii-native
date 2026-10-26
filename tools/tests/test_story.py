@@ -235,6 +235,11 @@ class StoryTest(unittest.TestCase):
             self.assertEqual(search.prune_dead(c, levels), 4)
             self.assertEqual(sorted(p.name for p in c.iterdir()), ['0000-0', '0002-0'])
 
+    def test_threat_costs_score(self):
+        from sf3test import search
+        m = dict(goal=False, leader_down=False, won=False, enemy_left=0.5, kills=1, force_left=1.0, deaths=0, leader=1.0)
+        self.assertAlmostEqual(search.score(m) - search.score(dict(m, threat=1)), 1.5)
+
     def test_search_metrics_and_score(self):
         from sf3test import search
         root = {'force': {0: (60, 60), 1: (40, 40)}, 'enemies': {5: (100, 100), 6: (50, 50)}}

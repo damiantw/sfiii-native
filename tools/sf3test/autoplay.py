@@ -131,7 +131,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -151,7 +151,10 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     (Sc3 Ch7 dock fight: a guest in slot 7 sat below Synbios' 31 and was kept back as the leader).
     `watch` (round 19, opt-in): force slots whose HP is sampled every WATCH_EVERY frames; a fall is
     returned in 'fell' as (frame offset, slot) even when the game revives the unit before the end (Sc2
-    Ch6 Garvin fight: Medion fell, the church restored him to full HP, and the window end looked fine)."""
+    Ch6 Garvin fight: Medion fell, the church restored him to full HP, and the window end looked fine).
+    `keep_away` (round 19, opt-in): the leader and protected units also retreat at full HP whenever a
+    live enemy (HP above 1: barrels are 1/1 records) is within that many tiles (Sc3 Ch7 dock fight: Julian
+    stood still at 22,26 until the Masked Monk walked up and poisoned him; the poison then drained him)."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     pol.pathing = pathing
@@ -159,6 +162,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     pol.explore = explore
     pol.leader = leader
     pol.protect = tuple(protect or ())
+    pol.keep_away = keep_away or 0
     presses, events = [], []
     fell, watch_base = [], (mm.get('units') or {}).get('force') if watch else None
     done, last_key, same, turn = 0, None, 0, 0
@@ -634,7 +638,11 @@ def aimed_turn(side, units, pol, press):
         cautious = True
         pol.cautious = getattr(pol, 'cautious', 0) + 1
         now = pos()
-        if me in now and is_hurt(rd, units['force'], me, LEADER_SAFE):
+        ka = getattr(pol, 'keep_away', 0)
+        threats = [(x, y) for k, x, y, f, hp in enemies if hp > 1 and k not in phantoms]
+        near_threat = bool(ka and me in now and threats and
+                           min(abs(now[me][0] - e[0]) + abs(now[me][1] - e[1]) for e in threats) <= ka)
+        if me in now and (near_threat or is_hurt(rd, units['force'], me, LEADER_SAFE)):
             path = retreat_path(now[me], live, {v for k, v in now.items() if k != me}, pol.blocked)
             for i, d in enumerate(path):
                 q = pos().get(me)
