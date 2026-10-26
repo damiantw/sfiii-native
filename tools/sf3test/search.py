@@ -89,7 +89,7 @@ def in_zone(read, units, guarded, zone):
 def score(m):
     if m.get('goal'):
         return 1e6
-    if m['leader_down'] or m.get('reset') or m.get('left'):
+    if m['leader_down'] or m.get('reset') or m.get('left') or m.get('too_many_deaths'):
         return -1e6
     if m['won']:
         return 1e5
@@ -198,6 +198,8 @@ def candidate(job):
         m1.update(goal=bool(reached), reset=bool(p['resets']), left=left_battle(s.read, job, reached))
         if p.get('fell'):  # --watch-fall: a fall inside the window loses, even if revived by the end
             m1.update(leader_down=True, fell=p['fell'])
+        if job.get('max_deaths') is not None and m1['deaths'] > job['max_deaths']:
+            m1.update(too_many_deaths=True)   # --max-deaths: back up instead of grinding a lost force down
         if job.get('avoid'):
             m1.update(in_zone=in_zone(s.read, units, [job['leader']] + list(job.get('protect') or ()), job['avoid']))
         if job.get('keep_away'):
@@ -295,7 +297,7 @@ def search(a):
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
-                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), focus=getattr(a, 'focus', None), state_id=state_id, W=a.window, L=a.look,
+                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), focus=getattr(a, 'focus', None), max_deaths=getattr(a, 'max_deaths', None), state_id=state_id, W=a.window, L=a.look,
                   progress=getattr(a, 'progress', False), root_pos=root_pos,
                   root_active=root_active, root_flag_bits=common_fb)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)

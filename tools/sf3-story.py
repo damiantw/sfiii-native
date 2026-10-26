@@ -465,6 +465,7 @@ def main():
     q.add_argument('--keep-away', type=int, default=0, help='the leader/protected units retreat whenever a live enemy is within N tiles, and each one ending a window that close costs 1.5 (Sc3 Ch7 dock fight: the Masked Monk poisoned Julian)')
     q.add_argument('--avoid', type=lambda t: tuple(int(v) for v in t.split(',')), help='X,Y,R: the leader/protected units walk out of the tiles within R of X,Y, and each one ending a window there costs 3 (Sc2 Ch6: scripted blast zone)')
     q.add_argument('--focus', type=int, nargs='+', help='enemy slots the force paths to first while they live (Sc3 Ch7 dock fight: the Masked Monk, 1)')
+    q.add_argument('--max-deaths', type=int, help='a candidate with more fallen force units than this loses (backtracks) (Sc1 battle 29, v62b: 8 of 11 fell, 3 left against a 491-HP boss)')
     q.add_argument('--prune', action='store_true', help='delete candidate saves the search can never backtrack to (keeps the stack top and the untried alternatives)')
     q.add_argument('--no-left', action='store_true', help='do not score battle id 0 as Egress/defeat (Sc2 V1.003: its map/battle bytes do not track in Ch6)')
     q.add_argument('--resync', action='store_true', help='after each level, replay the committed pads straight from the save and continue from that run (save-state restores are not exact)')
