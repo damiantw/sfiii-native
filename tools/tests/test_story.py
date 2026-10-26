@@ -295,6 +295,15 @@ class StoryTest(unittest.TestCase):
         self.assertEqual(A.pad_for('DOWN', 0), 'DOWN')
         self.assertIsNone(A.learn_turn('UP', (1, 1)))
 
+    def test_guard_hp_floor_loses(self):
+        from sf3test import search
+        root = dict(force={31: (35, 35), 7: (40, 40)}, enemies={0: (10, 10)})
+        now = dict(force={31: (30, 35), 7: (13, 40)}, enemies={0: (10, 10)})
+        self.assertTrue(search.low_hp(now, root, [31, 7], 0.4))
+        self.assertFalse(search.low_hp(now, root, [31], 0.4))
+        m = dict(search.metrics(now, root, 31, [7]), low_hp=True)
+        self.assertEqual(search.score(m), -1e6)
+
     def test_protected_fall_loses(self):
         from sf3test import search
         root = dict(force={31: (40, 40), 7: (13, 42)}, enemies={0: (40, 40)})
