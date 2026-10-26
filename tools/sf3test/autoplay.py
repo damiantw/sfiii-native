@@ -781,15 +781,21 @@ def aimed_turn(side, units, pol, press):
         if fx:
             goal = fx
     esc = getattr(pol, 'escort', None)
-    if esc is not None and esc in before and esc != me and not hold_back and not picked:
+    esc = [e for e in ((esc,) if isinstance(esc, int) else (esc or ())) if e in before and e != me]
+    if esc and not hold_back and not picked:
         # round 27 (Sc3 Ch7 dock fight, probes ap71b-f): Gracia (31) takes no player turns (the game
         # moves her), stays at 20,26 and the church follows when she falls; three enemies closed on
-        # her while the force chased the far ones. --escort: enemies within ESCORT_R of her come
-        # first, and with none near the unit walks next to her (filling the tiles enemies would take)
-        ex, ey = before[esc]
+        # her while the force chased the far ones. --escort: enemies within ESCORT_R of an escorted
+        # unit come first, and with none near the unit walks next to the escorted unit nearest the
+        # enemies. v72 (one escort, Gracia): the force ringed her and Julian (protected, at 21,30)
+        # fell alone, so the protected units are escorted too (--escort 31 7)
         near = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k not in phantoms
-                and abs(x - ex) + abs(y - ey) <= ESCORT_R]
-        goal = near or [before[esc]]
+                and any(abs(x - before[e][0]) + abs(y - before[e][1]) <= ESCORT_R for e in esc)]
+        if near:
+            goal = near
+        else:
+            exposed = min(esc, key=lambda e: min(abs(before[e][0] - x) + abs(before[e][1] - y) for x, y in live))
+            goal = [before[exposed]]
         pol.escorting = getattr(pol, 'escorting', 0) + 1
 
     def dist(p):

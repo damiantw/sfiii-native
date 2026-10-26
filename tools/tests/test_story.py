@@ -262,6 +262,35 @@ class StoryTest(unittest.TestCase):
             self.assertLessEqual(abs(x - want[0]) + abs(y - want[1]), 2, (enemies, force))
             self.assertEqual(pol.escorting, 1)
 
+    def test_escort_several_guards_the_exposed_one(self):
+        # invented roster: slots 9 and 7 escorted; no enemy near either; 7 is nearer the enemy, so
+        # the mover walks next to 7, not 9
+        from unittest import mock
+        from sf3test import autoplay
+        force = {2: (10, 10), 9: (14, 14), 7: (6, 6)}
+
+        def read_units(rd, base, live=None):
+            if base == 'E':
+                return [(0, 0, 0, 0, 10)]
+            return [(k, x, y, 0, 10) for k, (x, y) in force.items()]
+
+        def press(btn, n):
+            if btn and btn[0] in autoplay.DIRS:
+                force[2] = autoplay.step_of(force[2], btn[0])
+
+        class Side:
+            read = None
+            def frame(self):
+                return None
+        pol = autoplay.Policy(1)
+        pol.pathing, pol.escort, pol.leader = True, [9, 7], 9
+        with mock.patch.object(autoplay.memory_map, 'read_units', read_units), \
+                mock.patch.object(autoplay, 'panel_share', lambda f: 0.0), \
+                mock.patch.object(autoplay, 'is_hurt', lambda *a: False):
+            autoplay.aimed_turn(Side(), {'force': 'F', 'enemies': 'E'}, pol, press)
+        x, y = force[2]
+        self.assertLessEqual(abs(x - 6) + abs(y - 6), 2, force)
+
     def test_hurt_leader_retreats(self):
         # invented roster: the leader (lowest slot) is hurt with an enemy two tiles away; its turn
         # walks it away from the enemy instead of holding still
