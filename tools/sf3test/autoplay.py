@@ -820,6 +820,12 @@ def aimed_turn(side, units, pol, press):
         if hurt:
             press(('B',), 6)
             press((), 20)
+            if not hud_up(side.frame()):
+                # v76 (probe ap76a): this B put the unit back and left the free cursor up, so the
+                # ring never opened and every turn went to status panels (25 levels at one score);
+                # a second B puts the cursor back on the unit, as in the cautious branch
+                press(('B',), 6)
+                press((), 40)
             pol.item_heals = getattr(pol, 'item_heals', 0) + 1
             return heal_cast(rd, units, pol, me, ring='item', target=hurt[0])
 
