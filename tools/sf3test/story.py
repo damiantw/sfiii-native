@@ -18,7 +18,9 @@ Segment file (text, one per proven or attempted segment; inputs only):
   V poke ADDR HEX                write bytes at ADDR before stepping VBlank V (test-only assist)
 The run starts at VBlank 1 of `saturn --headless` with the record as the only save (slot 01);
 replaying the actions frame for frame reproduces the run (agent-stepped runs are deterministic)."""
+import contextlib
 import hashlib
+import os
 
 FLAG_LO, FLAG_HI = 0x240, 0x400
 FLAG_BASE = {
@@ -72,6 +74,31 @@ def segment_text(header, actions):
     for a in actions:
         out.append(' '.join(str(x) for x in a))
     return '\n'.join(out) + '\n'
+
+
+def agent_line(header):
+    """The agent step edge a segment was recorded with: its 'agent_line' header (a scanline, as for
+    SF3_AGENT_LINE), or None for the agent's default pause at VBlank-IN (no header, '-' or empty)."""
+    v = (header.get('agent_line') or '').strip()
+    return None if v in ('', '-', 'None') else str(int(v))
+
+
+@contextlib.contextmanager
+def agent_line_env(header):
+    """Start the agent inside this to step it at the segment's recorded edge: sets SF3_AGENT_LINE from
+    the 'agent_line' header, or clears it when there is none, and restores the old value afterwards."""
+    old, line = os.environ.get('SF3_AGENT_LINE'), agent_line(header)
+    if line is None:
+        os.environ.pop('SF3_AGENT_LINE', None)
+    else:
+        os.environ['SF3_AGENT_LINE'] = line
+    try:
+        yield line
+    finally:
+        if old is None:
+            os.environ.pop('SF3_AGENT_LINE', None)
+        else:
+            os.environ['SF3_AGENT_LINE'] = old
 
 
 def parse_segment(text):
