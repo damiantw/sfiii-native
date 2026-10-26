@@ -1815,7 +1815,7 @@ index 8f7fc01..a59600a 100644
          else say("error no command " + cmd);
      }
 diff --git a/runtime/src/machine/bios.cpp b/runtime/src/machine/bios.cpp
-index 5b42ace..6c3c482 100644
+index 5b42ace..60a5961 100644
 --- a/runtime/src/machine/bios.cpp
 +++ b/runtime/src/machine/bios.cpp
 @@ -28,6 +28,12 @@
@@ -1933,7 +1933,7 @@ index 5b42ace..6c3c482 100644
      namespace fs = std::filesystem;
      std::error_code ec;
      if (fs::path(g_bup_path).has_parent_path()) fs::create_directories(fs::path(g_bup_path).parent_path(), ec);
-@@ -367,53 +401,71 @@ void bios_save() {
+@@ -367,53 +401,85 @@ void bios_save() {
          std::fwrite(&b.date, 4, 1, f); std::fwrite(&size, 4, 1, f);
          std::fwrite(b.data.data(), 1, size, f);
      }
@@ -1975,6 +1975,20 @@ index 5b42ace..6c3c482 100644
      st32(a + 28, (uint32_t)b.data.size());
 -    st16(a + 32, blocks((uint32_t)b.data.size()));
 +    st16(a + 32, blocks((uint32_t)b.data.size(), block));
++}
++
++// With the accurate drive, the CPU time the BIOS's own backup library spends on the internal
++// memory, measured as a black box: the free-running timer around each call of the real BIOS's
++// table, on three saves (12904, 16248 and 24344 bytes). A Dir takes 54,343 cycles plus 1.633 per
++// byte of the files it lists (it walks their block chains), a Read 51,738 plus 32.41 per byte
++// (byte-wide memory at odd addresses); both fit the three within 1%. A 16 KB save's Read is
++// longer than a frame, so what the game does after the load lands a frame later. The real
++// library runs with interrupts masked (the same times with the mask forced), so the time passes
++// as busy time. The cartridge and the other functions were not measured and stay free.
++static void bup_cost(SH2Context& c, uint32_t k, uint32_t device, uint32_t bytes) {
++    if (!g_cfg.accurate_drive || device != 0) return;
++    uint64_t cycles = k == 7 ? 54343u + (uint64_t)bytes * 209u / 128u : k == 5 ? 51738u + (uint64_t)bytes * 1037u / 32u : 0u;
++    if (cycles) sat_busy(c, (int64_t)cycles * 4);
  }
  
  static bool bup_call(SH2Context& c, uint32_t k) {
@@ -2018,7 +2032,7 @@ index 5b42ace..6c3c482 100644
          c.r[0] = 0;
          return true;
      }
-@@ -422,10 +474,12 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+@@ -422,10 +488,12 @@ static bool bup_call(SH2Context& c, uint32_t k) {
          BupFile b{gstr(r5 + 12, 10), (uint8_t)ld8(r5 + 23), ld32(r5 + 24), {}};
          uint32_t size = ld32(r5 + 28);
          if (g_bup.count(name) && r7 != 0) { c.r[0] = 6; return true; }   // exists, and r7 asks to keep it
@@ -2032,29 +2046,36 @@ index 5b42ace..6c3c482 100644
          g_bup_changed = true;
          bios_save();
          c.r[0] = 0;
-@@ -433,7 +487,7 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+@@ -433,8 +501,9 @@ static bool bup_call(SH2Context& c, uint32_t k) {
      }
      case 5: {                                   // Read(device, name, data*)
          auto it = g_bup.find(gstr(r5, 11));
 -        if (r4 != 0 || it == g_bup.end()) { c.r[0] = 5; return true; }
 +        if (it == g_bup.end()) { c.r[0] = 5; return true; }
          for (size_t i = 0; i < it->second.data.size(); ++i) st8(r6 + (uint32_t)i, it->second.data[i]);
++        bup_cost(c, k, r4, (uint32_t)it->second.data.size());
          c.r[0] = 0;
          return true;
-@@ -449,10 +503,10 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+     }
+@@ -447,12 +516,15 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+     case 7: {                                   // Dir(device, name prefix, table size, BupDir*): matches
+         std::string pre = gstr(r5, 11);
          int n = 0;
++        uint32_t listed = 0;
          for (auto& [name, b] : g_bup)
              if (!name.compare(0, pre.size(), pre)) {
 -                if ((uint32_t)n < (r6 & 0xFFFF)) put_dir(r7 + n * 36, name, b);
++                listed += (uint32_t)b.data.size();
 +                if ((uint32_t)n < (r6 & 0xFFFF)) put_dir(r7 + n * 36, name, b, device.block);
                  ++n;
              }
 -        c.r[0] = r4 == 0 ? (uint32_t)n : (uint32_t)-1;
 +        c.r[0] = n > int(r6 & 0xFFFF) ? uint32_t(-n) : uint32_t(n);
++        bup_cost(c, k, r4, listed);
          return true;
      }
      case 8: {                                   // Verify(device, name, data*)
-@@ -495,16 +549,23 @@ static bool bup_call(SH2Context& c, uint32_t k) {
+@@ -495,16 +567,23 @@ static bool bup_call(SH2Context& c, uint32_t k) {
  // The saves as the game has them; the file is written as usual when they change.
  void bios_state(State& s) {
      s(g_first_read), s(g_pal), s(g_uint), s(g_uipr), s(g_sem);
@@ -2506,7 +2527,7 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..53f1d2d 100644
+index a17d926..9d470b2 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
 @@ -1,11 +1,11 @@
@@ -2904,7 +2925,7 @@ index a17d926..53f1d2d 100644
      if (bios_is_dispatcher(vec, target)) {
          bios_dispatch(c, vec);
      } else {
-@@ -568,11 +793,16 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -568,15 +793,37 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
  }
  
  void sh2_sleep(SH2Context& c, uint32_t pc) {
@@ -2924,7 +2945,28 @@ index a17d926..53f1d2d 100644
      }
      sat_fatal("sleep at %08X: nothing woke it", pc);
  }
-@@ -584,6 +814,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
+ 
++// Code the runtime does not run itself (the BIOS's backup library), busy for q quarter cycles with
++// interrupts masked: time passes in poll-sized steps, so the devices and the slave run through it
++// as they would beside the real code; what came due is taken at the next poll, after it returns.
++void sat_busy(SH2Context& c, int64_t q) {
++    if (&c != &g_master) { c.budget -= (int32_t)q; return; }
++    g_vtime += quarters_ns((int64_t)master_slice() - c.budget);
++    new_slice();
++    while (q > 0) {
++        const int64_t step = std::min<int64_t>(q, master_slice());
++        g_vtime += quarters_ns(step);
++        q -= step;
++        master_poll_devices();
++        new_slice();
++    }
++    c.budget = new_slice();
++}
++
+ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
+     (void)c;
+     sat_fatal("trapa #%u at %08X", imm, pc);
+@@ -584,6 +831,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
  
  void sh2_bad_return(SH2Context& c, uint32_t expected) {
      if (tasks_pending()) { tasks_route(c, expected); return; }
@@ -2936,7 +2978,7 @@ index a17d926..53f1d2d 100644
      sat_fatal("returned to %08X, expected %08X", c.pc, expected);
  }
  
-@@ -616,6 +851,7 @@ void sh2_program_start(SH2Context& c, uint32_t addr) {
+@@ -616,6 +868,7 @@ void sh2_program_start(SH2Context& c, uint32_t addr) {
  
  int saturn_main(const SaturnConfig& cfg) {
      g_cfg = cfg;
@@ -2944,7 +2986,7 @@ index a17d926..53f1d2d 100644
      g_t0 = std::chrono::steady_clock::now();
      mmio_watch(cfg.watch_lo, cfg.watch_hi);
      if (cfg.watch_lo <= cfg.watch_hi && (SH2_IS_WRAM_H(cfg.watch_lo) || SH2_IS_WRAM_L(cfg.watch_lo))) {
-@@ -644,6 +880,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -644,6 +897,7 @@ int saturn_main(const SaturnConfig& cfg) {
      }
      g_master = SH2Context{};
      g_master.budget = kBudget;
@@ -2952,7 +2994,7 @@ index a17d926..53f1d2d 100644
      video_init();
      sound_init();
      cd_init();
-@@ -658,7 +895,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -658,7 +912,7 @@ int saturn_main(const SaturnConfig& cfg) {
      else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
      for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
      bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
@@ -2961,7 +3003,7 @@ index a17d926..53f1d2d 100644
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
-@@ -704,3 +941,12 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -704,3 +958,12 @@ int saturn_main(const SaturnConfig& cfg) {
      std::fflush(stdout);
      std::_Exit(0);                  // the slave's thread is parked: do not wait for it
  }
@@ -3384,7 +3426,7 @@ index 33a2cdd..46829ad 100644
      else if (off >= 0x19C && off < 0x1A0) dma(o, 1);
      else if (off >= 0x1B0 && off < 0x1B4) { dma(o, 0); dma(o, 1); }
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..8315611 100644
+index 6cbd98f..6aa56c1 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -3407,10 +3449,11 @@ index 6cbd98f..8315611 100644
  uint64_t sat_vblanks();
  inline bool sat_resuming() { return g_cfg.resume && sat_vblanks() < g_cfg.resume; }   // --resume's script still plays
  void sat_trace(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
-@@ -103,7 +109,13 @@ void slave_off();                   // SSHOFF: held in reset
+@@ -103,7 +109,14 @@ void slave_off();                   // SSHOFF: held in reset
  void slave_idle_check(uint32_t ftcsr);   // the slave read its FTCSR: yield if nothing is there
  void slave_kick();                  // SINIT: the slave's input capture, and the CPU to it
  void master_poll_devices();
++void sat_busy(SH2Context& c, int64_t quarters);   // machine.cpp: masked busy time the runtime does not execute
 +// Device-side memory traffic (DMA, the devices' own polls, the agent) costs the
 +// CPU no bus waits: mmio.cpp charges an access only while this is 0.
 +inline int g_bus_quiet = 0;    // >0: device or DMA traffic, charged to no CPU
@@ -3421,7 +3464,7 @@ index 6cbd98f..8315611 100644
  
  // ---- dumps of the machine (state.cpp; state.h for the parts) ----------------------------------
  void state_enable();                // the run has safe moments: a game's task switch
-@@ -112,10 +124,20 @@ void state_poll();                  // from the master's polls: dumps due, a sto
+@@ -112,10 +125,20 @@ void state_poll();                  // from the master's polls: dumps due, a sto
  void state_point(SH2Context& c);    // a safe moment: c's registers and PC are all the run needs to go on
  void state_stop(const char* why);   // the run stops at the next dump, or soon without one
  void state_finish();                // the last dump written
@@ -3442,7 +3485,7 @@ index 6cbd98f..8315611 100644
  
  // ---- the BIOS (bios.cpp) -----------------------------------------------------------
  void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
-@@ -205,7 +227,10 @@ uint32_t onchip_read(SH2Context& c, uint32_t a, int size);
+@@ -205,7 +228,10 @@ uint32_t onchip_read(SH2Context& c, uint32_t a, int size);
  void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size);
  void onchip_input_capture(int cpu);   // SINIT/MINIT: the FRT's input-capture flag
  void onchip_reset(int cpu);
@@ -3453,7 +3496,7 @@ index 6cbd98f..8315611 100644
  uint64_t onchip_phi_clocks(uint64_t ns);   // φ's clocks in `ns`: the FRT's and the watchdog's time base
  bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if due and above c's mask; taken?
  
-@@ -213,11 +238,18 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
+@@ -213,11 +239,18 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
  void video_init();
  void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
  void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
