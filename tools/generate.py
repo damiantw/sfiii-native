@@ -12,6 +12,8 @@ p.add_argument('--framework', choices=['saturnkit', 'saturn-recomp'], required=T
 p.add_argument('--work', type=Path, required=True)
 p.add_argument('--profile', type=Path, default=Path('profiles/usa-v1.001.json'))
 p.add_argument('--optest', action='store_true')
+p.add_argument('--block-coverage', action='store_true',
+               help='saturn-recomp only: mark every recompiled block as it runs (--coverage writes FILE.blocks.tsv); off by default')
 p.add_argument('--out', type=Path, help='External generated-code directory; defaults to WORK/recomp[-saturnkit]')
 a = p.parse_args()
 repo = Path(__file__).resolve().parents[1]
@@ -55,4 +57,5 @@ else:
     from saturnrecomp.recomp.__main__ import generate
     generate(specs, str(out), callable_entries=overlays,
              runtime_literals={m['name'] for m in modules}, optest=a.optest, native_states=True,
-             stack_return_calls={m['name']:{int(pc,16) for pc in m.get('stack_return_calls',[])} for m in modules})
+             stack_return_calls={m['name']:{int(pc,16) for pc in m.get('stack_return_calls',[])} for m in modules},
+             **({'block_coverage': True} if a.block_coverage else {}))

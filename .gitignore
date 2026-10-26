@@ -76,6 +76,7 @@
 !/tools/sf3-sweep.py
 !/tools/sf3-autoplay.py
 !/tools/sf3-coverage.py
+!/tools/sf3-block-coverage.py
 !/tools/sf3-diff.py
 !/tools/sf3-vdp1-replay.py
 !/tools/sf3-town-bfs.py

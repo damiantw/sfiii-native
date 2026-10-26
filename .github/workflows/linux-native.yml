@@ -92,6 +92,19 @@ jobs:
           export SF3_CONTROLLER_DIR="$ui" SF3_REPLAY_ROOT="$ui/points" SF3_REPLAY_SEED="$ui/seed"
           SDL_VIDEODRIVER=dummy ./replay_ui_selftest "$ui/replay"
           SDL_VIDEODRIVER=dummy ./native_state_ui_selftest "$ui/native-states"
+      - name: Block coverage build of the instruction fixture (opt-in coverage mode must not change results)
+        run: |
+          src="$RUNNER_TEMP/cov-src"
+          python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1])
+          from saturnrecomp.recomp.__main__ import generate
+          generate([], sys.argv[2], optest=True, native_states=True, block_coverage=True)' .local/saturn-recomp/src "$src"
+          grep -q 'SH2_BLK(c, ' "$src/p_optest_000.cpp"
+          if grep -q 'SH2_BLK' "$RUNNER_TEMP/host-src/p_optest_000.cpp"; then echo 'default build emits block marks'; exit 1; fi
+          cp "$RUNNER_TEMP/host-src/state-stub.cpp" "$src/"
+          printf '\n%s\n' 'target_sources(selftest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/state-stub.cpp")' >> "$src/CMakeLists.txt"
+          cmake -S "$src" -B "$RUNNER_TEMP/cov" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DSATURN_VDP1_GPL=OFF "-DSATURN_RUNTIME=$GITHUB_WORKSPACE/.local/saturn-recomp/runtime" "-DSATURN_EXTRA=$GITHUB_WORKSPACE/tools/windows.cmake" "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/sdl" "-DSF3_PRECOMPILED_SHADERS=$RUNNER_TEMP/shaders" "-DCMAKE_BUILD_RPATH=$RUNNER_TEMP/sdl/lib"
+          cmake --build "$RUNNER_TEMP/cov" --parallel 4 --target selftest
+          "$RUNNER_TEMP/cov/selftest" "$src/selftest/optest.txt"
       - name: GPU shader cases on software Vulkan (lavapipe; not hardware validation)
         run: |
           cd "$RUNNER_TEMP/host"
