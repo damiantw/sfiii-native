@@ -37,12 +37,24 @@ by its file name or patch label. Each supported disc has a profile in [`profiles
 | Scenario | Base disc | Translation | Profile |
 | --- | --- | --- | --- |
 | Scenario 1 | USA MK-81383 V1.001 | none (official English release) | `usa-v1.001.json` |
-| Scenario 1 | USA MK-81383 V1.001 | Translation Project **V25.1** (default selection) | `scenario1-usa-v25_1.json` |
+| Scenario 1 | USA MK-81383 V1.001 | Translation Project **V25.1** (default selection) | `scenario1-v25_1.json` |
 | Scenario 2 | JP GS-9188 | Translation Project **v24** (upstream's registered disc) | `scenario2-v24.json` |
 | Scenario 2 | JP GS-9188 V1.003 | Translation Project **V25.1** | `scenario2-v25_1-v1_003.json` |
 | Scenario 2 | JP GS-9188 V2.000 (Rev A) | Translation Project **V25.1** | `scenario2-v25_1-v2_000.json` |
+| Scenario 2 | the v24 disc, migrated to V25.1 (translation only; experimental, not a clean-disc patch) | Translation Project **V25.1** | `scenario2-v25_1-upgrade.json` |
+| Scenario 2 | a supplied V1.003 image whose header reports V24 (experimental; exact translation version unverified) | Translation Project V25 (supplied; unverified) | `scenario2-supplied-v1003.json` |
 | Scenario 3 | JP GS-9203 V1.001 | Translation Project **V25.1** (upstream's registered disc) | `scenario3-v25_1.json` |
 | Scenario 3 | JP GS-9203 V1.001 (Redump dump) | Translation Project **V25.1** | `scenario3-v25_1-redump.json` |
+
+The launcher has **three game entries, one per scenario**. Each entry accepts every registered revision of its
+scenario, and the first one listed above for it is the recommended disc. The Scenario 1 V25.1 profile is upstream's
+(`scenario1-translation-v25_1`). This fork first registered the same disc as `scenario1-usa-translation-v25_1`
+(`scenario1-usa-v25_1.json`). Data folders prepared under that id keep working. The next **Prepare game** records
+the new id. The two newer Scenario 2 profiles come from upstream, and the fork has not soak-tested them yet.
+
+An unknown disc is refused with its content id, and the launcher writes a local `unregistered-disc.json`
+identification report to the data folder. Existing saves and builds are not replaced. A different revision of the
+same scenario needs its own data folder.
 
 **Not supported yet:**
 
@@ -179,6 +191,8 @@ outside the repository, and `patch` refuses to write inside it. Do not redistrib
 
 **Launcher.** Open `SFIII Native` (Linux) or `SFIII Native.app` (macOS) and choose the scenario. **Browse** to your
 CUE or CHD, and pick a separate, writable data folder for each scenario. Click **Prepare game**, then **Play**.
+Each scenario entry accepts any of its [supported discs](#supported-discs). **Save manager** imports or exports
+ordinary saves (see [Saves](#saves-and-transfer-between-scenarios)).
 
 **Command line (Linux).** You can run the launcher's two steps directly:
 
@@ -280,16 +294,21 @@ with no manual step. Full details are in
   is refused until the first one closes.
 - **Separate saves.** To go back to each data folder's own `experimental-backup.bin`, tick **Separate saves per
   scenario** in the launcher, or pass `--separate-saves` (`-SeparateSaves` on Windows). Transfer then needs
-  **Import saves**, and the shared memory is left as it is.
+  the **Save manager** import, and the shared memory is left as it is.
 - **Native save states** (F5/F9) are tied to one build and one disc, and each holds the whole backup memory of its
   moment. After you load one, the other scenarios' records are put back as they were, so loading an Sc3 state does
   not roll back your Sc2 saves. To keep progress across builds, use an in-game save.
-- **Import saves** from emulators or real hardware with the launcher's **Import saves** button. It writes into the
-  shared memory, or into the folder's own file when separate saves are on. The command-line importer
+- **Import saves** from emulators or real hardware with the launcher's **Save manager** button (choose *No* /
+  import). It writes into the shared memory, or into the folder's own file when separate saves are on. The command-line importer
   `tools/import-saturn-save.py --backup BACKUP.bin [--device internal|cartridge] FILES...` takes no lock, so run it
   only while no game is running.
   - It accepts raw `SFORCE31_XX.BIN`, `SFORCE32_XX.BIN` and `SFORCE33_XX.BIN` saves, and version-1 JSON `.ysbak` exports.
   - Whole backup-RAM images and emulator save states are not supported.
+- **Export saves** with **Save manager** (choose *Yes* / export). Pick internal or cartridge memory and a folder. Each
+  ordinary save is written there as a raw `.BIN` in a new timestamped folder, for emulator or Saroo save tools. It
+  reads the shared memory (after the usual merge of the per-scenario files), or the folder's own file when separate
+  saves are on. The game's saves are not changed. Native save states are not Saturn saves and are not exported. From
+  the command line: `tools/import-saturn-save.py --backup BACKUP.bin --device internal|cartridge --export DIR`.
 
 ## Status and known issues
 
@@ -322,6 +341,8 @@ passes the synthetic tests in CI.
   gaps include line colour from rotation coefficients and vertical cell scroll. Upstream's experimental widescreen
   still shows edge gaps where the game culls objects.
 - `--accurate-drive` is command-line only.
+- **Optional artwork.** Upstream's builder now also decodes supported close-up battle-model textures. One Scenario 3
+  battle-model format is still unsupported, and full artwork coverage is not established.
 
 Bug reports are welcome. Never attach disc images, extracted files, saves or BIOS files.
 
@@ -394,6 +415,9 @@ grants no permission to redistribute game content.
 - [saturn-recomp](https://github.com/callumjenkins/saturn-recomp) is derived from
   [saturnkit](https://github.com/vs-sr-dev/saturnkit).
 - SFIII module mappings were informed by [SF3Tools](https://github.com/Synival/sf3tools).
+- The optional artwork builder's battle-model texture decoder uses format information from the MIT-licensed
+  [SF3Unity](https://github.com/AndreasScholl/SF3Unity) parser; its notice is in
+  [`LICENSES/SF3Unity.txt`](LICENSES/SF3Unity.txt).
 - Controller mappings use [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB).
 - Rendering and input use [SDL3](https://github.com/libsdl-org/SDL).
 

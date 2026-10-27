@@ -15,10 +15,12 @@ from prepare_posix import APP, PAYLOAD, common, lock, package_root
 from run_posix import selected_build
 from ai_packs import install_selection, detach_selection
 import shared_saves
+from disc_profile import canonical_profile_id
 
 # Accepted disc revision profiles (profiles/*.json ids) per game slot; the first is the recommended disc.
-PROFILES = (('scenario1-usa-v1_001', 'scenario1-usa-translation-v25_1'),
-            ('scenario2-translation-v25_1-v2_000', 'scenario2-translation-v25_1-v1_003', 'scenario2-translation-v24'),
+PROFILES = (('scenario1-usa-v1_001', 'scenario1-translation-v25_1'),
+            ('scenario2-translation-v25_1-v2_000', 'scenario2-translation-v25_1-v1_003', 'scenario2-translation-v25_1-upgrade',
+             'scenario2-supplied-v1003', 'scenario2-translation-v24'),
             ('scenario3-translation-v25_1-redump', 'scenario3-translation-v25_1'))
 # Default data folders keep their original names so existing game data stays where it was.
 DATA_FOLDERS = ('Scenario1-USA', 'Scenario2-v24', 'Scenario3-v25_1')
@@ -44,7 +46,7 @@ class Launcher:
         frame.pack(fill='both',expand=True)
         frame.columnconfigure(1,weight=1)
         ttk.Label(frame,text='Shining Force III Native',font=('',22,'bold')).grid(row=0,column=0,columnspan=3,sticky='w',pady=(0,18))
-        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 USA (V1.001 or Translation Project V25.1)','Scenario 2 Translation Project V25.1 / v24 (experimental)','Scenario 3 Translation Project V25.1 (experimental)'])
+        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 USA (V1.001 or Translation Project V25.1)','Scenario 2 Translation Project V25.1 / V25 / v24 (experimental)','Scenario 3 Translation Project V25.1 (experimental)'])
         self.selection.grid(row=1,column=1,sticky='ew',pady=5)
         ttk.Label(frame,text='Game').grid(row=1,column=0,sticky='w',padx=(0,12))
         self.cue, self.work = tk.StringVar(), tk.StringVar()
@@ -62,7 +64,7 @@ class Launcher:
         self.play=ttk.Button(bar,text='Play',command=self.play_game)
         self.controller=ttk.Button(bar,text='Controller setup',command=lambda:self.controller_tool('--setup'))
         self.test=ttk.Button(bar,text='Test controller',command=lambda:self.controller_tool('--test'))
-        self.import_button=ttk.Button(bar,text='Import saves',command=self.import_saves)
+        self.import_button=ttk.Button(bar,text='Save manager',command=self.import_saves)
         self.cancel=ttk.Button(bar,text='Cancel setup',command=self.cancel_setup)
         for button in [self.prepare,self.play,self.controller,self.test,self.import_button,self.cancel]:button.pack(side='left',padx=(0,7))
         artwork=ttk.Frame(frame)
@@ -113,7 +115,7 @@ class Launcher:
             work=Path(self.work.get())
             ready=json.loads((work/'desktop-ready.json').read_text())
             package=json.loads((PAYLOAD/'package.json').read_text())
-            return (ready['build_id']==package['build_id'] and ready['profile_id'] in PROFILES[self.active]
+            return (ready['build_id']==package['build_id'] and canonical_profile_id(ready['profile_id']) in PROFILES[self.active]
                     and common.sha(selected_build(work)/'saturn')==ready['executable_sha256'])
         except (OSError,ValueError,KeyError):return False
 
@@ -193,6 +195,29 @@ class Launcher:
         self.start([selected_build(Path(self.work.get()))/'controller_setup',mode],'controller',env)
 
     def import_saves(self):
+        action=messagebox.askyesnocancel('Save manager','Export ordinary saves as BIN files?\nYes: Export for Saturn / Saroo editor\nNo: Import BIN / YSBAK saves',parent=self.root)
+        if action is None:return
+        if action:
+            folder=filedialog.askdirectory(title='Choose export location')
+            if not folder:return
+            device='cartridge' if messagebox.askyesno('Save storage','Export from cartridge memory?\nNo selects internal memory.',parent=self.root) else 'internal'
+            try:
+                import importlib.util,time
+                spec=importlib.util.spec_from_file_location('sf3_import',APP/'tools/import-saturn-save.py')
+                module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+                work=common.external_work(Path(self.work.get()),package_root())
+                destination=Path(folder)/('SFIII-save-export-'+str(time.time_ns()))
+                if self.separate.get():
+                    with lock(work):module.export_files(work/'experimental-backup.bin',device,destination)
+                else:
+                    shared=shared_saves.default_dir()
+                    with lock(work),shared_saves.lock(shared):
+                        # Merge the per-scenario files first, so the export includes every scenario's saves.
+                        shared_saves.prepare_session(work,shared,[self.config],self.known_works())
+                        module.export_files(shared/shared_saves.SAVE_NAME,device,destination)
+                messagebox.showinfo('Export complete','BIN saves exported to '+str(destination),parent=self.root)
+            except Exception as e:messagebox.showerror('Could not export',str(e),parent=self.root)
+            return
         paths=filedialog.askopenfilenames(filetypes=[('Saturn saves','*.BIN *.bin *.ysbak'),('All files','*')])
         if not paths:return
         dialog=tk.Toplevel(self.root)
@@ -217,12 +242,15 @@ class Launcher:
                     shared=shared_saves.default_dir()
                     with lock(work),shared_saves.lock(shared):
                         # Merge the per-scenario files first, so an import never shadows an unmerged save.
-                        shared_saves.prepare_session(work,shared,[self.config],[Path(e['work']) for e in self.preferences.get('games',{}).values() if isinstance(e,dict) and e.get('work')])
+                        shared_saves.prepare_session(work,shared,[self.config],self.known_works())
                         module.import_files(shared/shared_saves.SAVE_NAME,choice.get(),list(map(Path,paths)),replace.get())
                     self.state.set('Saves imported into the backup memory shared by all scenarios. Use the game’s own Load menu.')
                 dialog.destroy()
             except Exception as e:messagebox.showerror('Could not import',str(e),parent=dialog)
         ttk.Button(dialog,text='Import',command=apply).pack(padx=20,pady=15)
+
+    def known_works(self):
+        return [Path(e['work']) for e in self.preferences.get('games',{}).values() if isinstance(e,dict) and e.get('work')]
 
     def cancel_setup(self):
         if self.process and self.task=='prepare':

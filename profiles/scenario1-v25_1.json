@@ -1,10 +1,6 @@
 {
-  "id": "scenario1-usa-translation-v25_1",
-  "title": "Scenario 1 USA (Translation Project V25.1, experimental)",
-  "scenario": 1,
   "product": "SF3TRANS",
   "version": "V25.1",
-  "content_sha256": "0dee501e8ae60d10a288530d9f9161ae224786f08bb841a87a28e10efdccb1b5",
   "modules": [
     {
       "name": "X049",
@@ -14,7 +10,7 @@
         "060A0000"
       ],
       "overlay": true,
-      "evidence": "Scenario 1 X1ENDING at 0606027A passes destination 060A0000 in r5 and file ID 0x166 in r4 to BOOT 06012A14; the loaded entry is called at 060602CE. Static loader/call evidence; ending gameplay unexecuted."
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X046",
@@ -24,7 +20,7 @@
         "06046000"
       ],
       "overlay": true,
-      "evidence": "Verified USA V1.001 X001 at 060FD324 loads file ID 0x165 (disc directory X046.BIN) into r5=06046000 using the same loader as adjacent known modules and waits for completion. Header veneers and internal targets fit this image. Static loader evidence; this route has not been executed."
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "BOOT",
@@ -85,7 +81,7 @@
         "0600BD68",
         "0601F856"
       ],
-      "evidence": "IP first-read; 060108F8 observed as indirect callback target in native boot trace; 0600BE30 observed in sessions/20261017-200314-869-d3013b with 64 matching RAM bytes.",
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate.",
       "stack_return_calls": [
         "06004040",
         "06004108",
@@ -98,11 +94,12 @@
       "file": "X002.BIN",
       "base": "06028800",
       "seeds": [
+        "06028800",
         "06028878",
         "060289B0"
       ],
       "overlay": true,
-      "evidence": "Whole file exact match in native WRAM-H snapshot; observed call to +0x78 trampoline"
+      "evidence": "USA load address inherited as a hypothesis; unchanged export veneers and unique instruction anchors select entries. Native validation required for modified translation image."
     },
     {
       "name": "X033",
@@ -112,19 +109,20 @@
         "06078000"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 06078000; native learning/run-0.log"
+      "evidence": "USA load address inherited as a hypothesis; unchanged export veneers and unique instruction anchors select entries. Native validation required for modified translation image."
     },
     {
       "name": "X003",
       "file": "X003.BIN",
       "base": "06034B00",
       "seeds": [
-        "06034C74",
+        "06034B00",
         "06034B0C",
+        "06034C74",
         "06035000"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 06034C74; native learning/run-1.log"
+      "evidence": "USA load address inherited as a hypothesis; unchanged export veneers and unique instruction anchors select entries. Native validation required for modified translation image."
     },
     {
       "name": "X001",
@@ -134,7 +132,7 @@
         "060FD000"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 060FD000; native learning/run-4.log"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X032",
@@ -142,13 +140,13 @@
       "base": "06088000",
       "bytes": "8200",
       "seeds": [
+        "06088000",
         "06088084",
         "060880A8",
-        "060880CC",
-        "0608DACC"
+        "060880CC"
       ],
       "overlay": true,
-      "evidence": "Native run-10 WRAM-H matches first 0x8200 bytes exactly; remainder differs. Prefix SHA256 fe32c81f8fde062a16e6d7109299b99f6fc646076738e8ca670d5a598603fece. Call to +0x84 observed; tail residency unproven.; 0608DACC observed in sessions/20261017-194325-110-9b1db8 fatal, 64 bytes exact in captured RAM."
+      "evidence": "USA load address inherited as a hypothesis; unchanged export veneers and unique instruction anchors select entries. Native validation required for modified translation image."
     },
     {
       "name": "X008",
@@ -158,7 +156,7 @@
         "06056000"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 06056000; native learning/run-17.log"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X005",
@@ -168,7 +166,7 @@
         "0603DD8C"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 0603DD8C; native learning/run-18.log"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X006",
@@ -178,7 +176,7 @@
         "06046000"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 06046000; native learning/run-23.log"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X1OPMOV",
@@ -188,7 +186,7 @@
         "0605F000"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 0605F000; native learning/run-29.log"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X009",
@@ -198,7 +196,7 @@
         "06035000"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in before35000.bin immediately before call at 06035000; overlaps and replaces X003, call-probe.log"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X1DREAM",
@@ -208,7 +206,7 @@
         "06060A24"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 06060A24; native learning/run-58.log"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X022",
@@ -219,7 +217,7 @@
         "06074ED8"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 0607000C; native learning/run-59.log; 06074ED8 observed in sessions/20261017-195634-559-11994a fatal, 64 target bytes match RAM."
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X021",
@@ -229,7 +227,7 @@
         "06068090"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 06068090; native learning/run-65.log"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X1OP101",
@@ -239,7 +237,7 @@
         "0605F4B8"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 0605F4B8; native learning/run-70.log"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X1OP102",
@@ -249,7 +247,7 @@
         "06060068"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in WRAM-H and observed target 06060068; native learning/run-77.log"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X1OP103",
@@ -259,7 +257,7 @@
         "06061244"
       ],
       "overlay": true,
-      "evidence": "Whole file exact in sessions/20261017-201300-432-728fd3 crash RAM at first observed call 06061244"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X1SARA1",
@@ -269,17 +267,18 @@
         "0605F9FC"
       ],
       "overlay": true,
-      "evidence": "Whole 10960-byte file exactly matches crash WRAM-H at 0605F000; observed call 0605F9FC from 06056EE0 in sessions/20261017-211757-020-36f1f4 at VBlank 54710"
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X017",
       "file": "X017.BIN",
       "base": "06088000",
       "seeds": [
+        "06088000",
         "06088264"
       ],
       "overlay": true,
-      "evidence": "Whole 27296-byte file exactly matches crash WRAM-H at 06088000; observed call 06088264 from 060571B4 at VBlank 56992 in sessions/20261017-212931-047-ff6984, replacing X032"
+      "evidence": "USA load address inherited as a hypothesis; unchanged export veneers and unique instruction anchors select entries. Native validation required for modified translation image."
     },
     {
       "name": "X007",
@@ -308,7 +307,7 @@
         "060560F0"
       ],
       "overlay": true,
-      "evidence": "USA V1.001: complete 34392-byte image exact-match at 06056000 in session 20261017-225336-461-d9a0dd; SHA256 9a9cbffaf07cd0694f6ede699cfa072deef595c3af6818512341d4d893c488ab; 20 validated export veneers. Crash entry discovered from exports without manual seed."
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X015",
@@ -326,7 +325,7 @@
         "0609D860"
       ],
       "overlay": true,
-      "evidence": "USA V1.001: complete 9348-byte exact image at 0609D800 in crash RAM session 20261017-225336-461-d9a0dd; SHA256 cb5a60489f6cfbd84369f12ac71e61f44cefa7c9247c686a9bde9c36fa01d4e8; validated export veneers."
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X039",
@@ -339,7 +338,7 @@
         "060C0124"
       ],
       "overlay": true,
-      "evidence": "USA V1.001: complete 29316-byte exact image at 060C0100 in crash RAM session 20261017-225336-461-d9a0dd; SHA256 3fdf4a4997a07ffcc7c91fb0fe8b20b83ecd43782fdc390f32cce63a89fc89a8; validated export veneers."
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     },
     {
       "name": "X3HEAL",
@@ -351,9 +350,20 @@
         "0604A818"
       ],
       "overlay": true,
-      "evidence": "Whole 11916-byte image exact match at 0604A800 in a local whole-image RAM comparison; fatal call to base; X014 effect-loader literals corroborate destination."
+      "evidence": "Image byte-identical to the original USA profile; its observed mapping is inherited. Translation gameplay coverage remains separate."
     }
   ],
+  "id": "scenario1-translation-v25_1",
+  "title": "Scenario 1 (Translation Project v25.1, experimental)",
+  "scenario": 1,
   "scene_base": "0605F000",
-  "support": "experimental; Redump base patched with the default Translation Project V25.1 selection (sf3patch or the official wizard, no V25+ add-ons); native boot to the opening scene validated headless on Linux only, gameplay unvalidated"
+  "content_sha256": "0dee501e8ae60d10a288530d9f9161ae224786f08bb841a87a28e10efdccb1b5",
+  "support": "Experimental; intro, original-save load and fresh-game opening routes completed without crashes. Frame differences from original USA were manually reviewed; complete campaign, battle and ending coverage unvalidated.",
+  "inherited_entry_review": [
+    {
+      "module": "X032",
+      "old_seed": "0608DACC",
+      "status": "unaligned; not copied by absolute address"
+    }
+  ]
 }

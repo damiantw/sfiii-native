@@ -2,7 +2,7 @@
 states and pictures stay outside the repository, and each state is deleted once expanded).
 
   SF3_STATE_ID=any python tools/sf3-town-bfs.py --saturn BUILD/saturn --cue DISC.cue \
-      --profile scenario1-usa-v25_1 --save SAVES.bin --record 03 --state START.state --out /private/bfs
+      --profile scenario1-v25_1 --save SAVES.bin --record 03 --state START.state --out /private/bfs
 
 START.state is a native state (agent `save PATH`) taken in a town with the player free to walk.
 Each frontier tile is restored with --state-in, a direction is held until the tile changes, and the

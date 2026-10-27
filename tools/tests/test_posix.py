@@ -31,8 +31,10 @@ class PortableTests(unittest.TestCase):
             build=data/'build-synthetic';build.mkdir();(build/'saturn').write_bytes(b'invented executable')
             form=launcher.Launcher.__new__(launcher.Launcher)
             form.work=SimpleNamespace(get=lambda:str(data))
+            from disc_profile import LEGACY_PROFILE_IDS
             for index,profiles in enumerate(launcher.PROFILES):
-                for profile in profiles:
+                # Folders prepared under a retired id of a slot revision stay in that slot.
+                for profile in list(profiles)+[old for old,new in LEGACY_PROFILE_IDS.items() if new in profiles]:
                     ready={'build_id':'synthetic-package','profile_id':profile,'executable_sha256':worker.common.sha(build/'saturn')}
                     (data/'desktop-ready.json').write_text(json.dumps(ready))
                     for selected in range(3):
@@ -54,6 +56,28 @@ class PortableTests(unittest.TestCase):
             for profile in slot:self.assertEqual(registered[profile],index+1,profile)
         cs=(Path(__file__).resolve().parents[2]/'desktop/Launcher.cs').read_text(encoding='utf-8')
         for profile in ids:self.assertIn('"'+profile+'"',cs)
+
+    def test_prepare_migrates_folder_prepared_under_retired_profile_id(self):
+        import platform
+        class Stop(Exception):pass
+        def stop(*args,**kwargs):raise Stop()
+        arch={"arm64":"aarch64","AMD64":"x86_64"}.get(platform.machine(),platform.machine())
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);work=root/"data";work.mkdir();payload=root/"payload";payload.mkdir()
+            (payload/"package.json").write_text(json.dumps({"build_id":"synthetic","platform":sys.platform,"arch":arch,"version":"0"}))
+            cue=root/"synthetic.cue";cue.write_text("Invented test disc")
+            profile={"id":"scenario1-translation-v25_1","scenario":1}
+            for previous,accepted in [("scenario1-usa-translation-v25_1",True),("scenario1-translation-v25_1",True),("scenario1-usa-v1_001",False)]:
+                (work/"game.json").write_text(json.dumps({"cue":str(cue),"profile_id":previous}))
+                with self.subTest(previous=previous),patch.object(worker,"PAYLOAD",payload),\
+                        patch.object(worker,"lock",return_value=contextlib.nullcontext()),\
+                        patch.object(worker.common,"external_work",side_effect=lambda w,r:Path(w)),\
+                        patch.object(worker.common,"resolve_disc",return_value=cue),\
+                        patch.object(worker.common,"checked_disc",return_value=cue),\
+                        patch.object(worker.common,"disc_revision",return_value=profile),\
+                        patch.object(worker.common,"status"),patch.object(worker.common,"run",side_effect=stop):
+                    # Stop is raised by the first build step, after the folder identity check passed.
+                    with self.assertRaises(Stop if accepted else ValueError):worker.prepare(cue,work,1)
 
     def test_bundle_boundary_includes_entire_mac_application(self):
         path=Path('/Applications/SFIII Native.app/Contents/Resources/payload')

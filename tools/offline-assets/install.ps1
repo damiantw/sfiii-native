@@ -34,7 +34,8 @@ for path in distribution.files or []:
 '@
 & (Join-Path $PythonRoot 'python.exe') -c $copyRuntime $PythonRoot $runtime
 if($LASTEXITCODE -ne 0){throw 'Could not assemble standalone Python runtime'}
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'worker.py'),(Join-Path $PSScriptRoot 'gui.py'),(Join-Path $PSScriptRoot 'select_packs.py'),(Join-Path $PSScriptRoot 'character_packs.py'),(Join-Path $PSScriptRoot 'index_packs.py'),(Join-Path $PSScriptRoot 'archive_packs.py'),(Join-Path $PSScriptRoot 'bootstrap.py'),(Join-Path $PSScriptRoot 'ExtractAssets.cs') -Destination $app -Force
+$builderScripts = @('worker.py','gui.py','battle_textures.py','select_packs.py','character_packs.py','index_packs.py','archive_packs.py','bootstrap.py','ExtractAssets.cs')
+foreach($builderScript in $builderScripts) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $builderScript) -Destination $app -Force }
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Copy-Item -LiteralPath (Join-Path $repo 'desktop\disc_input.py'),(Join-Path $repo 'tools\disc_profile.py'),(Join-Path $repo 'desktop\ai_packs.py') -Destination $app -Force
 New-Item -ItemType Directory -Force (Join-Path $app 'profiles'),(Join-Path $app 'vendor\saturnrecomp'),(Join-Path $app 'chdman') | Out-Null
@@ -42,6 +43,7 @@ Get-ChildItem (Join-Path $repo 'profiles') -Filter '*.json' | Copy-Item -Destina
 Copy-Item -LiteralPath (Join-Path $FrameworkRoot 'src\saturnrecomp\disc.py') -Destination (Join-Path $app 'vendor\saturnrecomp\disc.py') -Force
 [IO.File]::WriteAllText((Join-Path $app 'vendor\saturnrecomp\__init__.py'),'')
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSES\saturn-recomp.txt') -Destination (Join-Path $app 'vendor\SATURN-RECOMP-LICENSE.txt') -Force
+Copy-Item -LiteralPath (Join-Path $repo 'LICENSES\SF3Unity.txt') -Destination (Join-Path $app 'vendor\SF3UNITY-LICENSE.txt') -Force
 & (Join-Path $runtime 'python.exe') -c 'import shutil,sys;shutil.copytree(sys.argv[1],sys.argv[2],dirs_exist_ok=True)' $UpscalerRoot (Join-Path $app 'upscaler')
 if($LASTEXITCODE -ne 0){throw 'Could not copy local GPU upscaler'}
 Copy-Item -LiteralPath $Chdman -Destination (Join-Path $app 'chdman\chdman.exe') -Force
@@ -56,7 +58,7 @@ $project = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</Out
 if($LASTEXITCODE -ne 0){throw 'Extractor build failed; see extractor-build.log'}
 $config=Join-Path $Destination 'settings.json'
 if(-not(Test-Path -LiteralPath $config)) {
-    @{scenarios=@();out=(Join-Path $Destination 'output');gpu=0;models=@('video','anime','general');categories=@('world','sprites','backgrounds')} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $config -Encoding utf8
+    @{scenarios=@();out=(Join-Path $Destination 'output');gpu=0;models=@('video','anime','general');categories=@('world','sprites','battle_models','backgrounds')} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $config -Encoding utf8
 }
 $launcher = '@echo off'+"`r`n"+'start "SFIII Offline Graphics Builder" "%~dp0runtime\pythonw.exe" "%~dp0app\gui.py"'+"`r`n"
 [IO.File]::WriteAllText((Join-Path $Destination 'Start Offline Graphics Builder.cmd'),$launcher,[Text.Encoding]::ASCII)

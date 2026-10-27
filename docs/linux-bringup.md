@@ -173,11 +173,14 @@ Because steps 2-4 are mostly *derivation*, a new translation revision generally 
 
 A new profile is not picked up automatically. These must be updated together:
 - `tools/check-source-package.py`: profile allowlist
-- `tools/disc_profile.py`: error message
+- `tools/disc_profile.py`: error message (the registry itself, `registered_profiles`/`profile_scenario`, reads every `profiles/*.json`)
+- `.gitignore`: profile allowlist
 - `desktop/launcher_posix.py`: `PROFILES` (a tuple of accepted profile ids per launcher slot) and the combobox labels
 - `desktop/Launcher.cs`: `Profiles` (a `string[][]`, one array per slot) and the labels
 
 Each launcher slot accepts a **set** of profile ids. `ready()` checks that `desktop-ready.json`'s `profile_id` is one of the slot's ids. The data folders (`DATA_FOLDERS`, `DataSuffixes`) are still one per slot and keep their old names, so existing game-data folders keep working. `tools/tests/test_posix.py` checks that every `profiles/*.json` id is in exactly one slot, in both launchers.
+
+Renaming a profile id: keep the old id as an alias (`LEGACY_PROFILE_IDS` in `tools/disc_profile.py`, `LegacyProfiles` in `Launcher.cs`, `LEGACY_PROFILES` in `desktop/ai_packs.py`, `ALIASES` in `tools/sf3test/memory_map.py` for file stems), because prepared folders store it in `game.json` / `desktop-ready.json`. The next preparation rewrites the stored id. `tools/tests/test_revision_registry.py` keeps the copies in sync.
 
 ### What the V25+ patch set means
 
@@ -200,7 +203,9 @@ Made from the Redump dumps with `tools/sf3patch` and the **default V25.1 selecti
 | Launcher slot | Profile id | Base disc (Redump) | `content_sha256` | Seeds |
 |---|---|---|---|---|
 | Scenario 1 | `scenario1-usa-v1_001` (upstream, unpatched) | MK-81383 V1.001 | `54aa1d21…81a9` | upstream |
-| Scenario 1 | `scenario1-usa-translation-v25_1` | MK-81383 V1.001 | `0dee501e…b1b5` | copied from `scenario1-usa-v1_001`. Every seed and BOOT stack-return site has the same bytes as on the unpatched disc. |
+| Scenario 1 | `scenario1-translation-v25_1` (upstream `profiles/scenario1-v25_1.json`; this fork first registered the same disc as `scenario1-usa-translation-v25_1` / `scenario1-usa-v25_1.json`) | MK-81383 V1.001 | `0dee501e…b1b5` | copied from `scenario1-usa-v1_001`. Every seed and BOOT stack-return site has the same bytes as on the unpatched disc. Upstream's version adds base-address seeds for X002/X003/X017/X032 and drops the unaligned X032 seed `0608DACC` (its `inherited_entry_review`). |
+| Scenario 2 | `scenario2-translation-v25_1-upgrade` (upstream) | v24 dump migrated to V25.1 | `b1e5d45f…` | upstream; translation-only migration, not a clean-disc patch |
+| Scenario 2 | `scenario2-supplied-v1003` (upstream) | supplied V1.003 image, header V24 | `31c4265e…` | upstream; BOOT seed `06016C74` left as a static review |
 | Scenario 2 | `scenario2-translation-v25_1-v2_000` | GS-9188 V2.000 (Rev A) | `1b835e56…7dd9` | copied from v24. The v24 profile was made on the V2.000 base, and its `1ST.BIN` is the same as the original Rev A's. |
 | Scenario 2 | `scenario2-translation-v25_1-v1_003` | GS-9188 V1.003 | `b967f067…5d27` | copied from v24, with 10 BOOT (`1ST.BIN`) seeds relocated for V1.003's BOOT. The new addresses were found by matching the function bytes. The stack-return sites are unchanged. |
 | Scenario 2 | `scenario2-translation-v24` (upstream) | | | upstream |

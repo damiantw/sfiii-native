@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'desktop'))
 import shared_saves as shared_saves
 import run_posix as sessions
 
-PROFILES = {1: 'scenario1-usa-v25_1', 2: 'scenario2-v25_1-v2_000', 3: 'scenario3-v25_1-redump'}
+PROFILES = {1: 'scenario1-translation-v25_1', 2: 'scenario2-v25_1-v2_000', 3: 'scenario3-v25_1-redump'}
 
 
 def record(name, size, fill, comment=b'SYNTHETIC'):

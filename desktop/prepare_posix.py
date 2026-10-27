@@ -9,6 +9,7 @@ import sys
 
 sys.dont_write_bytecode = True
 import prepare as common
+from disc_profile import canonical_profile_id
 
 APP, PAYLOAD = common.APP, common.PAYLOAD
 
@@ -75,7 +76,7 @@ def prepare(source, work, scenario):
         with (work/'disc-input.log').open('w', encoding='utf-8') as log:
             cue = common.resolve_disc(source, work, PAYLOAD/'chdman/chdman', log, common.status)
         common.checked_disc(cue)
-        profile = common.disc_revision(cue)
+        profile = common.disc_revision(cue,work)
         if profile['scenario'] != scenario:
             raise ValueError('The disc does not match the selected scenario.')
         if (work/'game.json').exists():
@@ -83,7 +84,8 @@ def prepare(source, work, scenario):
             previous_id=previous.get('profile_id')
             if not previous_id:
                 previous_id=common.disc_revision(previous['cue'])['id']
-            if previous_id != profile['id']:
+            # Folders prepared under a retired id of the same revision migrate to the registered id here.
+            if canonical_profile_id(previous_id) != profile['id']:
                 raise ValueError('Use a separate data folder for each scenario and disc revision.')
         key = manifest['build_id']+'-'+profile['id']
         stage, build = work/'preparation'/key, work/('build-desktop-'+key)

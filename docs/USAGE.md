@@ -159,7 +159,7 @@ The launch scripts also accept another folder (`-SharedSaveDir` on Windows, `--s
 
 **Capacity.** At each launch the launcher reports, in its status line and the log (`SF3 saves:`), when the internal memory no longer fits a new save of the scenario you start and how many fit on the cartridge, and warns when both are full. With Scenario 1 and 2 saves both on internal memory, save Scenario 3 to the cartridge. A full device makes the game's own save fail with its normal message; existing records are never overwritten.
 
-**Opt-out.** Tick **Separate saves per scenario** in the launcher, or pass `-SeparateSaves` / `--separate-saves`, to use the folder's own `experimental-backup.bin` again (transfer then needs **Import saves**, as before). Your shared memory is left as it is.
+**Opt-out.** Tick **Separate saves per scenario** in the launcher, or pass `-SeparateSaves` / `--separate-saves`, to use the folder's own `experimental-backup.bin` again (transfer then needs the **Save manager** import, as before). Your shared memory is left as it is.
 
 **One game at a time.** The shared memory is locked (`backup.lock`) for a whole session or import; a second game or import using it is refused with a message until the first closes.
 
