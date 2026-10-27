@@ -523,7 +523,7 @@ class StoryTest(unittest.TestCase):
         self.assertTrue(search.battle_over(field, job, dict(m, won=True), 17))
         self.assertFalse(search.battle_over(field, job, dict(m, leader_down=True), 18))
         self.assertFalse(search.battle_over(field, dict(job, root_active=None), m, 18))
-        self.assertIsNone(M.in_battle(field, M.lookup('scenario1-usa-v25_1')))
+        self.assertIsNone(M.in_battle(field, M.lookup('scenario1-v25_1')))
 
     def test_turned_camera_pad(self):
         # round 27: on Sc2 V1.003 map 0x49 pad RIGHT steps y-1 and UP x+1
