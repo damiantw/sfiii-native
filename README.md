@@ -36,13 +36,17 @@ by its file name or patch label. Each supported disc has a profile in [`profiles
 
 | Scenario | Base disc | Translation | Profile |
 | --- | --- | --- | --- |
+| Scenario 1 | USA MK-81383 V1.001 | Translation Project **V25.1 + V25+ add-ons** (`--addons`, default add-on selection) | `scenario1-v25_1-addons.json` |
 | Scenario 1 | USA MK-81383 V1.001 | none (official English release) | `usa-v1.001.json` |
 | Scenario 1 | USA MK-81383 V1.001 | Translation Project **V25.1** (default selection) | `scenario1-v25_1.json` |
+| Scenario 2 | JP GS-9188 V2.000 (Rev A) | Translation Project **V25.1 + V25+ add-ons** (`--addons`, default add-on selection) | `scenario2-v25_1-addons-v2_000.json` |
+| Scenario 2 | JP GS-9188 V1.003 | Translation Project **V25.1 + V25+ add-ons** (`--addons`, default add-on selection) | `scenario2-v25_1-addons-v1_003.json` |
 | Scenario 2 | JP GS-9188 | Translation Project **v24** (upstream's registered disc) | `scenario2-v24.json` |
 | Scenario 2 | JP GS-9188 V1.003 | Translation Project **V25.1** | `scenario2-v25_1-v1_003.json` |
 | Scenario 2 | JP GS-9188 V2.000 (Rev A) | Translation Project **V25.1** | `scenario2-v25_1-v2_000.json` |
 | Scenario 2 | the v24 disc, migrated to V25.1 (translation only; experimental, not a clean-disc patch) | Translation Project **V25.1** | `scenario2-v25_1-upgrade.json` |
 | Scenario 2 | a supplied V1.003 image whose header reports V24 (experimental; exact translation version unverified) | Translation Project V25 (supplied; unverified) | `scenario2-supplied-v1003.json` |
+| Scenario 3 | JP GS-9203 V1.001 (Redump dump) | Translation Project **V25.1 + V25+ add-ons** (`--addons`, default add-on selection) | `scenario3-v25_1-addons-redump.json` |
 | Scenario 3 | JP GS-9203 V1.001 | Translation Project **V25.1** (upstream's registered disc) | `scenario3-v25_1.json` |
 | Scenario 3 | JP GS-9203 V1.001 (Redump dump) | Translation Project **V25.1** | `scenario3-v25_1-redump.json` |
 
@@ -52,6 +56,12 @@ scenario, and the first one listed above for it is the recommended disc. The Sce
 (`scenario1-usa-v25_1.json`). Data folders prepared under that id keep working. The next **Prepare game** records
 the new id. The two newer Scenario 2 profiles come from upstream, and the fork has not soak-tested them yet.
 
+The **V25.1 + V25+ add-ons** discs are the recommended discs. They are the output of `tools/sf3patch patch --addons`
+with the whole V25+ folder from `fetch` and nothing else changed: every add-on, the five base patches that newer
+add-ons replace dropped, and *Magic Resistance Icons v2* left off (see
+[docs/translation-patcher.md](docs/translation-patcher.md#latest-release-v251--v25-add-ons)). Their validation is in
+[docs/linux-bringup.md](docs/linux-bringup.md#add-on-profiles-v251--v25).
+
 An unknown disc is refused with its content id, and the launcher writes a local `unregistered-disc.json`
 identification report to the data folder. Existing saves and builds are not replaced. A different revision of the
 same scenario needs its own data folder.
@@ -59,8 +69,8 @@ same scenario needs its own data folder.
 **Not supported yet:**
 
 - The **Premium Disc**. `sf3patch` can patch it, but there is no native profile.
-- Discs patched with the **V25+ add-ons** (`--addons`). Their contents differ from the V25.1 default
-  selection, so identity checks reject them. There are no profiles for them yet.
+- Other **add-on selections**: `--addons` combined with `--mod`, `--enable`, `--disable` or `--no-supersede`, or
+  only some of the V25+ zips. Each selection gives different disc contents, so identity checks reject them.
 - Other revisions and regions (for example the European Scenario 1), other patch versions or selections,
   parent/delta CHDs and ISO input.
 
@@ -182,8 +192,14 @@ python3 -m tools.sf3patch patch DISC.cue --package ~/sf3trans/SF3Patch.exe -o ~/
 python3 -m tools.sf3patch compare a.cue b.cue                       # file-by-file comparison of two images
 ```
 
-To get a disc the native port accepts, use the **default selection**: no `--addons`, `--enable` or `--disable`.
-The other options (`--addons`, `--mod`, `--only`, `--no-supersede`, `--reproducible`, `--any-disc`, ...) are
+To get a disc the native port accepts, use `--addons` with the whole V25+ folder from `fetch` (recommended), or the
+**default V25.1 selection** (no options), and no `--mod`, `--enable`, `--disable` or `--no-supersede`:
+
+```sh
+python3 -m tools.sf3patch patch DISC.cue --package ~/sf3trans/SF3Patch.exe --addons ~/sf3trans/V25+ -o ~/sf3/sc3-v25_1-addons.bin
+```
+
+The other options (`--mod`, `--only`, `--no-supersede`, `--reproducible`, `--any-disc`, ...) are
 described in [docs/translation-patcher.md](docs/translation-patcher.md). Patch packages and patched images stay
 outside the repository, and `patch` refuses to write inside it. Do not redistribute them.
 
@@ -331,7 +347,8 @@ passes the synthetic tests in CI.
 - **Coverage.** Measured coverage of real game code blocks is about 44–49% for Sc1, about 44% for Sc3 and 40–42%
   for Sc2. Code that has not run yet is not known to work.
 - **Premium Disc:** not supported (no profile). Its features cannot be reached from Scenario 3.
-- **V25+ add-on discs** and other revisions are not supported (see [Supported discs](#supported-discs)).
+- **V25+ add-on discs** are supported with the default add-on selection only. Other selections and revisions are
+  not supported (see [Supported discs](#supported-discs)).
 - **Platforms.** The V25.1 profiles and the fork's changes have been tested on **Linux only**, mostly headless.
   The macOS package is built and tested in CI. Little or no testing has been done of:
   - real-disc play on a Mac
