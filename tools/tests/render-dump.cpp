@@ -173,7 +173,11 @@ int main(int argc, char** argv) {
     SDL_DestroySurface(combined_rgb);
     SDL_DestroySurface(converted);SDL_DestroySurface(readback);SDL_SetRenderTarget(renderer,scratch);
     auto begin=std::chrono::steady_clock::now();
+    auto cached_before=gpu.cache_hits(),uploads_before=gpu.art_uploads();
     for(int i=0;i<60;++i) {if(!gpu.render(frame,assets)) return 8;SDL_FlushRenderer(renderer);}
+    if(gpu.cache_hits()!=cached_before+60 || gpu.art_uploads()!=uploads_before) {
+        std::fprintf(stderr,"Unchanged AI frames must reuse their output and resident textures\n");return 22;
+    }
     SDL_WaitForGPUIdle(SDL_GetGPURendererDevice(renderer));
     std::printf("GPU upload/projection/sampling/composition: %.3f ms/frame (60 frames, synchronized batch)\n",std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count()/60);
     // Exercise shader branches beyond this particular captured game's lighting.
