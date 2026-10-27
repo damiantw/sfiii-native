@@ -14,6 +14,8 @@ class HdGpu {
     SDL_Texture *white_=nullptr,*output_=nullptr;
     std::vector<uint32_t> offsets_;
     std::vector<size_t> resident_;
+    std::vector<uint32_t> last_scene_;
+    uint64_t art_uploads_=0,cache_hits_=0;
     const HdAssets* pack_=nullptr;
     uint32_t art_capacity_=0;
     bool resident_valid_=false;
@@ -27,6 +29,8 @@ public:
     bool initialize(SDL_Renderer*,const HdAssets&,const std::string& shader_dir);
     SDL_Texture* render(const Frame&,const HdAssets&);
     bool ready() const {return ready_;}
+    uint64_t art_uploads() const {return art_uploads_;}
+    uint64_t cache_hits() const {return cache_hits_;}
     const char* backend() const {return device_?SDL_GetGPUDeviceDriver(device_):"none";}
     const char* adapter() const {return device_?SDL_GetStringProperty(SDL_GetGPUDeviceProperties(device_),SDL_PROP_GPU_DEVICE_NAME_STRING,"unknown"):"none";}
     // Call before destroying the renderer. The device may be shared with the

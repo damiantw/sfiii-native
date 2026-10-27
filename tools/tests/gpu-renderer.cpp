@@ -182,7 +182,31 @@ int main(int argc,char** argv) {
             check(rendered(gpu,f,scale).px==off.px,"Ray shadow Off did not restore exact pixels");
             ++cases;
         }
-        std::printf("PASS: %u shader cases: geometry, original textures, flips, native immutability, end codes, SPD, composition, fallback, masked AA, ray shadows and exact Off restore\n",cases);
+        // Submit several differently sized/coloured frames without reading them
+        // back yet. Reused transfer storage must not overwrite an in-flight
+        // frame, including when its allocation grows between submissions.
+        std::vector<SDL_Texture*> queued;
+        std::vector<uint32_t> expected_colours;
+        for(int w:{32,96,48,160,64,192}) {
+            auto f=fixture(w,w/2);uint16_t raw=uint16_t(0x8000|((queued.size()+1)*0x421));
+            auto q=quad({raw},1,1,0,0,w-1,f.h-1);q.clip[0]=w-1;q.clip[1]=f.h-1;
+            f.hd->quads.push_back(q);auto* picture=gpu.render(f,2);check(picture!=nullptr,"Queued frame render");
+            auto* saved=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,w*2,f.h*2);
+            check(saved && SDL_SetRenderTarget(renderer,saved),"Queued frame snapshot target");
+            check(SDL_RenderTexture(renderer,picture,nullptr,nullptr) && SDL_FlushRenderer(renderer),"Queued frame submission");
+            queued.push_back(saved);expected_colours.push_back(rgb555(raw));
+        }
+        for(size_t i=0;i<queued.size();++i) {
+            check(SDL_SetRenderTarget(renderer,queued[i]),"Queued frame read target");
+            auto* pixels=SDL_RenderReadPixels(renderer,nullptr);check(pixels!=nullptr,"Queued frame readback");
+            auto* rgba=SDL_ConvertSurface(pixels,SDL_PIXELFORMAT_ARGB8888);check(rgba!=nullptr,"Queued frame pixel format");
+            for(int y=0;y<rgba->h;++y)for(int x=0;x<rgba->w;++x)
+                check((((uint32_t*)((uint8_t*)rgba->pixels+y*rgba->pitch))[x]&0xFFFFFF)==expected_colours[i],"Transfer cycling corrupted an earlier queued frame");
+            SDL_DestroySurface(rgba);SDL_DestroySurface(pixels);++cases;
+        }
+        check(SDL_SetRenderTarget(renderer,scratch),"Restore fixture target");
+        for(auto* texture:queued)SDL_DestroyTexture(texture);
+        std::printf("PASS: %u shader cases, including in-flight transfer reuse/growth and exact Off restore\n",cases);
         if(argc==4) {
             std::ifstream input(argv[3],std::ios::binary);std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)),{});
             constexpr size_t v2=0xC0020;check(bytes.size()==0x141220,"Local video dump size");
