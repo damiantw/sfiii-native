@@ -1,4 +1,4 @@
-"""Build immutable world + CHR/CHP sprite packs from an existing offline artwork cache.
+"""Build immutable world + CHR/CHP sprite + supported X8PC model texture packs.
 
 No extraction, upscaling, network access, runtime changes or game activation occurs.
 Every accepted sprite retains the source dimensions and exact nearest-scaled alpha.
@@ -18,7 +18,7 @@ from index_packs import build_index
 
 MODELS = {'video': 'realesr-animevideov3', 'anime': 'realesrgan-x4plus-anime',
           'general': 'realesrgan-x4plus'}
-SCHEMA = 'SF3-CHARACTER-PACK-1'
+SCHEMA = 'SF3-CHARACTER-PACK-2'
 
 
 def read_json(path):
@@ -58,6 +58,33 @@ def character_refs(asset):
     return [ref for ref in asset.get('refs', [])
             if ref.get('category') == 'sprites'
             and PurePosixPath(ref.get('file', '')).suffix.upper() in ('.CHR', '.CHP')]
+
+
+def battle_model_refs(asset):
+    import battle_textures
+    return [ref for ref in asset.get('refs', [])
+            if ref.get('category') == 'battle_models'
+            and battle_textures.supports(PurePosixPath(ref.get('file', '')).name)]
+
+
+def material_kind(descriptor):
+    fields = descriptor.read_text(encoding='ascii').split()
+    if len(fields) not in (5, 9, 10) or fields[0] != 'SF3HDASSET1':
+        raise ValueError('Invalid source material descriptor')
+    kind = fields[9] if len(fields) == 10 else 'world'
+    if kind not in ('character', 'world'):
+        raise ValueError('Invalid source material command kind')
+    return kind
+
+
+def set_material_kind(descriptor, kind):
+    fields = descriptor.read_text(encoding='ascii').split()
+    material_kind(descriptor)
+    uv = fields[5:9] if len(fields) >= 9 else ['0', '0', '1', '1']
+    text = f'{fields[0]}\n{fields[1]} {fields[2]}\n{fields[3]} {fields[4]}\n' + ' '.join(uv) + '\n' + kind + '\n'
+    # The source descriptor may be hardlinked. Replace only our new pack's name.
+    descriptor.unlink()
+    descriptor.write_text(text, encoding='ascii')
 
 
 def identity(value):
@@ -142,8 +169,9 @@ def package(cache, output, row, workers=4):
     staging = output / ('_pending-' + uuid.uuid4().hex[:8])
     staging.mkdir()
     count = world_bytes = character_bytes = copied = shared = 0
+    battle_count = battle_bytes = battle_shared = added_bytes = added_count = shared_character_battle = 0
     included = set()
-    missing, characters = [], set()
+    missing, characters, battle_models, seen_auxiliary = [], set(), set(), set()
     try:
         for source in world.iterdir():
             if not source.is_dir() or not (source / 'asset.txt').is_file():
@@ -156,13 +184,18 @@ def package(cache, output, row, workers=4):
             raise ValueError('World material count or payload size changed after its report was written')
         candidates = []
         for asset in assets:
-            refs = character_refs(asset)
+            sprite_refs = character_refs(asset)
+            model_refs = battle_model_refs(asset)
+            refs = sprite_refs + model_refs
             if not refs:
                 continue
             material = identity(asset['id'])
-            if material in characters:
-                raise ValueError('Duplicate character identity in disc catalog')
-            characters.add(material)
+            if material in seen_auxiliary:
+                raise ValueError('Duplicate character/model identity in disc catalog')
+            seen_auxiliary.add(material)
+            is_character, is_battle = bool(sprite_refs), bool(model_refs)
+            if is_character:characters.add(material)
+            if is_battle:battle_models.add(material)
             if material in included:
                 try:
                     w, h = int(asset['width']), int(asset['height'])
@@ -170,24 +203,26 @@ def package(cache, output, row, workers=4):
                     replacement = (staging / material / 'replacement.rgba').read_bytes()
                     ready = read_json(enhanced / material / 'ready.json')
                     if sha(original) != asset['original_sha256'] or sha(original) != ready.get('original_sha256'):
-                        raise ValueError('Shared world/character original checksum mismatch')
+                        raise ValueError('Shared world/character/model original checksum mismatch')
                     if sha(replacement) != ready.get('rgba_sha256') or not exact_alpha(original, replacement, w, h):
-                        raise ValueError('Shared world/character checksum or exact transparency changed')
+                        raise ValueError('Shared world/character/model checksum or exact transparency changed')
+                    # Preserve already validated character provenance on identical
+                    # originals. Only battle-only materials are limited to command 2.
+                    descriptor = staging / material / 'asset.txt'
+                    is_character = is_character or material_kind(descriptor) == 'character'
                 except (OSError, ValueError, KeyError, TypeError) as error:
                     missing.append(dict(asset=material, refs=refs, error=str(error)))
                     continue
-                # The original world descriptor is hardlinked: replace only this new pack's
-                # name before marking a legitimate shared character frame.
-                descriptor = staging / material / 'asset.txt'
-                descriptor_text = descriptor.read_text(encoding='ascii').rstrip() + '\ncharacter\n'
-                descriptor.unlink()
-                descriptor.write_text(descriptor_text, encoding='ascii')
-                shared += 1
+                set_material_kind(descriptor, 'character' if is_character else 'world')
+                if is_character:characters.add(material)
+                shared += int(is_character)
+                battle_shared += int(is_battle)
+                shared_character_battle += int(is_character and is_battle)
                 continue
-            candidates.append((asset, refs, material))
+            candidates.append((asset, refs, material, is_character, is_battle))
 
         def emit_character(candidate):
-            asset, refs, material = candidate
+            asset, refs, material, is_character, is_battle = candidate
             try:
                 w, h = int(asset['width']), int(asset['height'])
                 if not (1 <= w <= 1024 and 1 <= h <= 1024):
@@ -208,7 +243,7 @@ def package(cache, output, row, workers=4):
                     raise ValueError('Dimensions or exact nearest-scaled transparency changed')
             except (OSError, ValueError, KeyError, TypeError) as error:
                 # Cache gaps remain explicit, and the runtime falls back to original artwork.
-                return None, 0, 0, dict(asset=material, refs=refs, error=str(error))
+                return None, 0, 0, is_character, is_battle, dict(asset=material, refs=refs, error=str(error))
             target = staging / material
             target.mkdir()
             local_copied = 0
@@ -218,37 +253,54 @@ def package(cache, output, row, workers=4):
                 except OSError:
                     shutil.copy2(source, target / name)
                     local_copied += source.stat().st_size
-            (target / 'asset.txt').write_text(f'SF3HDASSET1\n{w} {h}\n{w*4} {h*4}\n0 0 1 1\ncharacter\n', encoding='ascii')
+            kind = 'character' if is_character else 'world'
+            (target / 'asset.txt').write_text(f'SF3HDASSET1\n{w} {h}\n{w*4} {h*4}\n0 0 1 1\n{kind}\n', encoding='ascii')
             atomic_json(target / 'metadata.json', dict(asset, refs=refs, model=row['model'],
-                model_signature=signature, category='sprites', character_frame=True,
+                model_signature=signature, category='sprites' if is_character else 'battle_models',
+                character_frame=is_character, battle_model_texture=is_battle,
+                eligible_commands=[0,1,2] if is_character else [2],
                 replacement_sha256=replacement_sha, alpha_policy='exact nearest 4x original alpha'))
-            return material, len(replacement), local_copied, None
+            return material, len(replacement), local_copied, is_character, is_battle, None
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for material, payload_bytes, copied_bytes, failure in pool.map(emit_character, candidates):
+            for material, payload_bytes, copied_bytes, is_character, is_battle, failure in pool.map(emit_character, candidates):
                 if failure:
                     missing.append(failure)
                     continue
                 included.add(material)
-                character_bytes += payload_bytes
+                character_bytes += payload_bytes if is_character else 0
+                battle_bytes += payload_bytes if is_battle else 0
+                added_bytes += payload_bytes
                 copied += copied_bytes
-                count += 1
-                if count % 1000 == 0:
-                    print(f"Scenario {row['scenario']} {row['model']}: verified {count}/{len(candidates)} character frames", flush=True)
+                count += int(is_character)
+                battle_count += int(is_battle)
+                shared_character_battle += int(is_character and is_battle)
+                added_count += 1
+                if added_count % 1000 == 0:
+                    print(f"Scenario {row['scenario']} {row['model']}: verified {added_count}/{len(candidates)} character/model textures", flush=True)
         record = dict(schema=SCHEMA, scenario=row['scenario'], revision=row['revision'], profile=row['profile'],
             model=row['model'], model_signature=signature, material_count=len(included),
             world_material_count=row['material_count'], character_material_count=count,
             character_frames_already_world=shared, character_candidates=len(characters),
-            replacement_bytes=world_bytes+character_bytes, character_replacement_bytes=character_bytes,
+            battle_model_material_count=battle_count, battle_models_already_world=battle_shared,
+            battle_model_candidates=len(battle_models), shared_character_battle_materials=shared_character_battle,
+            character_total_material_count=count+shared, battle_model_total_material_count=battle_count+battle_shared,
+            replacement_bytes=world_bytes+added_bytes, character_replacement_bytes=character_bytes,
+            battle_model_replacement_bytes=battle_bytes, added_unique_material_count=added_count,
             copied_payload_bytes=copied, missing_world=row.get('missing', []), missing=missing,
+            missing_characters=[m for m in missing if character_refs(dict(refs=m['refs']))],
+            missing_battle_models=[m for m in missing if battle_model_refs(dict(refs=m['refs']))],
             source_world=str(world), source_cache=str(cache), path=str(destination),
-            scope='Original world pack plus cached CHR/CHP sprite frames. Exact alpha preserved. '
-                  'Menus and embedded UI excluded. A catalog entry is not proof of gameplay matching or full character coverage.')
+            scope='Original world pack plus cached CHR/CHP sprites and supported X8PC RGB555 battle-model textures. '
+                  'Exact alpha preserved. Battle-only materials require distorted command 2; existing verified CHR provenance stays eligible. '
+                  'Material counts are unique RGBA originals, including distinct alpha variants, and do not count texture definitions. '
+                  'Menus, indexed spell effects, untextured polygons and background planes are separate gaps and remain original. '
+                  'A catalog entry is not proof of gameplay matching, full character coverage or all spell effects.')
         atomic_json(staging / 'manifest.json', record)
         build_index(staging)
         destination.parent.mkdir(parents=True, exist_ok=True)
         staging.rename(destination)
-        print(f"Scenario {row['scenario']} {row['model']}: {count} character frames added; "
+        print(f"Scenario {row['scenario']} {row['model']}: {count} character frames, {battle_count} battle-model textures added; "
               f"{len(missing)} unavailable; {record['replacement_bytes']/1048576:.1f} MiB replacement payload", flush=True)
         return record
     except BaseException:

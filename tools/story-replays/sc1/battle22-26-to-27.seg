@@ -1,5 +1,5 @@
 # sf3 story segment v1
-profile scenario1-usa-v25_1
+profile scenario1-v25_1
 save ExternalBackupRAM - 3 - Battle 22 to End.bin
 record save:3-Battle-22-to-End:26
 seed 1

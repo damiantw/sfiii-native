@@ -1,7 +1,7 @@
 """SF3 differential test against a libretro reference core (bring-your-own core, disc and saves;
 outputs stay outside the repository).
 
-  python tools/sf3-diff.py --saturn BUILD/saturn --cue DISC.cue --profile scenario1-usa-v25_1 \
+  python tools/sf3-diff.py --saturn BUILD/saturn --cue DISC.cue --profile scenario1-v25_1 \
       --core yabause_libretro.so --save SAVES.bin --record 01 --out /private/diff/sc1 --vblanks 9000
 
 Loads the record through the title's Continue menu on both, drives the same seeded inputs placed

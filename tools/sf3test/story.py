@@ -22,9 +22,11 @@ import contextlib
 import hashlib
 import os
 
+from .memory_map import canonical
+
 FLAG_LO, FLAG_HI = 0x240, 0x400
 FLAG_BASE = {
-    'scenario1-usa-v25_1': 0x0602F244,
+    'scenario1-v25_1': 0x0602F244,
     'scenario2-v25_1-v2_000': 0x060304C4,
     'scenario2-v25_1-v1_003': 0x06030474,
     'scenario3-v25_1-redump': 0x06030DF4,
@@ -33,7 +35,7 @@ PLAYTIME = 0x10        # u32 play time in frames (60 per second), record payload
 
 
 def flag_addr(profile):
-    return FLAG_BASE[profile] + FLAG_LO
+    return FLAG_BASE[canonical(profile)] + FLAG_LO
 
 
 def flags_of(record_data):

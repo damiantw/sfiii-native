@@ -216,7 +216,7 @@ def prepare(root=ROOT, include_chd=False):
     settings = root / 'settings.json'
     if not settings.exists():
         settings.write_text(json.dumps(dict(scenarios=[], out=str(Path.home() / 'SFIII Graphics'), gpu=0,
-            models=['video', 'anime', 'general'], categories=['world', 'sprites', 'backgrounds']), indent=2) + '\n')
+            models=['video', 'anime', 'general'], categories=['world', 'sprites', 'battle_models', 'backgrounds']), indent=2) + '\n')
 
 
 def main():

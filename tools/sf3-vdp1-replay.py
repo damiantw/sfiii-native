@@ -22,7 +22,7 @@
           before/after pairings are tried and the best counts ('all'; '5bit' compares 5-bit
           channels).
 
-  sf3-vdp1-replay.py snap --cue sc1.cue --profile scenario1-usa-v25_1 --save SFORCE31_01.BUP \\
+  sf3-vdp1-replay.py snap --cue sc1.cue --profile scenario1-v25_1 --save SFORCE31_01.BUP \\
       --record 01 --frames 400,1000 --pre 3000 --out /tmp/snaps/sc1-church
   sf3-vdp1-replay.py replay --bin build/runtime-tests/vdp1_replay /tmp/snaps/sc1-church/load1000.npz
   sf3-vdp1-replay.py replay2 --bin build/runtime-tests/vdp2_replay /tmp/snaps/sc1-church/load1000-vdp2.npz

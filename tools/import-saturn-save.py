@@ -125,15 +125,47 @@ def import_files(backup, device, sources, replace=False):
     return report
 
 
+def export_files(backup, device, destination):
+    """Export ordinary Saturn saves as raw BIN payloads; never export native states."""
+    target = Path(str(backup) + ('.cartridge' if device == 'cartridge' else ''))
+    destination = destination.resolve()
+    if any((p/'.git').exists() for p in (destination, *destination.parents)):
+        raise ValueError('Save data must stay outside the source repository')
+    entries = records(target.read_bytes())
+    selected = {n:r for n,r in entries.items() if re.fullmatch(r'SFORCE3[123]_[0-9]{2}', n)}
+    if not selected:
+        raise ValueError('No ordinary SFIII saves found on this device. Save using the game menu first.')
+    # Validate every payload before writing anything. Never overwrite earlier exports.
+    for name, record in selected.items():
+        payload = record[32:]
+        expected = {'1':12904, '2':16248, '3':24344}[name[7]]
+        if len(payload) != expected or int.from_bytes(payload[:4], 'big') != len(payload)-8 or int.from_bytes(payload[4:8], 'big') != sum(payload[8:]):
+            raise ValueError('Invalid SFIII payload: ' + name)
+        if (destination/(name+'.BIN')).exists():
+            raise ValueError('Export file already exists; choose a new folder: ' + name)
+    destination.mkdir(parents=True, exist_ok=True)
+    result = []
+    for name, record in sorted(selected.items()):
+        path = destination/(name+'.BIN')
+        with path.open('xb') as stream:
+            stream.write(record[32:])
+        result.append(dict(name=name, path=str(path), bytes=len(record)-32,
+                           payload_sha256=hashlib.sha256(record[32:]).hexdigest()))
+    return dict(device=device, source=str(target), exported=result)
+
+
 def main():
     ap = argparse.ArgumentParser(__doc__)
     ap.add_argument('--backup', type=Path, required=True)
     ap.add_argument('--device', choices=['internal', 'cartridge'], default='cartridge')
     ap.add_argument('--replace', action='store_true', help='Explicitly replace matching names; previous backup retained')
-    ap.add_argument('files', nargs='+', type=Path)
+    ap.add_argument('--export', type=Path, metavar='DIRECTORY', help='Export ordinary saves as raw BIN files')
+    ap.add_argument('files', nargs='*', type=Path)
     a = ap.parse_args()
     try:
-        print(json.dumps(import_files(a.backup, a.device, a.files, a.replace), indent=2))
+        if not a.export and not a.files:
+            ap.error('Choose import files or --export DIRECTORY')
+        print(json.dumps(export_files(a.backup, a.device, a.export) if a.export else import_files(a.backup, a.device, a.files, a.replace), indent=2))
     except (OSError, ValueError) as e:
         ap.exit(1, str(e)+'\n')
 
