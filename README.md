@@ -341,7 +341,9 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
   the native port and on a libretro core that you build separately and run with your own BIOS. They compare RAM,
   story flags, VDP1/VDP2 output and saves.
 - **Determinism and dispatch audit:** repeated runs must match exactly. `SF3_DISPATCH_AUDIT=1` reports indirect
-  calls that fall outside recompiled code.
+  calls that fall outside recompiled code. Scene (X1) modules also get entries for callbacks that only their own
+  data tables point to, when the target decodes as plausible SH-2 code; the build logs every accepted and rejected
+  candidate to `scene-data-entries.tsv` in the generated-code directory.
 
 <details>
 <summary>Upstream's Windows validation notes (v0.6.0-preview1)</summary>
