@@ -336,7 +336,16 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
 - **Coverage:** `saturn --coverage` and `tools/sf3-block-coverage.py` measure which game code ran. Map sweeps
   (`tools/sf3-sweep.py`) drive every save record and map.
 - **Story replays:** `tools/sf3-story.py` plays forward from saves. It records deterministic, pad-only segments
-  (`tools/story-replays/`), which replay frame-exactly with a fixed clock.
+  (`tools/story-replays/`), which replay frame-exactly with a fixed clock. `sf3-story.py search` finds battle
+  inputs by branching and backtracking. Its battle-policy options (all pad inputs only, no RAM pokes) include:
+  - `--leader` and `--protect`: units whose fall loses the battle
+  - `--guard-hp`: the HP floor for those units
+  - `--escort`: keep units next to a guest
+  - `--avoid X,Y,R`: leave a trap zone
+  - `--keep-away`: stay clear of enemies
+  - `--focus`: preferred targets
+  - `--heal` and `--heal-item`: heal with a spell, or with an item on a hurt neighbour
+  - `--max-deaths` and `--max-levels`: search limits
 - **Differential testing against Beetle Saturn:** `tools/sf3-diff.py` and `tools/sf3test` run the same inputs on
   the native port and on a libretro core that you build separately and run with your own BIOS. They compare RAM,
   story flags, VDP1/VDP2 output and saves.
