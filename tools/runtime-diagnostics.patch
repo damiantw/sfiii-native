@@ -1,5 +1,5 @@
 diff --git a/runtime/include/saturn/sh2.h b/runtime/include/saturn/sh2.h
-index 1219a02..6253a00 100644
+index 1219a02..190931c 100644
 --- a/runtime/include/saturn/sh2.h
 +++ b/runtime/include/saturn/sh2.h
 @@ -11,9 +11,11 @@
@@ -139,6 +139,14 @@ index 1219a02..6253a00 100644
      else sh2_io_write(a, v, 4);
  }
  
+@@ -196,6 +250,7 @@ const SH2Module* sh2_identify(uint32_t base);     // the module whose image is i
+ const SH2Module* sh2_identify_containing(uint32_t addr, bool* exact);   // a module whose image in memory holds addr
+ void    sh2_activate(const SH2Module* m);          // replaces any active module it overlaps
+ SH2Func sh2_lookup(uint32_t addr);                  // nullptr if not an entry of an active module
++uint64_t sh2_dispatch_audit_reports();               // SF3_DISPATCH_AUDIT=1: entries run over other bytes, logged (core.cpp)
+ void    sh2_call_unknown(SH2Context& c, uint32_t addr);   // services: not an entry (the BIOS...)
+ void    sh2_program_start(SH2Context& c, uint32_t addr);  // services: restart at a program entry
+ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc = 0);
 diff --git a/runtime/runtime.cmake b/runtime/runtime.cmake
 index ecf1dde..86a21a6 100644
 --- a/runtime/runtime.cmake
@@ -243,10 +251,10 @@ index 0000000..712a96c
 +    ~SH2CallFrame() { g_sh2_frames->pop(depth); }
 +};
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..a1f43b7 100644
+index cb6af72..c208d96 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
-@@ -3,7 +3,12 @@
+@@ -3,8 +3,16 @@
  // active modules (one per address range: the resident programs and the one
  // swapped in).
  #include "saturn/sh2.h"
@@ -257,9 +265,13 @@ index cb6af72..a1f43b7 100644
  #include <cstdio>
 +#include <cstdlib>
  #include <cstring>
++#include <unordered_map>
++#include <unordered_set>
++#include <vector>
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
-@@ -13,19 +18,24 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
+ alignas(64) uint8_t g_wram_h[0x100000 + 8];
+@@ -13,19 +21,24 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
  // Areas by the top three bits: 0 cached, 1 cache-through (the same 27-bit
  // external bus), 2 associative purge (writes drop a cache line: nothing to
  // do), 3 the cache's address array, 6 its data array, 7 the on-chip
@@ -287,7 +299,7 @@ index cb6af72..a1f43b7 100644
          return sh2_mmio_read(p, size);
      }
      if (area == 2) return 0;
-@@ -33,6 +43,7 @@ uint32_t sh2_io_read(uint32_t a, int size) {
+@@ -33,6 +46,7 @@ uint32_t sh2_io_read(uint32_t a, int size) {
  }
  
  void sh2_io_write(uint32_t a, uint32_t v, int size) {
@@ -295,7 +307,7 @@ index cb6af72..a1f43b7 100644
      uint32_t area = a >> 29;
      if (area <= 1) {
          uint32_t p = a & 0x07FFFFFFu;
-@@ -40,6 +51,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -40,6 +54,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
              for (int i = size - 1; i >= 0; --i, v >>= 8) g_wram_h[(p + i) & 0xFFFFFu] = (uint8_t)v;
              return;
          }
@@ -306,7 +318,7 @@ index cb6af72..a1f43b7 100644
          sh2_mmio_write(p, v, size);
          return;
      }
-@@ -50,7 +65,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -50,7 +68,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
  static uint8_t* host(uint32_t a) {
      a &= 0x1FFFFFFFu;
      if (a >= 0x06000000u && a < 0x08000000u) return g_wram_h + (a & 0xFFFFFu);
@@ -315,7 +327,7 @@ index cb6af72..a1f43b7 100644
      return nullptr;
  }
  
-@@ -88,6 +103,10 @@ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc) {
+@@ -88,6 +106,10 @@ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc) {
      return ~crc;
  }
  
@@ -326,7 +338,7 @@ index cb6af72..a1f43b7 100644
  const SH2Module* sh2_module(const char* name) {
      for (int i = 0; i < g_sh2_nmodules; ++i)
          if (!std::strcmp(g_sh2_modules[i]->name, name)) return g_sh2_modules[i];
-@@ -113,42 +132,116 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +135,173 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -392,9 +404,66 @@ index cb6af72..a1f43b7 100644
 +// restored memory would trust the old module's dispatch for the new image.
 +uint64_t sh2_active_head(int i) { return g_active_heads[i]; }
 +void sh2_set_active_head(int i, uint64_t head) { g_active_heads[i] = head;++g_active_gen; }
++
++// ---- the dispatch audit (SF3_DISPATCH_AUDIT=1) -------------------------------------------------
++// Logs, never aborts: a call through a register that the active modules resolve to a recompiled
++// entry whose first instruction bytes in memory are not the module image's, so the dispatch runs
++// code built for other bytes (a program loaded over a module and called before anything noticed,
++// or code changed since). A call that resolves to no entry still stops with the "not an entry"
++// fatal: there is no code to run. The reference image of a module is taken the first time it is
++// seen exactly (crc) at an activation or a call; one line per module and entry.
++static bool audit_on() { static const bool on = [] { const char* e = std::getenv("SF3_DISPATCH_AUDIT"); return e && *e && *e != '0'; }(); return on; }
++static std::unordered_map<const SH2Module*, std::vector<uint8_t>> g_audit_image;
++static std::unordered_map<const SH2Module*, uint64_t> g_audit_tried;   // the generation of the last failed capture
++static std::unordered_set<uint64_t> g_audit_seen;
++static uint64_t g_audit_reports;
++uint64_t sh2_dispatch_audit_reports() { return g_audit_reports; }
++static void audit_capture(const SH2Module* m) {
++    if (!audit_on() || !m || g_audit_image.count(m)) return;
++    uint8_t* p = host(m->base);
++    if (!p || !host(m->base + m->size - 1) || sh2_crc32(p, m->size) != m->crc) return;
++    g_audit_image[m].assign(p, p + m->size);
++}
++static void audit_call(const SH2Context& c, uint32_t addr) {
++    const SH2Module* m = nullptr; uint32_t k = 0;
++    for (int slot = 0; slot < kSlots && !m; ++slot) {
++        const SH2Module* a = g_active[slot];
++        if (!a || addr - a->base >= a->size) continue;
++        uint32_t lo = 0, hi = a->nfuncs;
++        while (lo < hi) { uint32_t mid = (lo + hi) / 2; if (a->funcs[mid].addr < addr) lo = mid + 1; else hi = mid; }
++        if (lo < a->nfuncs && a->funcs[lo].addr == addr) { m = a; k = lo; }
++    }
++    if (!m) return;
++    auto it = g_audit_image.find(m);
++    if (it == g_audit_image.end()) {
++        uint64_t& tried = g_audit_tried[m];
++        if (tried == g_active_gen) return;
++        tried = g_active_gen;
++        audit_capture(m);
++        it = g_audit_image.find(m);
++        if (it == g_audit_image.end()) {
++            if (g_audit_seen.insert((uint64_t)(uintptr_t)m).second)
++                std::fprintf(stderr, "dispatch audit: %s active without an exact image seen yet; its entries are not checked until one is (call to %08X from pr %08X)\n", m->name, addr, c.pr);
++            return;
++        }
++    }
++    uint32_t off = addr - m->base, n = m->sizes && m->sizes[k] ? 2u * m->sizes[k] : 2u;
++    if (n > 16) n = 16;
++    if (off + n > m->size) n = m->size - off;
++    const uint8_t* p = host(addr);
++    if (!p || std::memcmp(p, it->second.data() + off, n) == 0) return;
++    if (!g_audit_seen.insert((uint64_t)(uintptr_t)m ^ ((uint64_t)addr << 32 | 1)).second) return;
++    ++g_audit_reports;
++    const SH2Module* now = sh2_identify(m->base);
++    char mem[40], img[40];
++    for (uint32_t i = 0; i < n && i < 16; ++i) { std::snprintf(mem + 2 * i, 3, "%02X", p[i]); std::snprintf(img + 2 * i, 3, "%02X", it->second[off + i]); }
++    std::fprintf(stderr, "dispatch audit: call to %08X (from pr %08X) runs %s's entry, but memory there holds %s, not the image's %s; the image at %08X is %s\n",
++                 addr, c.pr, m->name, mem, img, m->base, now ? now->name : "no known module");
++}
  
  void sh2_activate(const SH2Module* m) {
 +    ++g_active_gen;
++    audit_capture(m);
      for (auto& a : g_active)
          if (a && a->base < m->base + m->size && m->base < a->base + a->size) a = nullptr;
 -    for (auto& a : g_active)
@@ -427,7 +496,7 @@ index cb6af72..a1f43b7 100644
 +    uint8_t slots[2]; int n = 0;
 +    for (int slot = 0; slot < kSlots; ++slot) {
 +        const SH2Module* m = g_active[slot];
-         if (!m || addr - m->base >= m->size) continue;
++        if (!m || addr - m->base >= m->size) continue;
 +        if (n == 2) return f;                            // unusual overlap: not cached
 +        slots[n++] = (uint8_t)slot;
 +        if (has_entry(m, addr)) break;
@@ -440,7 +509,7 @@ index cb6af72..a1f43b7 100644
 +static SH2Func lookup_slow(uint32_t addr) {
 +    for (int slot=0;slot<kSlots;++slot) {
 +        const SH2Module* m=g_active[slot];
-+        if (!m || addr - m->base >= m->size) continue;
+         if (!m || addr - m->base >= m->size) continue;
 +        // Overlay transitions can call an interior export already present in
 +        // the old dispatch table. A changed header triggers full-image identity
 +        // before trusting that entry. Data-only mutation retains its owner.
@@ -456,7 +525,7 @@ index cb6af72..a1f43b7 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -183,12 +276,57 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -183,14 +336,59 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  
@@ -514,8 +583,11 @@ index cb6af72..a1f43b7 100644
 -        else { sh2_program_start(c, addr); return; }
 +        else if (m || !inside_loaded_program(addr)) { sh2_program_start(c, addr); return; }
      }
-     if (SH2Func f = sh2_lookup(addr)) f(c);
+-    if (SH2Func f = sh2_lookup(addr)) f(c);
++    if (SH2Func f = sh2_lookup(addr)) { if (SH2_UNLIKELY(audit_on())) audit_call(c, addr); f(c); }
      else sh2_call_unknown(c, addr);
+ }
+ 
 diff --git a/runtime/src/host/frame_stats.h b/runtime/src/host/frame_stats.h
 new file mode 100644
 index 0000000..00c23c1
