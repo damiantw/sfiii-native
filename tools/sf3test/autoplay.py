@@ -17,6 +17,7 @@ import hashlib
 import random
 
 from . import memory_map
+from . import tactics
 
 DIRS = ('UP', 'DOWN', 'LEFT', 'RIGHT')
 TAP = 6                 # frames a tap is held
@@ -52,6 +53,7 @@ class Policy:
         self.heal, self.heal_at, self.heal_fail, self.heal_check, self.sigs = (), 0.6, {}, None, {}
         self.heal_item = ()
         self.leader_attack, self.hit = None, {}
+        self.tactics, self.still, self.root_epos, self.tac_check, self.tac_fail = {}, {}, None, None, {}
 
     def town(self):
         r = self.rng.random()
@@ -134,7 +136,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None, escort=None, heal_item=None, leader_attack=None):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None, escort=None, heal_item=None, leader_attack=None, tactics=None, root_epos=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -165,7 +167,10 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     the Masked Monk, enemy 1, was never attacked and poisoned Julian, then Synbios).
     `leader_attack` (round 27, opt-in, with pathing): a share S; on its turn the leader walks to and
     attacks an enemy it can finish (HP at most its best hit) or one under S of max HP, within
-    LEADER_REACH steps and never through the `avoid` zone, instead of only striking what is in reach."""
+    LEADER_REACH steps and never through the `avoid` zone, instead of only striking what is in reach.
+    `tactics` (round 29, opt-in): dict(hold_until=N, ranged, casters, healers, item_attack slots), see
+    aimed_turn and tactics.py; `root_epos` {enemy slot: (x, y)} at the search root marks enemies that
+    have not moved since as stationary (the --hold-until threats, the --protect heavy hitters)."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     pol.pathing = pathing
@@ -179,6 +184,8 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     pol.heal, pol.heal_at, pol.heal_fail, pol.heal_check = tuple(heal or ()), heal_at or LEADER_SAFE, {}, None
     pol.heal_item = tuple(heal_item or ())
     pol.leader_attack = leader_attack
+    pol.tactics = dict(tactics or {})
+    pol.root_epos = root_epos
     pol.escort = escort
     presses, events = [], []
     fell, watch_base = [], (mm.get('units') or {}).get('force') if watch else None
@@ -566,14 +573,15 @@ def pad_for(d, turn):
     return next(k for k in STEP if ROTATIONS[turn](*STEP[k]) == STEP[d])
 
 
-def plan_step(p, live, occupied, blocked, size=64, limit=6000, passable=frozenset()):
+def plan_step(p, live, occupied, blocked, size=64, limit=6000, passable=frozenset(), goals=None):
     """First direction of a shortest path from `p` to a tile next to a live enemy, over a
     size x size grid where unseen tiles are taken as open (optimistic planning: a failed step marks
     its edge, `blocked` counts failures per edge; two failures close it, one makes it dear).
     Tiles other units hold are closed, except `passable` ones (the unit's own force: a unit walks
     through its allies but cannot stop on one). None when no tile is reachable."""
     import heapq
-    goals = {(x + dx, y + dy) for x, y in live for dx, dy in STEP.values()} - occupied - set(passable)
+    goals = (set(goals) if goals is not None else  # tactics: given end tiles
+             {(x + dx, y + dy) for x, y in live for dx, dy in STEP.values()}) - occupied - set(passable)
     if not goals:
         return None
     h = lambda q: min(abs(q[0] - g[0]) + abs(q[1] - g[1]) for g in goals)
@@ -671,15 +679,16 @@ def heal_due(rd, units, pol, me):
             and is_hurt(rd, units['force'], me, pol.heal_at) and unit_mp_of(rd, units['force'], me) >= 3)
 
 
-def heal_cast(rd, units, pol, me, ring='magic', target=None, caster=None):
+def heal_cast(rd, units, pol, me, ring='magic', target=None, caster=None, aim=None):
     """Ring Magic, first spell, first level, default target (the caster itself for Heal); the next
     turn checks the target's HP rose (pol.heal_check: target, its HP, the caster charged on a miss).
     ring='item' uses the first item instead (Items, Use, first item, default target)"""
     t = me if target is None else target
     pol.heal_check = (t, unit_hp_of(rd, units['force'], t), me if caster is None else caster)
     pol.casts += 1
+    pick = [((aim,), 6), ((), 20)] if aim else []      # --healers: move the target cursor onto an ally
     return ([(('C',), 6), ((), 30), ((RING[ring],), 6), ((), 14)]
-            + [(('C',), 6), ((), 30)] * 4 + tap(('C',), gap=40) * 4)
+            + [(('C',), 6), ((), 30)] * 2 + pick + [(('C',), 6), ((), 30)] * 2 + tap(('C',), gap=40) * 4)
 
 
 def aimed_turn(side, units, pol, press):
@@ -698,6 +707,7 @@ def aimed_turn(side, units, pol, press):
         pol.blocked, pol.blocked_key, pol.phantoms = {}, key, set()
         pol.turn = 0
         pol.att_miss, pol.last_attack = {}, None
+        pol.still, pol.tac_check = {}, None
         pol.sigs = SIGS.setdefault(units['force'], {})
     phantoms = getattr(pol, 'phantoms', set())
     hp_of = {k: hp for k, x, y, f, hp in enemies}
@@ -728,6 +738,12 @@ def aimed_turn(side, units, pol, press):
             pol.heal_fail[who] = pol.heal_fail.get(who, 0) + 1
         else:
             pol.heals = getattr(pol, 'heals', 0) + 1
+    tcx = getattr(pol, "tac_check", None)
+    if tcx:
+        # --casters/--ranged/--item-attack: a use that took no HP from the enemies in reach counts
+        pol.tac_check = None
+        if sum(hp_of.get(k, 0) for k in tcx[0]) >= tcx[1]:
+            pol.tac_fail[tcx[2]] = pol.tac_fail.get(tcx[2], 0) + 1
     live = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k not in phantoms]
     if not live:
         return tap(('C',), gap=30) * 4
@@ -736,6 +752,8 @@ def aimed_turn(side, units, pol, press):
         if pol.idle % 5 == 0:
             return tap(('C',), gap=30) * 6
         return tap(('C',), gap=30) if pol.idle % 3 == 0 else tap(('B',), gap=20)
+    still = tactics.track_still(pol.still, enemies, pol.root_epos) - phantoms
+    tac = pol.tactics or {}
     before = pos()
     cx = sum(e[0] for e in live) / len(live)
     lead = next(iter(before.values()), (0, 0))
@@ -812,7 +830,7 @@ def aimed_turn(side, units, pol, press):
         pol.explored = getattr(pol, 'explored', 0) + 1
     picked = goal is not live                      # a search candidate's random enemy
     if goal is live and getattr(pol, 'focus', ()):
-        fx = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k in pol.focus and k not in phantoms]
+        fx = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k in (getattr(pol, "focus", None) or ()) and k not in phantoms]
         if fx:
             goal = fx
     esc = getattr(pol, 'escort', None)
@@ -865,6 +883,28 @@ def aimed_turn(side, units, pol, press):
             goal = [before[min(far, key=lambda e: unit_hp_of(rd, units['force'], e))]]
             pol.item_walks = getattr(pol, 'item_walks', 0) + 1
 
+    goal_tiles = None                              # tactics: the tiles to end the move on (None: next to a goal)
+    if (me in tac.get("healers", ()) and pol.heal_fail.get(me, 0) < 2
+            and unit_mp_of(rd, units["force"], me) >= tactics.MP_MIN):
+        # round 29 (--healers, Sc3 Ch7 dock: Gracia at 19/35 from ~279k and nobody healed her): a
+        # healer casts its first spell, first level, on the most hurt ally next to it (itself
+        # included) before it attacks; one farther off, within HEAL_WALK, draws it closer
+        hurt = [k for k in before if tactics.md(before[k], before[me]) <= HEAL_WALK
+                and is_hurt(rd, units["force"], k, pol.heal_at)]
+        if hurt:
+            k = min(hurt, key=lambda k: unit_hp_of(rd, units["force"], k))
+            if tactics.md(before[k], before[me]) <= 1:
+                press(("B",), 6)
+                press((), 20)
+                if not hud_up(side.frame()):
+                    press(("B",), 6)
+                    press((), 40)
+                pol.ally_heals = getattr(pol, "ally_heals", 0) + 1
+                aim = None if k == me else pad_for(tactics.aim_dir(before[me], before[k]), turn)
+                return heal_cast(rd, units, pol, me, target=k, aim=aim)
+            goal = [before[k]]
+            pol.heal_walks = getattr(pol, "heal_walks", 0) + 1
+
     def dist(p):
         return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)
 
@@ -916,6 +956,19 @@ def aimed_turn(side, units, pol, press):
             if tgt:
                 goal, hold_back, lead_attack = [tgt], False, True
                 pol.leader_attacks = getattr(pol, "leader_attacks", 0) + 1
+        if (me != lead and pol.pathing and me in now and not lead_attack
+                and not (in_zone or near_threat or is_hurt(rd, units["force"], me, LEADER_SAFE))):
+            # round 29 (Sc3 dock v99, Sc1 v102: protected units only retreated and the fights stalled):
+            # --protect means avoid danger, not never attack. A protected unit walks to and attacks a
+            # target (focus first) it can hit within HOLD_MOVE steps from a tile not next to a
+            # stationary enemy (one that has not moved: the Sc1 boss pocket) nor in the --avoid zone
+            fx = [(x, y) for k, x, y, f, hp in enemies if hp > 1 and k in (getattr(pol, "focus", None) or ()) and k not in phantoms]
+            heavy = [(x, y) for k, x, y, f, hp in enemies if k in still]
+            st = tactics.safe_target(now[me], fx or [(x, y) for k, x, y, f, hp in enemies if hp > 1 and k not in phantoms],
+                                     {v for k, v in now.items() if k != me} | set(live), heavy, av)
+            if st:
+                goal, goal_tiles, hold_back, lead_attack = [st[0]], st[1], False, True
+                pol.protect_attacks = getattr(pol, "protect_attacks", 0) + 1
         if me in now and not lead_attack and (in_zone or near_threat or is_hurt(rd, units['force'], me, LEADER_SAFE)):
             # round 27 (Sc2 V1.003 war machine): the leader gets one turn before the blast and the
             # first planned step hit an unseen wall, so the turn ended in the zone. A step that fails
@@ -946,6 +999,28 @@ def aimed_turn(side, units, pol, press):
                     break
     if lead_attack:
         cautious = False
+    rng_by = {k for k in set(tac.get("ranged", ())) | set(tac.get("casters", ())) | set(tac.get("item_attack", ()))
+              if pol.tac_fail.get(k, 0) < tactics.FAIL_MAX}
+    reach = tactics.SPELL_RANGE if me in rng_by else 1
+    tg = [g for g in goal if g in live] if goal_tiles is None else []
+    if pol.pathing and not cautious and not hold_back and tg and me in pos():
+        now = pos()
+        occ = {v for k, v in now.items() if k != me} | set(live)
+        t = min(tg, key=lambda e: tactics.md(now[me], e))
+        threats = [(x, y) for k, x, y, f, hp in enemies if k in still]
+        if tac.get("hold_until") and threats:
+            # round 29 (--hold-until N, Sc1 Battle 22 end v91-v103: units walked up to the boss pocket
+            # one at a time and fell to the wizards): a unit whose every tile to hit its target is in a
+            # stationary enemy's range waits just outside until N units (all that are left, if fewer)
+            # can reach that target this round, then they commit together
+            skip = {lead} | set(getattr(pol, "protect", None) or ())
+            hg = tactics.hold_goals(now[me], t, threats, occ, tac["hold_until"], now, rng_by, skip, reach)
+            if hg is not None:
+                goal_tiles = hg
+                pol.hold_waits = getattr(pol, "hold_waits", 0) + 1
+        if goal_tiles is None and reach > 1:
+            # --ranged/--casters/--item-attack: end 2 tiles from the target (out of its melee)
+            goal_tiles = tactics.strike_tiles([t], reach, occ) or None
     if hold_back and not cautious:
         press(('B',), 6)
         press((), 20)
@@ -956,7 +1031,10 @@ def aimed_turn(side, units, pol, press):
             if me not in now:                      # the mover left the roster mid-turn (fell, withdrew)
                 break
             p = now[me]
-            if dist(p) <= 1 or fails >= 8 or (goal is not live and min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in goal) <= 1):
+            if goal_tiles is not None:
+                if p in goal_tiles or fails >= 8:
+                    break
+            elif dist(p) <= 1 or fails >= 8 or (goal is not live and min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in goal) <= 1):
                 break
             allies = {v for k, v in now.items() if k != me}
             # allies are walked through (round 2: a force packed on the Battle 22 bridge or in the
@@ -965,7 +1043,7 @@ def aimed_turn(side, units, pol, press):
             if lead_attack and getattr(pol, "avoid", None):  # --leader-attack: never path through the zone
                 zx, zy, zr = pol.avoid
                 shut = {(zx + i, zy + j) for i in range(-zr, zr + 1) for j in range(-zr, zr + 1) if abs(i) + abs(j) <= zr}
-            d = plan_step(p, goal, allies | set(live) | shut, pol.blocked, passable=allies - shut)
+            d = plan_step(p, goal, allies | set(live) | shut, pol.blocked, passable=allies - shut, goals=goal_tiles)
             if d is None:
                 break
             press((pad_for(d, turn),), 8)
@@ -1032,6 +1110,17 @@ def aimed_turn(side, units, pol, press):
     adjacent = dist(pos()[me]) <= 1
     press(('C',), 6)
     press((), 30)                                  # command ring, cursor on Hold
+    mq = pos().get(me)
+    inr = [k for k, x, y, f, hp in enemies if hp > 0 and k not in getattr(pol, "phantoms", set()) and mq
+           and tactics.md((x, y), mq) <= tactics.SPELL_RANGE]
+    kind = None
+    if me in rng_by and inr and not cautious:
+        if me in tac.get("casters", ()) and unit_mp_of(rd, units["force"], me) >= tactics.MP_MIN:
+            kind = "magic"
+        elif me in tac.get("item_attack", ()):
+            kind = "item"
+        elif me in tac.get("ranged", ()):
+            kind = "attack"
     near = me in pos() and dist(pos()[me]) <= 2                    # first-level spells reach 2 tiles (Blaze, Heal)
     cast_now = (near and pol.cast and pol.tried.get(me, 0) % 2 == 0) or (near and cast_pick)
     # round 19 (Sc3 Ch7 dock fight, search v55): the leader and protected units never cast. Julian's
@@ -1040,7 +1129,18 @@ def aimed_turn(side, units, pol, press):
     cast_now = cast_now and not cautious and not lead_attack
     if near and pol.cast:
         pol.tried[me] = pol.tried.get(me, 0) + 1
-    if cast_now:
+    if kind:
+        # round 29 (--casters / --item-attack / --ranged): first spell at its first level, first item,
+        # or a bow shot on the highlighted target in reach; two uses that take no HP turn it off
+        pol.tac_check = (tuple(sorted(inr)), sum(hp_of.get(k, 0) for k in inr), me)
+        press((RING[kind],), 6)
+        press((), 14)
+        for _ in range(2 if kind == "attack" else 4):
+            press(("C",), 6)
+            press((), 30)
+        pol.attacks += 1
+        pol.tac_uses = getattr(pol, "tac_uses", 0) + 1
+    elif cast_now:
         # --assist runs: each unit's turns alternate Magic and Attack, Magic first (first spell, its first level, the
         # highlighted target, confirm); a unit with no spells gets a message the trailing C closes
         press((RING['magic'],), 6)

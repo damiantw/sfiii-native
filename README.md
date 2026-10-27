@@ -338,7 +338,7 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
 - **Story replays:** `tools/sf3-story.py` plays forward from saves. It records deterministic, pad-only segments
   (`tools/story-replays/`), which replay frame-exactly with a fixed clock. `sf3-story.py search` finds battle
   inputs by branching and backtracking. Its battle-policy options (all pad inputs only, no RAM pokes) include:
-  - `--leader` and `--protect`: units whose fall loses the battle
+  - `--leader` and `--protect`: units whose fall loses the battle. Protected units avoid danger (they retreat when hurt, in the `--avoid` zone or within `--keep-away`) but still attack a target they can hit without ending next to a stationary enemy
   - `--guard-hp`: the HP floor for those units
   - `--escort`: keep units next to a guest
   - `--avoid X,Y,R`: leave a trap zone
@@ -348,6 +348,9 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
   - `--leader-attack S`: let the leader walk to and attack an enemy it can finish or one under S of max HP (never through the `--avoid` zone)
   - `--max-deaths` and `--max-levels`: search limits
   - `--slim`: keep only the saves on the search path; a backtrack replays an alternative from its parent
+  - `--hold-until N`: units stay out of range of stationary enemies until N units can reach the same target this round, then commit together
+  - `--ranged`, `--casters` and `--item-attack`: units that shoot, cast their first attack spell, or use their first item on an enemy within 2 tiles (focus targets first)
+  - `--healers`: units that cast Heal on a hurt ally next to them (or walk to one) before attacking
 - **Differential testing against Beetle Saturn:** `tools/sf3-diff.py` and `tools/sf3test` run the same inputs on
   the native port and on a libretro core that you build separately and run with your own BIOS. They compare RAM,
   story flags, VDP1/VDP2 output and saves.
