@@ -20,6 +20,10 @@ SCENE = re.compile(r"X1[A-Z0-9_]+$")
 ENDS = ("rts", "rte", "jmp", "bra", "braf")
 MAX_INSNS = 256
 
+# Regression guard: the soak crash this rule fixes (X005 calls 0605E06C through an object slot).
+# Kept as explicit seeds so the entry stays even if the table rule changes; still validated.
+REGRESSION_SEEDS = {"X1JASN01": (0x0605E06C,), "X1FUTTIN": (0x0605E06C,)}
+
 
 def is_scene(name):
     return bool(SCENE.match(name))
@@ -53,9 +57,10 @@ def plausible_code(img, start, pools):
     return "no unconditional branch within %d instructions" % MAX_INSNS
 
 
-def data_table_entries(img, program):
+def data_table_entries(img, program, name=None):
     """(accepted entry addresses, [(target, verdict, reason, table words)]) for one image,
-    given discovery (`program`) over its other seeds."""
+    given discovery (`program`) over its other seeds. `name` adds that module's
+    REGRESSION_SEEDS (inside the image only), validated the same way."""
     code = set(program.code)
     entries = set(program.funcs)
     pools = set()
@@ -85,4 +90,16 @@ def data_table_entries(img, program):
                 accepted.add(target)
                 reason = "plausible code"
         rows.append((target, verdict, reason, refs[target]))
+    for target in REGRESSION_SEEDS.get(name, ()):
+        if target in refs or not img.contains(target, 2):
+            continue
+        if target in entries:
+            rows.append((target, "known", "already an entry (regression seed)", []))
+            continue
+        reason = "inside known code" if target in code else plausible_code(img, target, pools)
+        if reason:
+            rows.append((target, "rejected", reason + " (regression seed)", []))
+        else:
+            accepted.add(target)
+            rows.append((target, "accepted", "regression seed, plausible code", []))
     return accepted, rows

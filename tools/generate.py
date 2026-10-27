@@ -54,7 +54,7 @@ for m in modules:
     if scene_rule and is_scene(m['name']):
         # Callbacks a scene keeps only in its own data tables (tools/scene_data_entries.py).
         image_view = Image(data, base)
-        found, rows = data_table_entries(image_view, Program(image_view, [base] + sorted(seeds - {base})))
+        found, rows = data_table_entries(image_view, Program(image_view, [base] + sorted(seeds - {base})), m['name'])
         seeds.update(found)
         scene_log += [(m['name'], t, v, why, refs) for t, v, why, refs in rows]
         rejected = sum(1 for row in rows if row[1] == 'rejected')
