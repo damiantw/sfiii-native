@@ -45,7 +45,8 @@ SHOT_EVERY = 3000    # frames between progress shots
 MAP_HOLD = 20        # flag checks a map goal's map must hold
 CLOCK = '2026-01-01T00:00:00'   # SMPC clock at power-on for every recorded or replayed run
 # Segments are recorded with the agent's default pause at VBlank-IN; SF3_AGENT_LINE (used by Beetle
-# diffs) moves the step edge and would shift every press, so story runs never inherit it.
+# diffs) moves the step edge and would shift every press, so story runs never inherit it; replay uses
+# a segment's own 'agent_line' header instead (story.agent_line_env).
 os.environ.pop('SF3_AGENT_LINE', None)
 
 
@@ -333,7 +334,10 @@ def replay(a):
     clock = h.get('clock')
     if not clock:
         print('warning: segment has no clock (recorded on the host clock): the RAM hash will not match')
-    r = start_run(a.saturn, a.cue, start, mm['scenario'], out, coverage=a.coverage, clock=clock)
+    with story.agent_line_env(h) as line:    # a segment recorded at another step edge says so (agent_line)
+        if line:
+            print(f'segment recorded at agent line {line}')
+        r = start_run(a.saturn, a.cue, start, mm['scenario'], out, coverage=a.coverage, clock=clock)
     want = [g for g in (h.get('reached') or '-').split(',') if g and g != '-']
     goals = goal_list(ts, start)
     s = Recorder(r, profile, goals, out)

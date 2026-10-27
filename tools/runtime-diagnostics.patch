@@ -1,5 +1,5 @@
 diff --git a/runtime/include/saturn/sh2.h b/runtime/include/saturn/sh2.h
-index 1219a02..7f8af90 100644
+index 1219a02..4e3daa3 100644
 --- a/runtime/include/saturn/sh2.h
 +++ b/runtime/include/saturn/sh2.h
 @@ -11,9 +11,11 @@
@@ -23,7 +23,7 @@ index 1219a02..7f8af90 100644
      int      cpu;                       // 0 master, 1 slave
  };
  
-@@ -59,7 +61,40 @@ uint32_t sh2_mmio_read(uint32_t a, int size);           // what sh2_io_* does no
+@@ -59,7 +61,59 @@ uint32_t sh2_mmio_read(uint32_t a, int size);           // what sh2_io_* does no
  void     sh2_mmio_write(uint32_t a, uint32_t v, int size);
  
  // A safe point: loop back-edges, calls, and `ldc ...,sr` (the mask may drop).
@@ -38,8 +38,27 @@ index 1219a02..7f8af90 100644
 +// quarter cycles: the average wait the cache and the bus add).
 +// SF3_MEM_Q=N overrides it (default 8: two cycles of average wait per access,
 +// fitted to Beetle's Sc1 battle-start counter plateaus). Larger is a slower CPU.
-+inline int32_t g_sh2_mem_q = [] { const char* v = std::getenv("SF3_MEM_Q"); return v ? (int32_t)std::atol(v) : 8; }();
-+#define SH2_CYC(c, n, m) ((c).budget -= (n) * 4 + (m) * g_sh2_mem_q)
++// The bus model, on with --accurate-drive (sat_init): each access is charged instead (sh2_bus_access,
++// mmio.cpp): the data cache's hits and line fills, the cache-through reads of each memory and device, and
++// the time a write keeps the bus; plus the pipeline's extra cycles that the recompiler counts per block
++// (SH2_CYC2; saturnrecomp/recomp/emit.py, contended()). Then the flat charge per access defaults to 0.
++inline bool g_sh2_bus = false;
++inline int32_t g_sh2_mem_q = 8;
++inline void sh2_set_bus_model(bool on) {
++    g_sh2_bus = on;
++    const char* q = std::getenv("SF3_MEM_Q");
++    g_sh2_mem_q = q ? (int32_t)std::atol(q) : g_sh2_bus ? 0 : 8;
++}
++void sh2_bus_access(uint32_t a, int size, bool write);     // a work-RAM access's cost, with g_sh2_bus
++#define SH2_BUS(a, size, w) do { if (SH2_UNLIKELY(g_sh2_bus)) sh2_bus_access(a, size, w); } while (0)
++// With g_sh2_bus the block's shape is noted too (sh2_bus_access places its k-th access at (2k+1)/2m of the
++// block's issue time, since the whole block is charged up front).
++struct Sh2Blk { int32_t n; uint8_t m, k; };
++inline Sh2Blk g_sh2_blk;
++#define SH2_CYC(c, n, m) ((void)(SH2_UNLIKELY(g_sh2_bus) && (m) ? (g_sh2_blk = Sh2Blk{(n) * 4, (uint8_t)(m), 0}, 0) : 0), \
++                          (c).budget -= (n) * 4 + (m) * g_sh2_mem_q)
++// A block with k reads at addresses 2 mod 4: a cycle more each, with the bus model.
++#define SH2_CYC2(c, n, m, k) (SH2_CYC(c, n, m), (void)(SH2_UNLIKELY(g_sh2_bus) ? ((c).budget -= (k) * 4) : 0))
 +// Block coverage, only in builds generated with block coverage on (tools/generate.py --block-coverage):
 +// each block of recompiled code stores 1 into its module's hit bytes as it is entered, a byte per CPU
 +// (index 2*block + cpu). Builds generated without it emit no SH2_BLK and register no table, so this costs
@@ -65,6 +84,70 @@ index 1219a02..7f8af90 100644
  // After a call: the callee's rts must have come back here.
  #define SH2_RET(c, a) do { if (SH2_UNLIKELY((c).pc != (a))) sh2_bad_return(c, a); } while (0)
  
+@@ -78,42 +132,42 @@ void sh2_watch_store(uint32_t a, uint32_t v, int size);
+     do { if (SH2_UNLIKELY(((a) & 0xDFFFFFFFu) - g_sh2_watch_lo < g_sh2_watch_len)) sh2_watch_store(a, v, size); } while (0)
+ 
+ static inline uint32_t ld8(uint32_t a) {
+-    if (SH2_IS_WRAM_H(a)) return g_wram_h[a & 0xFFFFFu];
+-    if (SH2_IS_WRAM_L(a)) return g_wram_l[a & 0xFFFFFu];
++    if (SH2_IS_WRAM_H(a)) { SH2_BUS(a, 1, false); return g_wram_h[a & 0xFFFFFu]; }
++    if (SH2_IS_WRAM_L(a)) { SH2_BUS(a, 1, false); return g_wram_l[a & 0xFFFFFu]; }
+     return sh2_io_read(a, 1) & 0xFFu;
+ }
+ static inline uint32_t ld16(uint32_t a) {
+     uint16_t v;
+-    if (SH2_IS_WRAM_H(a)) std::memcpy(&v, g_wram_h + (a & 0xFFFFFu), 2);
+-    else if (SH2_IS_WRAM_L(a)) std::memcpy(&v, g_wram_l + (a & 0xFFFFFu), 2);
++    if (SH2_IS_WRAM_H(a)) { SH2_BUS(a, 2, false); std::memcpy(&v, g_wram_h + (a & 0xFFFFFu), 2); }
++    else if (SH2_IS_WRAM_L(a)) { SH2_BUS(a, 2, false); std::memcpy(&v, g_wram_l + (a & 0xFFFFFu), 2); }
+     else return sh2_io_read(a, 2) & 0xFFFFu;
+     return __builtin_bswap16(v);
+ }
+ static inline uint32_t ld32(uint32_t a) {
+     uint32_t v;
+-    if (SH2_IS_WRAM_H(a)) std::memcpy(&v, g_wram_h + (a & 0xFFFFFu), 4);
+-    else if (SH2_IS_WRAM_L(a)) std::memcpy(&v, g_wram_l + (a & 0xFFFFFu), 4);
++    if (SH2_IS_WRAM_H(a)) { SH2_BUS(a, 4, false); std::memcpy(&v, g_wram_h + (a & 0xFFFFFu), 4); }
++    else if (SH2_IS_WRAM_L(a)) { SH2_BUS(a, 4, false); std::memcpy(&v, g_wram_l + (a & 0xFFFFFu), 4); }
+     else return sh2_io_read(a, 4);
+     return __builtin_bswap32(v);
+ }
+ static inline void st8(uint32_t a, uint32_t v) {
+     SH2_WATCH(a, v, 1);
+-    if (SH2_IS_WRAM_H(a)) g_wram_h[a & 0xFFFFFu] = (uint8_t)v;
+-    else if (SH2_IS_WRAM_L(a)) g_wram_l[a & 0xFFFFFu] = (uint8_t)v;
++    if (SH2_IS_WRAM_H(a)) { SH2_BUS(a, 1, true); g_wram_h[a & 0xFFFFFu] = (uint8_t)v; }
++    else if (SH2_IS_WRAM_L(a)) { SH2_BUS(a, 1, true); g_wram_l[a & 0xFFFFFu] = (uint8_t)v; }
+     else sh2_io_write(a, v & 0xFFu, 1);
+ }
+ static inline void st16(uint32_t a, uint32_t v) {
+     SH2_WATCH(a, v, 2);
+     uint16_t w = __builtin_bswap16((uint16_t)v);
+-    if (SH2_IS_WRAM_H(a)) std::memcpy(g_wram_h + (a & 0xFFFFFu), &w, 2);
+-    else if (SH2_IS_WRAM_L(a)) std::memcpy(g_wram_l + (a & 0xFFFFFu), &w, 2);
++    if (SH2_IS_WRAM_H(a)) { SH2_BUS(a, 2, true); std::memcpy(g_wram_h + (a & 0xFFFFFu), &w, 2); }
++    else if (SH2_IS_WRAM_L(a)) { SH2_BUS(a, 2, true); std::memcpy(g_wram_l + (a & 0xFFFFFu), &w, 2); }
+     else sh2_io_write(a, v & 0xFFFFu, 2);
+ }
+ static inline void st32(uint32_t a, uint32_t v) {
+     SH2_WATCH(a, v, 4);
+     uint32_t w = __builtin_bswap32(v);
+-    if (SH2_IS_WRAM_H(a)) std::memcpy(g_wram_h + (a & 0xFFFFFu), &w, 4);
+-    else if (SH2_IS_WRAM_L(a)) std::memcpy(g_wram_l + (a & 0xFFFFFu), &w, 4);
++    if (SH2_IS_WRAM_H(a)) { SH2_BUS(a, 4, true); std::memcpy(g_wram_h + (a & 0xFFFFFu), &w, 4); }
++    else if (SH2_IS_WRAM_L(a)) { SH2_BUS(a, 4, true); std::memcpy(g_wram_l + (a & 0xFFFFFu), &w, 4); }
+     else sh2_io_write(a, v, 4);
+ }
+ 
+@@ -196,6 +250,8 @@ const SH2Module* sh2_identify(uint32_t base);     // the module whose image is i
+ const SH2Module* sh2_identify_containing(uint32_t addr, bool* exact);   // a module whose image in memory holds addr
+ void    sh2_activate(const SH2Module* m);          // replaces any active module it overlaps
+ SH2Func sh2_lookup(uint32_t addr);                  // nullptr if not an entry of an active module
++uint64_t sh2_dispatch_audit_reports();               // SF3_DISPATCH_AUDIT=1: entries run over other bytes, logged (core.cpp)
++uint32_t sh2_audit_window(const uint8_t* image, uint32_t n);   // bytes the audit compares at an entry
+ void    sh2_call_unknown(SH2Context& c, uint32_t addr);   // services: not an entry (the BIOS...)
+ void    sh2_program_start(SH2Context& c, uint32_t addr);  // services: restart at a program entry
+ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc = 0);
 diff --git a/runtime/runtime.cmake b/runtime/runtime.cmake
 index ecf1dde..86a21a6 100644
 --- a/runtime/runtime.cmake
@@ -169,21 +252,27 @@ index 0000000..712a96c
 +    ~SH2CallFrame() { g_sh2_frames->pop(depth); }
 +};
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..5de23d4 100644
+index cb6af72..ef13591 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
-@@ -3,7 +3,10 @@
+@@ -3,8 +3,16 @@
  // active modules (one per address range: the resident programs and the one
  // swapped in).
  #include "saturn/sh2.h"
 +#include "call_frames.h"
 +extern const bool g_sh2_native_states __attribute__((weak)) = false;
++// The bus model lives in the machine (mmio.cpp); a core-only link (selftest, tools tests) never turns it on.
++__attribute__((weak)) void sh2_bus_access(uint32_t, int, bool) {}
  #include <cstdio>
 +#include <cstdlib>
  #include <cstring>
++#include <unordered_map>
++#include <unordered_set>
++#include <vector>
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
-@@ -13,19 +16,23 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
+ alignas(64) uint8_t g_wram_h[0x100000 + 8];
+@@ -13,19 +21,24 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
  // Areas by the top three bits: 0 cached, 1 cache-through (the same 27-bit
  // external bus), 2 associative purge (writes drop a cache line: nothing to
  // do), 3 the cache's address array, 6 its data array, 7 the on-chip
@@ -202,6 +291,7 @@ index cb6af72..5de23d4 100644
 +static bool wram_l_mirror(uint32_t p) { return p >= 0x00300000u && p < 0x00400000u; }
  
  uint32_t sh2_io_read(uint32_t a, int size) {
++    SH2_BUS(a, size, false);
      uint32_t area = a >> 29;
      if (area <= 1) {
          uint32_t p = a & 0x07FFFFFFu;
@@ -210,7 +300,15 @@ index cb6af72..5de23d4 100644
          return sh2_mmio_read(p, size);
      }
      if (area == 2) return 0;
-@@ -40,6 +47,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -33,6 +46,7 @@ uint32_t sh2_io_read(uint32_t a, int size) {
+ }
+ 
+ void sh2_io_write(uint32_t a, uint32_t v, int size) {
++    SH2_BUS(a, size, true);
+     uint32_t area = a >> 29;
+     if (area <= 1) {
+         uint32_t p = a & 0x07FFFFFFu;
+@@ -40,6 +54,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
              for (int i = size - 1; i >= 0; --i, v >>= 8) g_wram_h[(p + i) & 0xFFFFFu] = (uint8_t)v;
              return;
          }
@@ -221,7 +319,7 @@ index cb6af72..5de23d4 100644
          sh2_mmio_write(p, v, size);
          return;
      }
-@@ -50,7 +61,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -50,7 +68,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
  static uint8_t* host(uint32_t a) {
      a &= 0x1FFFFFFFu;
      if (a >= 0x06000000u && a < 0x08000000u) return g_wram_h + (a & 0xFFFFFu);
@@ -230,7 +328,7 @@ index cb6af72..5de23d4 100644
      return nullptr;
  }
  
-@@ -88,6 +99,10 @@ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc) {
+@@ -88,6 +106,10 @@ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc) {
      return ~crc;
  }
  
@@ -241,7 +339,7 @@ index cb6af72..5de23d4 100644
  const SH2Module* sh2_module(const char* name) {
      for (int i = 0; i < g_sh2_nmodules; ++i)
          if (!std::strcmp(g_sh2_modules[i]->name, name)) return g_sh2_modules[i];
-@@ -113,42 +128,116 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +135,188 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -307,9 +405,81 @@ index cb6af72..5de23d4 100644
 +// restored memory would trust the old module's dispatch for the new image.
 +uint64_t sh2_active_head(int i) { return g_active_heads[i]; }
 +void sh2_set_active_head(int i, uint64_t head) { g_active_heads[i] = head;++g_active_gen; }
++
++// ---- the dispatch audit (SF3_DISPATCH_AUDIT=1) -------------------------------------------------
++// Logs, never aborts: a call through a register that the active modules resolve to a recompiled
++// entry whose first instruction bytes in memory are not the module image's, so the dispatch runs
++// code built for other bytes (a program loaded over a module and called before anything noticed,
++// or code changed since). A call that resolves to no entry still stops with the "not an entry"
++// fatal: there is no code to run. The reference image of a module is taken the first time it is
++// seen exactly (crc) at an activation or a call; one line per module and entry.
++static bool audit_on() { static const bool on = [] { const char* e = std::getenv("SF3_DISPATCH_AUDIT"); return e && *e && *e != '0'; }(); return on; }
++static std::unordered_map<const SH2Module*, std::vector<uint8_t>> g_audit_image;
++static std::unordered_map<const SH2Module*, uint64_t> g_audit_tried;   // the generation of the last failed capture
++static std::unordered_set<uint64_t> g_audit_seen;
++static uint64_t g_audit_reports;
++uint64_t sh2_dispatch_audit_reports() { return g_audit_reports; }
++static void audit_capture(const SH2Module* m) {
++    if (!audit_on() || !m || g_audit_image.count(m)) return;
++    uint8_t* p = host(m->base);
++    if (!p || !host(m->base + m->size - 1) || sh2_crc32(p, m->size) != m->crc) return;
++    g_audit_image[m].assign(p, p + m->size);
++}
++// The bytes compared: the entry's straight-line code in the image, up to and including the delay
++// slot of its first unconditional branch (bra, braf, jmp, rts, rte). What follows such a branch is
++// not run from here and is often its literal pool, where hand-written code keeps variables it
++// stores to (mova SLOT,r0; rts; mov.w r4,@r0): those change by design and are not stale code.
++uint32_t sh2_audit_window(const uint8_t* image, uint32_t n) {
++    for (uint32_t i = 0; i + 1 < n; i += 2) {
++        uint16_t w = uint16_t(image[i] << 8 | image[i + 1]);
++        bool branch = (w & 0xF000) == 0xA000 || w == 0x000B || w == 0x002B ||
++                      (w & 0xF0FF) == 0x0023 || (w & 0xF0FF) == 0x402B;
++        if (branch) return i + 4 < n ? i + 4 : n;
++    }
++    return n;
++}
++static uint32_t audit_window(const uint8_t* image, uint32_t n) { return sh2_audit_window(image, n); }
++static void audit_call(const SH2Context& c, uint32_t addr) {
++    const SH2Module* m = nullptr; uint32_t k = 0;
++    for (int slot = 0; slot < kSlots && !m; ++slot) {
++        const SH2Module* a = g_active[slot];
++        if (!a || addr - a->base >= a->size) continue;
++        uint32_t lo = 0, hi = a->nfuncs;
++        while (lo < hi) { uint32_t mid = (lo + hi) / 2; if (a->funcs[mid].addr < addr) lo = mid + 1; else hi = mid; }
++        if (lo < a->nfuncs && a->funcs[lo].addr == addr) { m = a; k = lo; }
++    }
++    if (!m) return;
++    auto it = g_audit_image.find(m);
++    if (it == g_audit_image.end()) {
++        uint64_t& tried = g_audit_tried[m];
++        if (tried == g_active_gen) return;
++        tried = g_active_gen;
++        audit_capture(m);
++        it = g_audit_image.find(m);
++        if (it == g_audit_image.end()) {
++            if (g_audit_seen.insert((uint64_t)(uintptr_t)m).second)
++                std::fprintf(stderr, "dispatch audit: %s active without an exact image seen yet; its entries are not checked until one is (call to %08X from pr %08X)\n", m->name, addr, c.pr);
++            return;
++        }
++    }
++    uint32_t off = addr - m->base, n = m->sizes && m->sizes[k] ? 2u * m->sizes[k] : 2u;
++    if (n > 16) n = 16;
++    if (off + n > m->size) n = m->size - off;
++    n = audit_window(it->second.data() + off, n);
++    const uint8_t* p = host(addr);
++    if (!p || std::memcmp(p, it->second.data() + off, n) == 0) return;
++    if (!g_audit_seen.insert((uint64_t)(uintptr_t)m ^ ((uint64_t)addr << 32 | 1)).second) return;
++    ++g_audit_reports;
++    const SH2Module* now = sh2_identify(m->base);
++    char mem[40], img[40];
++    for (uint32_t i = 0; i < n && i < 16; ++i) { std::snprintf(mem + 2 * i, 3, "%02X", p[i]); std::snprintf(img + 2 * i, 3, "%02X", it->second[off + i]); }
++    std::fprintf(stderr, "dispatch audit: call to %08X (from pr %08X) runs %s's entry, but memory there holds %s, not the image's %s; the image at %08X is %s\n",
++                 addr, c.pr, m->name, mem, img, m->base, now ? now->name : "no known module");
++}
  
  void sh2_activate(const SH2Module* m) {
 +    ++g_active_gen;
++    audit_capture(m);
      for (auto& a : g_active)
          if (a && a->base < m->base + m->size && m->base < a->base + a->size) a = nullptr;
 -    for (auto& a : g_active)
@@ -342,7 +512,7 @@ index cb6af72..5de23d4 100644
 +    uint8_t slots[2]; int n = 0;
 +    for (int slot = 0; slot < kSlots; ++slot) {
 +        const SH2Module* m = g_active[slot];
-         if (!m || addr - m->base >= m->size) continue;
++        if (!m || addr - m->base >= m->size) continue;
 +        if (n == 2) return f;                            // unusual overlap: not cached
 +        slots[n++] = (uint8_t)slot;
 +        if (has_entry(m, addr)) break;
@@ -355,7 +525,7 @@ index cb6af72..5de23d4 100644
 +static SH2Func lookup_slow(uint32_t addr) {
 +    for (int slot=0;slot<kSlots;++slot) {
 +        const SH2Module* m=g_active[slot];
-+        if (!m || addr - m->base >= m->size) continue;
+         if (!m || addr - m->base >= m->size) continue;
 +        // Overlay transitions can call an interior export already present in
 +        // the old dispatch table. A changed header triggers full-image identity
 +        // before trusting that entry. Data-only mutation retains its owner.
@@ -371,7 +541,7 @@ index cb6af72..5de23d4 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -183,12 +272,57 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -183,14 +351,59 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  
@@ -429,8 +599,11 @@ index cb6af72..5de23d4 100644
 -        else { sh2_program_start(c, addr); return; }
 +        else if (m || !inside_loaded_program(addr)) { sh2_program_start(c, addr); return; }
      }
-     if (SH2Func f = sh2_lookup(addr)) f(c);
+-    if (SH2Func f = sh2_lookup(addr)) f(c);
++    if (SH2Func f = sh2_lookup(addr)) { if (SH2_UNLIKELY(audit_on())) audit_call(c, addr); f(c); }
      else sh2_call_unknown(c, addr);
+ }
+ 
 diff --git a/runtime/src/host/frame_stats.h b/runtime/src/host/frame_stats.h
 new file mode 100644
 index 0000000..00c23c1
@@ -2005,9 +2178,18 @@ index 5b42ace..6c3c482 100644
      }
  }
 diff --git a/runtime/src/machine/cdblock.cpp b/runtime/src/machine/cdblock.cpp
-index cd80763..2e41b5e 100644
+index cd80763..737ad20 100644
 --- a/runtime/src/machine/cdblock.cpp
 +++ b/runtime/src/machine/cdblock.cpp
+@@ -2,7 +2,7 @@
+ //
+ // The host writes a command into CR1-CR4 (CR4 last) and reads the answer
+ // from the same registers; HIRQ holds the flags (writing clears the bits
+-// written as 0). Commands complete at once. The drive delivers data sectors
++// written as 0). With --accurate-drive a command's flags come up microseconds later (issue()). The drive delivers data sectors
+ // of the disc (cdrom.cpp) at 300 a second while it plays, twice a double-speed
+ // drive's rate, and starts playing at once. With --accurate-drive it reads 150
+ // a second and seeks first, by Mednafen's model (cd_seek_ns). Each goes from the
 @@ -19,6 +19,7 @@
  // noted here.
  #include "saturn.h"
@@ -2016,7 +2198,15 @@ index cd80763..2e41b5e 100644
  #include <cstring>
  #include <deque>
  #include <string>
-@@ -58,6 +59,7 @@ static bool g_is_cdrom = true;                  // the report's CD-ROM bit
+@@ -44,6 +45,7 @@ static Filter g_filter[kFilters];
+ static uint8_t g_cddev = 0xFF, g_lastbuf = 0xFF;
+ 
+ static uint16_t g_hirq, g_hmask, g_cr[4], g_out[4];
++static void cmd_settle(uint64_t now);     // a command's flags, once due (issue())
+ static bool g_cmd_busy;
+ static uint64_t g_next_peri;
+ 
+@@ -58,6 +60,7 @@ static bool g_is_cdrom = true;                  // the report's CD-ROM bit
  static uint64_t g_cdrom_clear_at, g_fs_data_at;
  static const uint64_t kCdromClearNs = 500ull * 1000000000ull / (44100 * 256);
  static uint64_t g_play_t0, g_play_done;         // time the play began, sectors read since
@@ -2024,7 +2214,17 @@ index cd80763..2e41b5e 100644
  static uint64_t g_seek_from, g_seek_until;      // --accurate-drive: a play's seek, BUSY then SEEK, until PLAY
  static int g_getlen = 2048;
  static std::deque<int16_t> g_cdda;              // the audio played, not yet taken by the SCSP (L, R)
-@@ -207,6 +209,21 @@ static void play_ended() {
+@@ -199,14 +202,29 @@ static bool deliver_sector() {
+     return true;
+ }
+ 
+-static void play_ended() {
++static void play_ended(uint64_t busy_extra_ns = 0, uint64_t at = 0) {
+     if (g_repeat_left > 0 || g_repeat == 0xF) {
+         if (g_repeat != 0xF) --g_repeat_left;
+         g_fad = g_play_start;
+-        g_play_t0 = sat_now();
++        g_play_t0 = at ? at : sat_now();
          g_play_done = 0;
          return;
      }
@@ -2039,14 +2239,40 @@ index cd80763..2e41b5e 100644
 +            const char* v = std::getenv("SF3_CD_BUSY_US");
 +            return v ? (uint64_t)std::atoll(v) * 1000 + 1 : 8237001ull;
 +        }();
-+        g_pause_at = sat_now() + busy_ns;
++        g_pause_at = (at ? at : sat_now()) + busy_ns + busy_extra_ns;
 +        sat_trace("CD: play ended at FAD %u, pausing", g_fad);
 +        return;
 +    }
      g_status = ST_PAUSE;
      g_hirq |= PEND;
      sat_trace("CD: play ended at FAD %u", g_fad);
-@@ -238,6 +255,7 @@ void cd_tick() {
+@@ -226,8 +244,23 @@ uint64_t cd_seek_ns(uint32_t from, uint32_t to, int rate, uint64_t* busy_ns) {
+ 
+ int cd_data_rate() { return g_cfg.accurate_drive ? 150 : 300; }
+ 
+-void cd_tick() {
+-    uint64_t now = sat_now();
++// --accurate-drive: the drive's events at their own times, not at the device poll's. Reference emulator,
++// black box (cpu r41, cd2/t5.py and t6.py, 63.5 us resolution): the first CSCT comes 116.0 ms after the CR4
++// write of a play (d = 0), GetSectorNumber counts the sector from then on, and PAUSE + PEND come
++// 14.87-15.00 ms after the last CSCT. Ours took the play's start from the poll before the command (up to a
++// poll, ~100 us, early), started PLAY and ended the play at the poll after the seek or the last sector (up
++// to a poll late), and a command or HIRQ read saw the drive as of the last poll. So a play now starts at
++// its CR4 write, PLAY at the seek's end, the PAUSE timer at the last sector's time, and every command and
++// HIRQ read first brings the drive up to the CPU's own time (drive_at). s2v2-05: a status poll 50 us
++// after the PAUSE time still saw BUSY, a frame late.
++static uint64_t g_drive_now;                    // the latest time the drive was brought to (not saved)
++static void drive_at(uint64_t now) {
++    const bool exact = g_cfg.accurate_drive;
++    if (exact) {
++        if (now < g_drive_now) now = g_drive_now;
++        g_drive_now = now;
++    }
++    cmd_settle(now);
+     if (g_cdrom_clear_at && now >= g_cdrom_clear_at) g_is_cdrom = false, g_cdrom_clear_at = 0;
+     if (g_fs_data_at && now >= g_fs_data_at) g_is_cdrom = true, g_fs_data_at = 0;
+     if (g_fs_done && now >= g_fs_done) {
+@@ -238,17 +271,18 @@ void cd_tick() {
      } else if (g_fs_done && now >= g_seek_from) {
          g_status = ST_SEEK;
      }
@@ -2054,9 +2280,39 @@ index cd80763..2e41b5e 100644
      if (g_status == ST_BUSY && g_seek_until && now >= g_seek_from) g_status = ST_SEEK;
      if (g_status == ST_SEEK && g_seek_until && now >= g_seek_until) {
          g_status = ST_PLAY;
-@@ -261,7 +279,13 @@ void cd_tick() {
+-        g_play_t0 = now;
++        g_play_t0 = exact ? g_seek_until : now;
+         g_seek_until = 0;
+     }
+-    if (g_status == ST_PLAY) {
++    if (g_status == ST_PLAY && now >= g_play_t0) {
+         uint64_t rate = g_audio_play ? 75 : (uint64_t)cd_data_rate();
+         uint64_t due = (now - g_play_t0) * rate / 1000000000ull;
+         while (g_play_done < due && g_status == ST_PLAY) {
+-            if (g_fad >= g_play_end) { play_ended(); break; }
++            if (g_fad >= g_play_end) { play_ended(0, exact ? g_play_t0 + (g_play_done + 1) * 1000000000ull / rate : 0); break; }
+             if (!g_audio_play && !deliver_sector()) {       // the buffer is full: wait
+                 g_play_t0 = now - g_play_done * 1000000000ull / rate;
+                 break;
+@@ -258,10 +292,29 @@ void cd_tick() {
+                 for (int i = 0; i < 2352; i += 2) g_cdda.push_back((int16_t)(raw[i] | raw[i + 1] << 8));
+             ++g_fad;
+             ++g_play_done;
++            // With --accurate-drive a data play's last sector turns the drive BUSY at once, not a sector
++            // later (reference emulator, black box: s1-07's play to FAD 5EC7 reports BUSY 0.5 ms after its
++            // last sector, then PAUSE at a later report).
++            if (g_cfg.accurate_drive && !g_audio_play && g_fad >= g_play_end && g_repeat_left <= 0 && g_repeat != 0xF) {
++                play_ended(1000000000ull / rate, exact ? g_play_t0 + g_play_done * 1000000000ull / rate : 0);
++                break;
++            }
          }
      }
++}
++
++void cd_tick() {
++    uint64_t now = sat_now();
++    drive_at(now);
++    if (g_cfg.accurate_drive && now < g_drive_now) now = g_drive_now;
      if (now >= g_next_peri) {                   // the periodic report
 -        g_next_peri = now + 16666667;
 +        // Saturn Technical Bulletin (Sattechs p31): the report is updated every 13.3 ms at
@@ -2069,7 +2325,7 @@ index cd80763..2e41b5e 100644
          g_hirq |= SCDQ;
          if (!g_cmd_busy) {
              report();
-@@ -329,7 +353,7 @@ static void fs_read(uint32_t fad, uint32_t size) {
+@@ -329,7 +382,7 @@ static void fs_read(uint32_t fad, uint32_t size) {
      g_seek_from = now + busy;
      g_seek_until = 0;
      g_fad = fad + n;
@@ -2078,7 +2334,12 @@ index cd80763..2e41b5e 100644
      g_cdrom_clear_at = now + kCdromClearNs;
      g_fs_data_at = g_fs_done - n * (1000000000ull / cd_data_rate());
  }
-@@ -363,9 +387,18 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
+@@ -359,13 +412,22 @@ static void start_play(uint32_t start, uint32_t end, int mode) {
+     g_audio_play = cdrom_is_audio(g_fad);
+     g_cdrom_clear_at = sat_now() + kCdromClearNs;
+     g_status = ST_PLAY;
+-    g_play_t0 = sat_now();
++    g_play_t0 = g_cfg.accurate_drive ? sat_now_cpu() : sat_now();
      g_play_done = 0;
      g_seek_until = 0;
      g_fs_done = 0;
@@ -2097,7 +2358,7 @@ index cd80763..2e41b5e 100644
          g_seek_from = g_play_t0 + busy;
          g_status = ST_BUSY;
      }
-@@ -410,7 +443,7 @@ static void command() {
+@@ -410,7 +472,7 @@ static void command() {
          g_hirq |= CMOK;
          break;
      case 0x04:                                  // Initialize CD System
@@ -2106,7 +2367,7 @@ index cd80763..2e41b5e 100644
          if (cr1 & 0x10) sat_trace("CD: 1x speed asked for (kept at 2x)");
          report();
          g_hirq |= CMOK | ESEL;
-@@ -431,12 +464,12 @@ static void command() {
+@@ -431,12 +493,12 @@ static void command() {
          break;
      case 0x11: {                                // Seek Disc
          uint32_t pos = (uint32_t)(cr1 & 0xFF) << 16 | cr2;
@@ -2121,7 +2382,7 @@ index cd80763..2e41b5e 100644
          }
          report();
          g_hirq |= CMOK;
-@@ -457,12 +490,12 @@ static void command() {
+@@ -457,12 +519,12 @@ static void command() {
          g_hirq |= CMOK | DRDY;
          break;
      }
@@ -2136,7 +2397,7 @@ index cd80763..2e41b5e 100644
          break;
      case 0x41: {
          Filter& F = g_filter[f % kFilters];
-@@ -476,7 +509,7 @@ static void command() {
+@@ -476,7 +538,7 @@ static void command() {
              F.chan = cr1 & 0xFF; F.smmask = cr2 >> 8; F.cimask = cr2 & 0xFF; F.fid = cr3 & 0xFF;
              F.smval = cr4 >> 8; F.cival = cr4 & 0xFF;
          }
@@ -2145,7 +2406,7 @@ index cd80763..2e41b5e 100644
          break;
      case 0x43: {
          Filter& F = g_filter[f % kFilters];
-@@ -489,7 +522,7 @@ static void command() {
+@@ -489,7 +551,7 @@ static void command() {
              if (cr1 & 0x80) { uint8_t t = g_filter[f].tru, fl = g_filter[f].fals; reset_filter(f); g_filter[f].tru = t; g_filter[f].fals = fl; }
              else g_filter[f].mode = cr1 & 0xFF;
          }
@@ -2154,7 +2415,7 @@ index cd80763..2e41b5e 100644
          break;
      case 0x45: answer((uint16_t)(status_hi() | g_filter[f % kFilters].mode), 0, (uint16_t)(f << 8), 0); g_hirq |= CMOK | ESEL; break;
      case 0x46:                                  // Set Filter Connection
-@@ -497,7 +530,7 @@ static void command() {
+@@ -497,7 +559,7 @@ static void command() {
              if (cr1 & 1) g_filter[f].tru = cr2 >> 8;
              if (cr1 & 2) g_filter[f].fals = cr2 & 0xFF;
          }
@@ -2163,7 +2424,7 @@ index cd80763..2e41b5e 100644
          break;
      case 0x47: answer(status_hi(), (uint16_t)(g_filter[f % kFilters].tru << 8 | g_filter[f % kFilters].fals), (uint16_t)(f << 8), 0); g_hirq |= CMOK | ESEL; break;
      case 0x48: {                                // Reset Selector
-@@ -510,7 +543,7 @@ static void command() {
+@@ -510,7 +572,7 @@ static void command() {
              if (fl & 0x40) for (int i = 0; i < kFilters; ++i) g_filter[i].tru = (uint8_t)i;
              if (fl & 0x80) for (int i = 0; i < kFilters; ++i) g_filter[i].fals = 0xFF;
          }
@@ -2172,7 +2433,7 @@ index cd80763..2e41b5e 100644
          break;
      }
      case 0x50: answer(status_hi(), (uint16_t)g_free.size(), 0x1800, kBlocks); g_hirq |= CMOK; break;
-@@ -518,7 +551,7 @@ static void command() {
+@@ -518,7 +580,7 @@ static void command() {
      case 0x52: {                                // Calculate Actual Size (words)
          g_calcsize = 0;
          for (int b : pick(f, cr2, cr4)) { (void)b; g_calcsize += g_getlen / 2; }
@@ -2181,7 +2442,7 @@ index cd80763..2e41b5e 100644
          break;
      }
      case 0x53: answer((uint16_t)(status_hi() | (g_calcsize >> 16 & 0xFF)), (uint16_t)g_calcsize, 0, 0); g_hirq |= CMOK; break;
-@@ -533,19 +566,19 @@ static void command() {
+@@ -533,19 +595,19 @@ static void command() {
      case 0x60: {                                // Set Sector Length
          static const int len[4] = {2048, 2336, 2340, 2352};
          if ((cr1 & 0xFF) < 4) g_getlen = len[cr1 & 0xFF];
@@ -2204,7 +2465,7 @@ index cd80763..2e41b5e 100644
          break;
      case 0x67: answer(status_hi(), 0, 0, 0); g_hirq |= CMOK; break;   // Get Copy Error: none
      case 0x70: {                                // Change Directory
-@@ -587,7 +620,7 @@ static void command() {
+@@ -587,7 +649,7 @@ static void command() {
          report(); g_hirq |= CMOK;
          break;
      }
@@ -2213,7 +2474,7 @@ index cd80763..2e41b5e 100644
      case 0xE0: report(); g_hirq |= CMOK | EFLS | CSCT; break;                 // Authenticate Device
      case 0xE1: answer(status_hi(), 4, 0, 0); g_hirq |= CMOK; break;                 // a Saturn disc
      default:
-@@ -615,7 +648,7 @@ static uint16_t next_word() {
+@@ -615,7 +677,7 @@ static uint16_t next_word() {
  void cd_init() {
      reset_all();
      g_cddev = 0;                                // as the BIOS leaves it after reading the boot files
@@ -2222,12 +2483,86 @@ index cd80763..2e41b5e 100644
      g_fad = 150;
      g_seek_until = 0;
      g_fs_done = 0;
-@@ -680,5 +713,6 @@ void cdblock_state(State& s) {
+@@ -626,6 +688,7 @@ void cd_init() {
+     g_cdrom_clear_at = g_fs_data_at = 0;
+     g_cdda.clear();
+     g_cmd_busy = false;
++    g_drive_now = 0;
+     g_hirq = CMOK | CSCT | PEND | ESEL | EHST | ECPY | EFLS;
+     report();
+ }
+@@ -638,7 +701,10 @@ uint32_t cd_read(uint32_t off, int size) {
+         return off & 1 ? w & 0xFF : w >> 8;     // a byte read takes a whole word from the FIFO, as Mednafen's bus does
+     }
+     switch (off & ~3u) {
+-    case 0x90008: return g_hirq;
++    case 0x90008:
++        if (g_cfg.accurate_drive) drive_at(sat_now_cpu());
++        else cmd_settle(sat_now_cpu());
++        return g_hirq;
+     case 0x9000C: return g_hmask;
+     case 0x90018: return g_out[0];
+     case 0x9001C: return g_out[1];
+@@ -648,6 +714,37 @@ uint32_t cd_read(uint32_t off, int size) {
+     sat_fatal("CD block read %05X (%d bytes)", off, size);
+ }
+ 
++// A command's flags (CMOK and whatever else it raises) come up some microseconds after CR4, by its kind: the
++// time a reference emulator takes, measured as a black box from the CR4 write to CMOK (cpu r39, cmdlat.py,
++// 26.87 MHz SH-2 cycles: 210 for most commands, 300 for the "set" ones 30/40/42/44/46, 430 for 48, 355 for 75).
++// Its answer is in CR1-CR4 at once (the host waits for CMOK before it reads them). With --accurate-drive only;
++// otherwise at once.
++static uint16_t g_cmd_pend;                       // flags still to come
++static uint64_t g_cmd_due;
++static uint64_t cmd_ns(uint8_t c) {
++    switch (c) {
++    case 0x30: case 0x40: case 0x42: case 0x44: case 0x46: return 11160;
++    case 0x48: return 16000;
++    case 0x75: return 13210;
++    default: return 7810;
++    }
++}
++static void cmd_settle(uint64_t now) {
++    if (g_cmd_pend && now >= g_cmd_due) { g_hirq |= g_cmd_pend; g_cmd_pend = 0; }
++}
++static void issue() {
++    const bool on = g_cfg.accurate_drive;
++    if (g_cmd_pend) { g_hirq |= g_cmd_pend; g_cmd_pend = 0; }
++    if (on) drive_at(sat_now_cpu());
++    uint16_t before = g_hirq;
++    command();
++    if (!on) return;
++    uint16_t added = g_hirq & ~before;
++    g_hirq &= ~added;
++    g_cmd_pend = added;
++    g_cmd_due = sat_now_cpu() + cmd_ns((uint8_t)(g_cr[0] >> 8));
++}
++
+ void cd_write(uint32_t off, uint32_t v, int size) {
+     (void)size;
+     switch (off & ~3u) {
+@@ -656,12 +753,13 @@ void cd_write(uint32_t off, uint32_t v, int size) {
+     case 0x90018: g_cr[0] = (uint16_t)v; g_cmd_busy = true; return;
+     case 0x9001C: g_cr[1] = (uint16_t)v; return;
+     case 0x90020: g_cr[2] = (uint16_t)v; return;
+-    case 0x90024: g_cr[3] = (uint16_t)v; command(); return;
++    case 0x90024: g_cr[3] = (uint16_t)v; issue(); return;
+     }
+     sat_fatal("CD block write %05X = %X (%d bytes)", off, v, size);
+ }
+ 
+ void cdblock_state(State& s) {
++    if (s.loading) g_cmd_pend = 0, g_drive_now = 0;   // a dump from before cdcmd: no command in flight
+     s(g_block);
+     s.vec(g_free);
+     for (auto& p : g_part) s.deq(p);
+@@ -680,5 +778,7 @@ void cdblock_state(State& s) {
  }
  
  void cddrive_state(State& s) { s(g_seek_from), s(g_seek_until); }
 +void cdpause_state(State& s) { s(g_pause_at); }
  void cdfs_state(State& s) { s(g_fs_done), s(g_root_known); }
++void cdcmd_state(State& s) { s(g_cmd_pend), s(g_cmd_due); }
  void cdpos_state(State& s) { s(g_is_cdrom), s(g_cdrom_clear_at), s(g_fs_data_at); }
 diff --git a/runtime/src/machine/cdrom.cpp b/runtime/src/machine/cdrom.cpp
 index e1918ba..453fb8f 100644
@@ -2259,7 +2594,7 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..ef202b9 100644
+index a17d926..53f1d2d 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
 @@ -1,11 +1,11 @@
@@ -2339,7 +2674,7 @@ index a17d926..ef202b9 100644
  static std::chrono::steady_clock::time_point g_t0;
  static int g_starts;
  
-@@ -72,9 +102,26 @@ uint64_t sat_now() {
+@@ -72,9 +102,29 @@ uint64_t sat_now() {
  }
  
  static void vprint(const char* tag, const char* fmt, va_list ap) {
@@ -2349,7 +2684,10 @@ index a17d926..ef202b9 100644
 +    // --log is intentionally unbuffered for crash diagnostics. Assemble each
 +    // line first, so tracing does one file write rather than three per event.
 +    char line[2048];
-+    int prefix = std::snprintf(line, sizeof line, "[%8.3f %s] ", sat_now() / 1e9, tag);
++    // SF3_LOG_US=1: microseconds, at the running CPU's own time (sat_now_cpu), for timing traces.
++    static const bool us = [] { const char* v = std::getenv("SF3_LOG_US"); return v && *v == '1'; }();
++    int prefix = us ? std::snprintf(line, sizeof line, "[%11.6f %s] ", sat_now_cpu() / 1e9, tag)
++                    : std::snprintf(line, sizeof line, "[%8.3f %s] ", sat_now() / 1e9, tag);
 +    va_list copy;
 +    va_copy(copy, ap);
 +    int body = std::vsnprintf(line + prefix, sizeof line - prefix, fmt, copy);
@@ -2369,7 +2707,7 @@ index a17d926..ef202b9 100644
  }
  
  void sat_trace(const char* fmt, ...) {
-@@ -302,6 +349,36 @@ void sat_fatal(const char* fmt, ...) {
+@@ -302,6 +352,36 @@ void sat_fatal(const char* fmt, ...) {
      va_start(ap, fmt);
      vprint("FATAL", fmt, ap);
      va_end(ap);
@@ -2406,7 +2744,7 @@ index a17d926..ef202b9 100644
      SH2Context& c = *g_cpu;
      std::fprintf(stderr, "  cpu %d  pr %08X  pc %08X  sr %03X\n", c.cpu, c.pr, c.pc, sh2_get_sr(c));
      for (int i = 0; i < 16; ++i) std::fprintf(stderr, "  r%-2d %08X%s", i, c.r[i], i % 4 == 3 ? "\n" : "");
-@@ -316,6 +393,7 @@ void sat_fatal(const char* fmt, ...) {
+@@ -316,6 +396,7 @@ void sat_fatal(const char* fmt, ...) {
          sound_close();                          // a run that ends in an error is the one most worth watching
          movie_finish();
      }
@@ -2414,17 +2752,26 @@ index a17d926..ef202b9 100644
      std::fflush(stderr);
      std::_Exit(1);
  }
-@@ -333,6 +411,9 @@ static std::condition_variable g_cv;
+@@ -333,6 +414,18 @@ static std::condition_variable g_cv;
  static int g_turn;                  // 0 the master runs, 1 the slave
  static bool g_slave_on, g_slave_idle = true, g_slave_reset, g_slave_thread;
  static int g_slave_polls;
 +static bool g_slave_snapshot_request, g_slave_snapshot_ready, g_slave_resume;
 +static int g_slave_snapshot_budget;
 +static bool g_slave_yield_at_point, g_slave_requested_before;   // slave_idle_check
++
++// The polls the slave runs a master poll. Without the bus model the slave runs 64 (it is not timed: its work
++// is done by the time the master looks). With the bus model (--accurate-drive) it runs one, the same time
++// as the master's slice, as both SH-2s run from one clock: on a reference emulator, as a black box, the
++// master waits ~2.9 ms a town iteration (two frames) for the slave's work at 0601196E, which an untimed
++// slave never makes it do.
++static int slave_slice() {
++    return g_sh2_bus ? 1 : kSlaveSlice;
++}
  
  static void give(int to) {          // hand the CPU over and wait until it comes back
      std::unique_lock<std::mutex> lk(g_mu);
-@@ -366,6 +447,14 @@ static void slave_main() {
+@@ -366,6 +459,14 @@ static void slave_main() {
              // the BIOS's slave boot: its own vector table, interrupts masked,
              // its stack, then the entry the program set as vector 0x94
              SH2Context& s = g_slave;
@@ -2439,7 +2786,7 @@ index a17d926..ef202b9 100644
              s = SH2Context{};
              s.cpu = 1;
              s.vbr = 0x06000400u;
-@@ -421,7 +510,40 @@ static void watch_for_stalls() {
+@@ -421,7 +522,40 @@ static void watch_for_stalls() {
      }
  }
  
@@ -2481,7 +2828,7 @@ index a17d926..ef202b9 100644
  
  void slave_on() {
      if (!g_slave_thread) {
-@@ -443,10 +565,17 @@ void slave_off() {
+@@ -443,10 +577,17 @@ void slave_off() {
      to_slave();                     // it unwinds and parks
  }
  
@@ -2500,7 +2847,7 @@ index a17d926..ef202b9 100644
  }
  
  // SINIT: the master pulses the slave's FRT input capture
-@@ -460,16 +589,50 @@ void slave_kick() {
+@@ -460,16 +601,50 @@ void slave_kick() {
  // The clock and the multitap are the run's own settings, but a dump goes on with the ones it was made with.
  void machine_state(State& s) {
      uint8_t ip[16];
@@ -2554,7 +2901,7 @@ index a17d926..ef202b9 100644
  }
  
  // --coverage FILE: "MODULE ADDRESS INSTRUCTIONS RAN" for every recompiled function, RAN 1 or 0.
-@@ -488,6 +651,33 @@ static void write_coverage(const std::string& path) {
+@@ -488,6 +663,33 @@ static void write_coverage(const std::string& path) {
      std::error_code e;
      std::filesystem::rename(part, path, e);
      if (e) sat_note("coverage: cannot replace %s: %s", path.c_str(), e.message().c_str());
@@ -2588,7 +2935,7 @@ index a17d926..ef202b9 100644
  }
  
  // --checkpoint SECONDS: coverage written again every SECONDS of the host's time, so a run that is
-@@ -512,6 +702,7 @@ static void checkpoint_due() {
+@@ -512,6 +714,7 @@ static void checkpoint_due() {
  static const int kModemLine = 12;
  
  void master_poll_devices() {
@@ -2596,9 +2943,22 @@ index a17d926..ef202b9 100644
      uint64_t now = sat_now();
      video_tick(now);
      writes_due();
-@@ -529,16 +720,24 @@ void master_poll_devices() {
+@@ -528,17 +731,38 @@ void master_poll_devices() {
+     if (g_cfg.stop_vblanks && sat_vblanks() >= g_cfg.stop_vblanks) sat_stop("VBlank limit");
  }
  
++// An SCU DMA holds the bus for its whole transfer and the master waits (scu.cpp). One the master
++// starts is charged to its budget at once; one a frame event starts (in a poll, where the budget is
++// set afresh) waits here until the poll's new slice, so the master's next instructions come after it.
++static uint64_t g_dma_stall_q16;
++void sat_dma_stall(uint64_t q16, bool by_cpu) {
++    if (by_cpu && g_cpu == &g_master) g_master.budget -= (int32_t)(q16 / 4);
++    else g_dma_stall_q16 += q16;
++}
++static void dma_stall_take(SH2Context& c) {
++    if (g_dma_stall_q16) { c.budget -= (int32_t)(g_dma_stall_q16 / 4); g_dma_stall_q16 = 0; }
++}
++
  void sh2_poll(SH2Context& c) {
 +    const int32_t used = c.budget;
      c.budget = kBudget;
@@ -2610,7 +2970,7 @@ index a17d926..ef202b9 100644
 +            g_slave_yield_at_point = false;
 +            g_state_requested = g_slave_requested_before;
 +            to_master();
-+        } else if (++g_slave_polls >= kSlaveSlice) to_master();
++        } else if (++g_slave_polls >= slave_slice()) to_master();
          return;
      }
      g_poll_ring[g_poll_pos++ % 4096] = __builtin_return_address(0);
@@ -2620,10 +2980,11 @@ index a17d926..ef202b9 100644
      scu_deliver(c);
      onchip_deliver(c);
 +    c.budget = new_slice();
++    dma_stall_take(c);
  }
  
  static int g_int_depth;
-@@ -555,6 +754,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -555,6 +779,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
      c.r[15] -= 4; st32(c.r[15], sh2_get_sr(c));
      c.r[15] -= 4; st32(c.r[15], kIntPC);
      c.imask = level;
@@ -2631,7 +2992,7 @@ index a17d926..ef202b9 100644
      if (bios_is_dispatcher(vec, target)) {
          bios_dispatch(c, vec);
      } else {
-@@ -568,10 +768,14 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -568,11 +793,16 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
  }
  
  void sh2_sleep(SH2Context& c, uint32_t pc) {
@@ -2644,11 +3005,14 @@ index a17d926..ef202b9 100644
 -        g_vtime += kBudget * kNsPerSafePoint;
 +        g_vtime += quarters_ns(&c == &g_master ? master_slice() : kBudget);
          master_poll_devices();
+-        if (scu_deliver(c) | onchip_deliver(c)) return;
 +        if (&c == &g_master) c.budget = new_slice();
-         if (scu_deliver(c) | onchip_deliver(c)) return;
++        if (scu_deliver(c) | onchip_deliver(c)) { if (&c == &g_master) dma_stall_take(c); return; }
++        g_dma_stall_q16 = 0;        // asleep through it: the bus was not wanted
      }
      sat_fatal("sleep at %08X: nothing woke it", pc);
-@@ -584,6 +788,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
+ }
+@@ -584,6 +814,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
  
  void sh2_bad_return(SH2Context& c, uint32_t expected) {
      if (tasks_pending()) { tasks_route(c, expected); return; }
@@ -2660,7 +3024,15 @@ index a17d926..ef202b9 100644
      sat_fatal("returned to %08X, expected %08X", c.pc, expected);
  }
  
-@@ -644,6 +853,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -616,6 +851,7 @@ void sh2_program_start(SH2Context& c, uint32_t addr) {
+ 
+ int saturn_main(const SaturnConfig& cfg) {
+     g_cfg = cfg;
++    sh2_set_bus_model(cfg.accurate_drive);
+     g_t0 = std::chrono::steady_clock::now();
+     mmio_watch(cfg.watch_lo, cfg.watch_hi);
+     if (cfg.watch_lo <= cfg.watch_hi && (SH2_IS_WRAM_H(cfg.watch_lo) || SH2_IS_WRAM_L(cfg.watch_lo))) {
+@@ -644,6 +880,7 @@ int saturn_main(const SaturnConfig& cfg) {
      }
      g_master = SH2Context{};
      g_master.budget = kBudget;
@@ -2668,7 +3040,7 @@ index a17d926..ef202b9 100644
      video_init();
      sound_init();
      cd_init();
-@@ -658,7 +868,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -658,7 +895,7 @@ int saturn_main(const SaturnConfig& cfg) {
      else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
      for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
      bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
@@ -2677,7 +3049,7 @@ index a17d926..ef202b9 100644
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
-@@ -704,3 +914,11 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -704,3 +941,12 @@ int saturn_main(const SaturnConfig& cfg) {
      std::fflush(stdout);
      std::_Exit(0);                  // the slave's thread is parked: do not wait for it
  }
@@ -2685,23 +3057,25 @@ index a17d926..ef202b9 100644
 +// The master's budget counts down from kBudget (quarter cycles) between polls, and g_vtime is the
 +// time its slice began: what it has spent is time already passed, and the poll adds all of it
 +// (an overspent budget too), so this never runs ahead of the next poll's time.
++uint64_t sat_cycles16_ns(uint64_t q16) { return q16 * ps_per_cycle() / 16000; }
 +uint64_t sat_now_cpu() {
 +    if (g_cfg.realtime || g_cpu != &g_master) return sat_now();
 +    return g_vtime + quarters_ns((int64_t)master_slice() - g_master.budget);
 +}
 diff --git a/runtime/src/machine/mmio.cpp b/runtime/src/machine/mmio.cpp
-index b9dd332..22fd0fd 100644
+index b9dd332..49b99c7 100644
 --- a/runtime/src/machine/mmio.cpp
 +++ b/runtime/src/machine/mmio.cpp
-@@ -19,6 +19,7 @@
+@@ -19,6 +19,8 @@
  #include "modem.h"
  #include "state.h"
  #include <cstdio>
 +#include <cstdlib>
++#include <cstring>
  #include <map>
  #include <set>
  #include <tuple>
-@@ -43,12 +44,55 @@ static std::map<std::pair<uint32_t, uint32_t>, uint64_t> g_calls;
+@@ -43,11 +45,164 @@ static std::map<std::pair<uint32_t, uint32_t>, uint64_t> g_calls;
  struct ModemLog { uint64_t n = 0, first = 0, last = 0; std::set<uint32_t> values; };
  static std::map<std::tuple<uint32_t, char, uint32_t>, ModemLog> g_modem_log;
  
@@ -2719,7 +3093,7 @@ index b9dd332..22fd0fd 100644
 +    if (c.key != key) { c.n = &g_regs[{a, size, rw}]; c.key = key; }
 +    uint64_t* last = c.n;
 +    ++*last;
- }
++}
 +
 +// What an access outside the work RAMs costs the CPU beyond its issue cycle:
 +// the wait states of the bus it goes over, in SH-2 cycles (read, write). A
@@ -2757,11 +3131,120 @@ index b9dd332..22fd0fd 100644
 +    return kAbus;
 +}
 +
-+static inline void bus_wait(uint32_t a, char rw) { if (!g_bus_quiet) g_cpu->budget -= g_waits.q[bus_of(a)][rw == 'W']; }
++static inline void bus_wait(uint32_t a, char rw) { if (!g_bus_quiet && !g_sh2_bus) g_cpu->budget -= g_waits.q[bus_of(a)][rw == 'W']; }
++
++// ---- the per-access model (the bus model: --accurate-drive, sh2.h) ------------------------------------------
++// sh2_bus_access charges each access by the CPU running now (g_cpu), given its full address (cached 0x0...,
++// cache-through 0x2..., purge 0x4..., on-chip 0xFFFFFE00...). The costs are SH-2 cycles beyond the issue
++// cycle, measured on a reference emulator as a black box with timed loops (cpu r39, tools: mem2.py):
++//   reads   WRAM-H through 8 long / 7 word,byte, a line fill 8; WRAM-L through 14 long / 7, a line fill 56;
++//           the BIOS ROM 16 long / 8, a line fill 64; the rest of the A-bus (the CD block) 16;
++//           the SCU's registers 8, VDP1 28, VDP2 40, the SCSP 48, the on-chip registers 3 (1 long), SMPC 0;
++//           a hit in the data cache 0.
++//   writes  keep the bus: the next access waits until it is free. The wait of an access right after
++//           (the bus time less the next access's own cycle): WRAM-H 3; WRAM-L 13 long / 6; VDP1 11,
++//           VDP2 5, the SCSP 31, the A-bus (the CD block) 7, the SCU 5, on-chip and SMPC 0.
++// The data cache: 4 KB a CPU, 64 sets of 4 ways of 16-byte lines, LRU; reads at cached addresses of the work
++// RAMs and the ROM allocate (unless CCR.OD), writes go through (a hit stays), two-way mode (CCR.TW) caches
++// in ways 2 and 3 only; CCR.CP and the purge area (0x4...) invalidate. Instruction fetches are not modelled
++// (the reference emulator charges none). Time between accesses inside a block is not known: the block's issue
++// cycles are charged at its start, so a write's bus time is measured from there.
++namespace {
++struct DCache { uint32_t tag[64][4]; uint8_t ord[64][4]; };   // ord: the ways, most recently used first
++DCache g_dc[2];
++int32_t g_wfree[2], g_wat[2];          // the budget at which the bus is free again, and at the write
++bool g_wpend[2];
++enum Mem { kWramH, kWramL, kRom, kAbusDev, kScuR, kVdp1M, kVdp2M, kScspM, kSmpcM, kOnchipM, kNone };
++struct Cost { int16_t rl, rw, fill, wl, ww; };
++const Cost kCostDef[kNone] = {
++    {8, 7, 8, 3, 3}, {14, 7, 56, 13, 6}, {16, 8, 64, 7, 7}, {16, 16, 0, 7, 7}, {8, 8, 0, 5, 5},
++    {28, 28, 0, 11, 11}, {40, 40, 0, 5, 5}, {48, 48, 0, 31, 31}, {0, 0, 0, 0, 0}, {1, 3, 0, 0, 0}};
++Mem mem_of(uint32_t p) {               // p: 27-bit (or on-chip)
++    if (p >= 0xFFFFFE00u) return kOnchipM;
++    if (p >= 0x06000000u) return kWramH;
++    if (p >= 0x00200000u && p < 0x00400000u) return kWramL;
++    if (p < 0x00100000u) return kRom;
++    if (p < 0x00180000u) return kSmpcM;
++    if (p >= 0x05A00000u && p < 0x05C00000u) return kScspM;
++    if (p >= 0x05C00000u && p < 0x05E00000u) return kVdp1M;
++    if (p >= 0x05E00000u && p < 0x05FE0000u) return kVdp2M;
++    if (p >= 0x05FE0000u && p < 0x05FF0000u) return kScuR;
++    return kAbusDev;
++}
++void dc_reset(DCache& d) {
++    std::memset(d.tag, 0, sizeof d.tag);
++    for (auto& o : d.ord) for (int i = 0; i < 4; ++i) o[i] = (uint8_t)i;
++}
++struct DcInit { DcInit() { dc_reset(g_dc[0]); dc_reset(g_dc[1]); } } g_dc_init;
++void dc_touch(uint8_t* o, int w) {
++    int i = 0;
++    while (o[i] != w) ++i;
++    for (; i > 0; --i) o[i] = o[i - 1];
++    o[0] = (uint8_t)w;
++}
++// A cached access: true on a hit. A read that misses allocates (the least recently used way it may use).
++bool dc_access(int cpu, uint32_t p, bool write, uint8_t ccr) {
++    DCache& d = g_dc[cpu];
++    uint32_t set = p >> 4 & 63, line = (p & 0x07FFFFF0u) | 1;
++    int lo = ccr & 8 ? 2 : 0;
++    for (int w = lo; w < 4; ++w)
++        if (d.tag[set][w] == line) { dc_touch(d.ord[set], w); return true; }
++    if (write || (ccr & 4)) return false;
++    for (int i = 3; i >= 0; --i) {
++        int w = d.ord[set][i];
++        if (w >= lo) { d.tag[set][w] = line; dc_touch(d.ord[set], w); break; }
++    }
++    return false;
++}
++}  // namespace
++
++void bus_cache_purge(int cpu) { dc_reset(g_dc[cpu & 1]); }
++
++void sh2_bus_access(uint32_t a, int size, bool write) {
++    int32_t back = 0;                  // quarter cycles of the block's up-front charge still ahead of this access
++    if (g_sh2_blk.k < g_sh2_blk.m) {
++        back = g_sh2_blk.n - g_sh2_blk.n * (2 * g_sh2_blk.k + 1) / (2 * g_sh2_blk.m);
++        ++g_sh2_blk.k;
++    }
++    if (g_bus_quiet) return;
++    SH2Context& c = *g_cpu;
++    int32_t now = c.budget + back;
++    int cpu = c.cpu & 1;
++    uint32_t area = a >> 29;
++    if (area == 2) {                   // associative purge: the line goes, wherever it is
++        if (write) {
++            DCache& d = g_dc[cpu];
++            uint32_t set = a >> 4 & 63, line = (a & 0x07FFFFF0u) | 1;
++            for (int w = 0; w < 4; ++w) if (d.tag[set][w] == line) d.tag[set][w] = 0;
++        }
++        return;
++    }
++    if (area == 3 || area == 6) return;     // the cache's own arrays
++    uint32_t p = area == 7 ? a : a & 0x07FFFFFFu;
++    Mem m = mem_of(p);
++    if (g_wpend[cpu]) {                // the bus is still busy with a write: wait for it
++        if (now > g_wat[cpu]) g_wpend[cpu] = false;    // a new slice since: long done
++        else if (now > g_wfree[cpu]) { c.budget -= now - g_wfree[cpu]; now = g_wfree[cpu]; g_wpend[cpu] = false; }
++        else g_wpend[cpu] = false;
++    }
++    const Cost& k = kCostDef[m];
++    uint8_t ccr = onchip_ccr(cpu);
++    bool cacheable = area == 0 && (ccr & 1) && (m == kWramH || m == kWramL || m == kRom);
++    if (write) {
++        if (cacheable) dc_access(cpu, p, true, ccr);
++        int32_t q = (size == 4 ? k.wl : k.ww) * 4;
++        if (q) { g_wat[cpu] = now; g_wfree[cpu] = now - q; g_wpend[cpu] = true; }
++        return;
++    }
++    if (cacheable) {
++        if (!dc_access(cpu, p, false, ccr)) c.budget -= (ccr & 4 ? (size == 4 ? k.rl : k.rw) : k.fill) * 4;
++        return;
++    }
++    c.budget -= (size == 4 ? k.rl : k.rw) * 4;
+ }
  // --watch LO:HI: every address in the range, one by one
  static std::map<std::pair<uint32_t, char>, uint64_t> g_watch;
- static uint32_t g_watch_lo = 1, g_watch_hi = 0;
-@@ -63,7 +107,12 @@ static void log_area(const char* name, uint32_t a, char rw) {
+@@ -63,7 +218,12 @@ static void log_area(const char* name, uint32_t a, char rw) {
          else if (!window)
              sat_trace("watch %c %08X (pr %08X)", rw, a, g_cpu->pr);
      }
@@ -2775,7 +3258,7 @@ index b9dd332..22fd0fd 100644
      if (a < l.lo) l.lo = a;
      if (a > l.hi) l.hi = a;
      ++l.n;
-@@ -102,12 +151,13 @@ void mmio_log_write(const std::string& path) {
+@@ -102,12 +262,13 @@ void mmio_log_write(const std::string& path) {
  }
  
  // ---- memory with no device behind it (yet) ------------------------------------------------------
@@ -2791,7 +3274,7 @@ index b9dd332..22fd0fd 100644
      if (a >= 0x02000000u && a < 0x05000000u) return "A-bus cartridge";
      if (a >= 0x05A00000u && a < 0x05B00000u) return "SCSP RAM";
      if (a >= 0x05C00000u && a < 0x05C80000u) return "VDP1 VRAM";
-@@ -129,13 +179,14 @@ static int uart_register(uint32_t a, int size) {
+@@ -129,13 +290,14 @@ static int uart_register(uint32_t a, int size) {
  }
  
  uint32_t sh2_mmio_read(uint32_t a, int size) {
@@ -2807,7 +3290,7 @@ index b9dd332..22fd0fd 100644
          if (video_owns(a)) return video_read(a, size);
          if (a >= 0x02000000u && a < 0x05000000u) return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFFu;
          return bios_rom_read(a, size);          // the BIOS ROM is not here
-@@ -154,17 +205,22 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
+@@ -154,17 +316,22 @@ uint32_t sh2_mmio_read(uint32_t a, int size) {
      if (a >= 0x05800000u && a < 0x05900000u) return cd_read(a & 0xFFFFF, size);
      if (a >= 0x05FE0000u && a < 0x05FE0100u) return scu_read(a & 0xFF, size);
      if (video_owns(a)) return video_read(a, size);
@@ -2832,11 +3315,14 @@ index b9dd332..22fd0fd 100644
          return;                                 // ROM, no cartridge
      }
 diff --git a/runtime/src/machine/onchip.cpp b/runtime/src/machine/onchip.cpp
-index 33a2cdd..cb37688 100644
+index 33a2cdd..46829ad 100644
 --- a/runtime/src/machine/onchip.cpp
 +++ b/runtime/src/machine/onchip.cpp
-@@ -32,6 +32,13 @@ struct OnChip {
+@@ -30,8 +30,16 @@ struct OnChip {
+     bool wdt_pending;
+ };
  static OnChip g_oc[2];
++static uint64_t g_dma_done[2][2];         // bus model: when each channel's TE shows (not saved)
  static uint32_t g_phi_div = 65;             // the master clock's divisor for φ: 65 or 61
  
 +// The CPUs run at φ too: picoseconds per SH-2 cycle at the current divisor (37 211 at 320 dots,
@@ -2849,7 +3335,16 @@ index 33a2cdd..cb37688 100644
  uint64_t onchip_phi_clocks(uint64_t ns) {
      const uint64_t master = bios_pal() ? 1734687500ull : 1746818182ull;
      return (uint64_t)((unsigned __int128)ns * master / ((uint64_t)g_phi_div * 1000000000ull));
-@@ -151,7 +158,9 @@ static void divide(OnChip& o, bool wide) {
+@@ -40,6 +48,8 @@ uint64_t onchip_phi_clocks(uint64_t ns) {
+ static uint32_t rd(OnChip& o, uint32_t off, int size) { return mem_rd(o.regs, off, size); }
+ static void wr(OnChip& o, uint32_t off, uint32_t v, int size) { mem_wr(o.regs, off, v, size); }
+ 
++uint8_t onchip_ccr(int cpu) { return g_oc[cpu & 1].regs[0x92]; }
++
+ void onchip_reset(int cpu) {
+     OnChip& o = g_oc[cpu];
+     if (cpu == 0) g_phi_div = 65;
+@@ -151,7 +161,9 @@ static void divide(OnChip& o, bool wide) {
      int32_t dvsr = (int32_t)rd(o, 0x100, 4);
      int64_t n = wide ? (int64_t)((uint64_t)rd(o, 0x110, 4) << 32 | rd(o, 0x114, 4)) : (int32_t)rd(o, 0x104, 4);
      int64_t q, r;
@@ -2860,7 +3355,7 @@ index 33a2cdd..cb37688 100644
      if (!ovf) {
          q = n / dvsr; r = n % dvsr;
          ovf = q > INT32_MAX || q < INT32_MIN;
-@@ -163,11 +172,15 @@ static void divide(OnChip& o, bool wide) {
+@@ -163,11 +175,15 @@ static void divide(OnChip& o, bool wide) {
      }
      wr(o, 0x104, (uint32_t)q, 4); wr(o, 0x114, (uint32_t)q, 4);
      wr(o, 0x110, (uint32_t)r, 4);
@@ -2876,7 +3371,7 @@ index 33a2cdd..cb37688 100644
      uint32_t base = 0x180 + ch * 0x10;
      uint32_t chcr = rd(o, base + 0xC, 4), dmaor = rd(o, 0x1B0, 4);
      if (!(chcr & 1) || (chcr & 2) || !(dmaor & 1)) return;
-@@ -183,7 +196,8 @@ static void dma(OnChip& o, int ch) {
+@@ -183,22 +199,66 @@ static void dma(OnChip& o, int ch) {
          if (ts == 3) {
              for (int k = 0; k < 16; k += 4) st32(dar + (dm ? k : 0), ld32(sar + (sm ? k : 0)));
              sar += step(sm); dar += step(dm);
@@ -2886,8 +3381,98 @@ index 33a2cdd..cb37688 100644
              continue;
          }
          uint32_t v = u == 1 ? ld8(sar) : u == 2 ? ld16(sar) : ld32(sar);
+         if (u == 1) st8(dar, v); else if (u == 2) st16(dar, v); else st32(dar, v);
+         sar += step(sm); dar += step(dm);
+     }
++    if (g_sh2_bus) {
++        // With the bus model the transfer takes bus time. Per unit: the source's read plus the destination's
++        // write, in cycles, measured on a reference emulator as a black box (cycle steal, auto request; H->H
++        // 9.54, H->L 21.25, L->L 30.17, CD->H 20.33, CD->L 32.25, H->VDP1 12.81, H->VDP2 11.84, CD->VDP1 23.37,
++        // VDP2->H 24.60; a 16-byte unit from the CD port costs as much as a longword). The data still moves at
++        // once; SF3_DMAC=2 (the default) only holds TE back until the transfer would end, so the CPU keeps
++        // running from its cache as on the real bus; SF3_DMAC=1 charges the time to the starting CPU instead.
++        auto cls = [](uint32_t a) {
++            a &= 0x07FFFFFFu;
++            if (a >= 0x06000000u) return 0;                      // WRAM-H
++            if (a >= 0x00200000u && a < 0x00300000u) return 1;  // WRAM-L
++            if (a >= 0x05800000u && a < 0x05900000u) return 2;  // CD block
++            if (a >= 0x05C00000u && a < 0x05E00000u) return 3;  // VDP1
++            if (a >= 0x05E00000u && a < 0x05FC0000u) return 4;  // VDP2 VRAM, CRAM, registers
++            return 5;
++        };
++        static const float rdc[6] = {6.5f, 14.f, 17.3f, 21.6f, 21.6f, 16.f}, wrc[6] = {3.f, 15.f, 15.f, 6.3f, 5.3f, 8.f};
++        uint32_t s0 = rd(o, base, 4), d0 = rd(o, base + 4, 4);
++        float per = rdc[cls(s0)] + wrc[cls(d0)];
++        if (ts == 3 && cls(s0) != 2) per *= 4;
++        const double cyc = (double)per * (double)n;
++        g_dma_done[g_cpu->cpu & 1][ch] = sat_now_cpu() + (uint64_t)(cyc * (double)onchip_ps_per_cycle() / 1000.0);
++    }
+     sat_trace("DMAC %d: %u x %d bytes -> %08X", ch, tcr, u, rd(o, base + 4, 4));
+     wr(o, base, sar, 4); wr(o, base + 4, dar, 4); wr(o, base + 8, 0, 4);
+     wr(o, base + 0xC, chcr | 2, 4);          // TE
+     if (chcr & 4) sat_fatal("DMAC %d: end interrupt requested, not emulated", ch);
+ }
+ 
++// DIVU latency (the bus model, --accurate-drive): a division takes 39 cycles; reading the unit before then
++// waits for the rest. Measured on a reference emulator as a black box (tools: mem5.py): a read of DVDNTL right
++// after the write that starts a 64/32 division costs 36-38 cycles more than a nop (49 against 13 a loop), the
++// same for 32/32 (49 against 11); with 44 instructions between, nothing (57.1 against 57.0). The game's 3D code
++// reads the quotient two instructions after the start (06015BB6), where the reference's PC samples pile up.
++// The start is the budget at the write; inside a block the issue cycles were charged at its start, so a read
++// in the same block waits the whole 39. A new slice since the start (budget refilled) means long done.
++static int32_t g_div_at[2];
++static bool g_div_pend[2];
++static const int32_t kDivQ = 39 * 4;
++static bool divu_timed() { return g_sh2_bus; }
++static void div_wait(SH2Context& c) {
++    bool& pend = g_div_pend[c.cpu & 1];
++    if (!pend) return;
++    pend = false;
++    const int32_t elapsed = g_div_at[c.cpu & 1] - c.budget;
++    if (elapsed >= 0 && elapsed < kDivQ) c.budget -= kDivQ - elapsed;
++}
++
+ uint32_t onchip_read(SH2Context& c, uint32_t a, int size) {
+     OnChip& o = g_oc[c.cpu];
+     uint32_t off = a & 0x1FF;
++    if (off >= 0x100 && off < 0x140 && divu_timed()) div_wait(c);
+     if (off == 0x12 || off == 0x13) {       // FRC
+         uint16_t f = frc(o);
+         if (size == 2) return f;
+@@ -206,6 +266,13 @@ uint32_t onchip_read(SH2Context& c, uint32_t a, int size) {
+     }
+     if (off == 0x81 && size == 1) return (uint8_t)wdt_count(o);   // WTCNT
+     uint32_t v = rd(o, off, size);
++    if ((off & ~3u) == 0x18C || (off & ~3u) == 0x19C) {   // CHCR0/1: TE waits for the transfer's end
++        const int ch = off >= 0x19C;
++        if (g_dma_done[c.cpu & 1][ch] && sat_now_cpu() < g_dma_done[c.cpu & 1][ch]) {
++            uint32_t m = size == 4 ? 2u : (off & 3) == (size == 2 ? 2u : 3u) ? 2u : 0u;
++            v &= ~m;
++        } else g_dma_done[c.cpu & 1][ch] = 0;
++    }
+     if (off == 0x11 && size == 1) {         // FTCSR: a slave waiting here has nothing to do
+         slave_idle_check(v);
+         v = rd(o, off, size);
+@@ -240,12 +307,17 @@ void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size) {
+     if (off >= 0x100 && off < 0x140) {
+         off = 0x100 + ((off - 0x100) & 0x1F);
+         wr(o, off, v, size);
++        if ((off == 0x104 || off == 0x114) && divu_timed()) { g_div_at[c.cpu & 1] = c.budget; g_div_pend[c.cpu & 1] = true; }
+         if (off == 0x104) { wr(o, 0x114, v, 4); wr(o, 0x110, (int32_t)v < 0 ? 0xFFFFFFFFu : 0, 4); divide(o, false); }
+         else if (off == 0x114) divide(o, true);
+         else for (uint32_t k = 0x100; k < 0x120; k += 4) wr(o, k + 0x20, rd(o, k, 4), 4);
+         return;
+     }
+     wr(o, off, v, size);
++    if (off == 0x92 && (o.regs[0x92] & 0x10)) {    // CCR.CP: purge the cache (the bit reads 0)
++        o.regs[0x92] &= ~0x10;
++        bus_cache_purge(c.cpu);
++    }
+     if (off >= 0x18C && off < 0x190) dma(o, 0);
+     else if (off >= 0x19C && off < 0x1A0) dma(o, 1);
+     else if (off >= 0x1B0 && off < 0x1B4) { dma(o, 0); dma(o, 1); }
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..44fb6ad 100644
+index 6cbd98f..8315611 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -2898,17 +3483,19 @@ index 6cbd98f..44fb6ad 100644
      std::string settings;           // the player's settings file (host.cpp); "-": none, the defaults; empty: settings.ini
                                      // in saturn-recomp's directory in the user's data directory
      std::string wav;                // the run's sound to this file (16-bit stereo, 44 100 Hz)
-@@ -88,6 +89,9 @@ extern SH2Context* g_cpu;           // the CPU running now
+@@ -88,6 +89,11 @@ extern SH2Context* g_cpu;           // the CPU running now
  
  int  saturn_main(const SaturnConfig& cfg);
  uint64_t sat_now();                 // ns since power-on (virtual or host)
 +// sat_now() plus the master's time spent since its last poll: the time of the access it is making
 +// (devices that must meet the CPU between polls). The slave, and host time, get sat_now().
 +uint64_t sat_now_cpu();
++uint64_t sat_cycles16_ns(uint64_t q16);   // 1/16 cycles as ns at the CPU's clock
++void sat_dma_stall(uint64_t q16, bool by_cpu);   // the master waits out an SCU DMA (the bus model)
  uint64_t sat_vblanks();
  inline bool sat_resuming() { return g_cfg.resume && sat_vblanks() < g_cfg.resume; }   // --resume's script still plays
  void sat_trace(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
-@@ -103,7 +107,13 @@ void slave_off();                   // SSHOFF: held in reset
+@@ -103,7 +109,13 @@ void slave_off();                   // SSHOFF: held in reset
  void slave_idle_check(uint32_t ftcsr);   // the slave read its FTCSR: yield if nothing is there
  void slave_kick();                  // SINIT: the slave's input capture, and the CPU to it
  void master_poll_devices();
@@ -2922,7 +3509,7 @@ index 6cbd98f..44fb6ad 100644
  
  // ---- dumps of the machine (state.cpp; state.h for the parts) ----------------------------------
  void state_enable();                // the run has safe moments: a game's task switch
-@@ -112,10 +122,20 @@ void state_poll();                  // from the master's polls: dumps due, a sto
+@@ -112,10 +124,20 @@ void state_poll();                  // from the master's polls: dumps due, a sto
  void state_point(SH2Context& c);    // a safe moment: c's registers and PC are all the run needs to go on
  void state_stop(const char* why);   // the run stops at the next dump, or soon without one
  void state_finish();                // the last dump written
@@ -2943,15 +3530,18 @@ index 6cbd98f..44fb6ad 100644
  
  // ---- the BIOS (bios.cpp) -----------------------------------------------------------
  void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
-@@ -206,6 +226,7 @@ void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size);
+@@ -205,7 +227,10 @@ uint32_t onchip_read(SH2Context& c, uint32_t a, int size);
+ void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size);
  void onchip_input_capture(int cpu);   // SINIT/MINIT: the FRT's input-capture flag
  void onchip_reset(int cpu);
++uint8_t onchip_ccr(int cpu);            // CCR: the cache's mode (CE, OD, TW)
++void bus_cache_purge(int cpu);         // CCR.CP: every line of cpu's cache invalid (mmio.cpp)
  void onchip_set_clock(bool dots352);   // SMPC's CKCHG: φ at 352 dots' rate or 320's
 +uint64_t onchip_ps_per_cycle();          // the SH-2s' cycle at φ's current rate
  uint64_t onchip_phi_clocks(uint64_t ns);   // φ's clocks in `ns`: the FRT's and the watchdog's time base
  bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if due and above c's mask; taken?
  
-@@ -213,11 +234,17 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
+@@ -213,11 +238,18 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
  void video_init();
  void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
  void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
@@ -2960,6 +3550,7 @@ index 6cbd98f..44fb6ad 100644
  uint32_t video_read(uint32_t a, int size);    // VDP1, VDP2, SCSP (canonical addresses)
  void video_write(uint32_t a, uint32_t v, int size);
  bool video_owns(uint32_t a);
++int video_vdp2_dma_word16(uint32_t a, uint64_t t);   // an SCU DMA word to VDP2 VRAM at time t, 1/16 cycles (0: no wait)
  uint64_t video_frame_changes();
  uint64_t video_frame_ns();                      // one field, 263 lines
 +uint64_t video_line_ns();                       // one raster line
@@ -2970,27 +3561,65 @@ index 6cbd98f..44fb6ad 100644
  
  // ---- sound (sound.cpp, scsp.cpp through sound.h) ----------------------------------------------
 diff --git a/runtime/src/machine/scu.cpp b/runtime/src/machine/scu.cpp
-index 52ca0df..39b24e4 100644
+index 52ca0df..a5608ba 100644
 --- a/runtime/src/machine/scu.cpp
 +++ b/runtime/src/machine/scu.cpp
-@@ -76,6 +76,7 @@ static bool bbus(uint32_t a) {
+@@ -75,7 +75,28 @@ static bool bbus(uint32_t a) {
+     return a >= 0x05A00000u && a < 0x05FE0000u;
  }
  
++// DMA time (the bus model, --accurate-drive): the SCU holds the bus for the whole transfer and the master
++// waits it out, whether the master or a frame event started it. From High Work RAM to the B bus a 16-bit
++// word takes 17/16 cycles; a word to VDP2 VRAM may wait longer (video_vdp2_dma_word16). Measured on a
++// reference emulator as a black box (tools: dma1.py, dma3.py: FRC around a DxEN start and a DSTA poll):
++// 64 KB to VDP1 VRAM 34944 cycles, 4 KB 2176-2304, 8 KB 4352-4480, 1280 B 768, 2 KB to CRAM 1152; levels 1
++// and 2 the same as 0; indirect, 2 x 2 KB or 8 x 512 B, the same as one 4 KB; the instruction after the
++// start waits the whole transfer; a level-1 4 KB DMA started by VBlank-IN costs a CPU loop spanning it 2176
++// more. Other routes (from Low Work RAM or the A bus, into Work RAM) are not timed.
++static uint64_t g_dma_q16;                 // the transfer's time so far, 1/16 cycles
++static uint64_t g_dma_t0;                  // when it began
++static bool g_dma_timed;
  static void copy(uint32_t& src, uint32_t& dst, uint32_t bytes, uint32_t radd, uint32_t wadd) {
 +    BusQuiet quiet;
++    if (g_dma_timed && (src & 0x07F00000u) == 0x06000000u && bbus(dst)) {
++        const bool vdp2 = (dst & 0x07F00000u) == 0x05E00000u;
++        uint32_t d = dst;
++        for (uint32_t i = 0; i < bytes; i += 2) {
++            int w = vdp2 ? video_vdp2_dma_word16(d, g_dma_t0 + sat_cycles16_ns(g_dma_q16)) : 0;
++            g_dma_q16 += w > 17 ? w : 17;
++            d += wadd;                                // the B bus: each 16-bit write moves by the write add
++        }
++    }
      // 32-bit units; the B bus takes them as two 16-bit writes, each moving by the write add
      for (uint32_t i = 0; i < bytes; i += 4) {
          uint32_t n = bytes - i < 4 ? bytes - i : 4;
-@@ -103,6 +104,7 @@ static void copy(uint32_t& src, uint32_t& dst, uint32_t bytes, uint32_t radd, ui
+@@ -102,8 +123,12 @@ static void copy(uint32_t& src, uint32_t& dst, uint32_t bytes, uint32_t radd, ui
+     }
  }
  
- static void dma_run(int lvl) {
+-static void dma_run(int lvl) {
++static void dma_run(int lvl, bool by_cpu) {
 +    BusQuiet quiet;
      Dma& d = g_dma[lvl];
++    g_dma_timed = g_sh2_bus;
++    g_dma_q16 = 0;
++    g_dma_t0 = by_cpu ? sat_now_cpu() : sat_now();
      uint32_t radd = (d.ad >> 8 & 1) ? 4 : 0;
      uint32_t wadd = (d.ad & 7) ? 1u << (d.ad & 7) : 0;
-@@ -135,7 +137,7 @@ void scu_frame_event(int what) {
-         if ((g_dma[l].en >> 8 & 1) && (int)(g_dma[l].md & 7) == what) dma_run(l);
+     if (d.md >> 24 & 1) {                       // indirect: {count, write, read} triples at the write address
+@@ -127,15 +152,17 @@ static void dma_run(int lvl) {
+         if (d.md >> 16 & 1) d.r = src;
+         if (d.md >> 8 & 1) d.w = dst;
+     }
++    if (g_dma_q16) { sat_trace("SCU DMA %d: the master waits %llu cycles", lvl, (unsigned long long)(g_dma_q16 / 16)); sat_dma_stall(g_dma_q16, by_cpu); }
++    g_dma_timed = false;
+     scu_raise(lvl == 0 ? IRQ_DMA0 : lvl == 1 ? IRQ_DMA1 : IRQ_DMA2);
+ }
+ 
+ void scu_frame_event(int what) {
+     for (int l = 0; l < 3; ++l)
+-        if ((g_dma[l].en >> 8 & 1) && (int)(g_dma[l].md & 7) == what) dma_run(l);
++        if ((g_dma[l].en >> 8 & 1) && (int)(g_dma[l].md & 7) == what) dma_run(l, false);
  }
  
 -// Timer 0 fires on the line T0C names; timer 1, T1S clocks into a line, on
@@ -2998,6 +3627,15 @@ index 52ca0df..39b24e4 100644
  // every line (T1MD bit 8 clear) or only on timer 0's line (bit 8 set). An
  // interrupt raised again before it is taken is one interrupt, so at the
  // runtime's poll rate timer 1 comes about once a poll.
+@@ -194,7 +221,7 @@ void scu_write(uint32_t off, uint32_t v, int size) {
+         case 0x0C: d.ad = v; return;
+         case 0x10:
+             d.en = v & 0x100;
+-            if ((v & 0x101) == 0x101 && (d.md & 7) == 7) dma_run(l);
++            if ((v & 0x101) == 0x101 && (d.md & 7) == 7) dma_run(l, true);
+             return;
+         case 0x14: d.md = v; return;
+         }
 diff --git a/runtime/src/machine/scudsp.cpp b/runtime/src/machine/scudsp.cpp
 index ef4f660..13864ed 100644
 --- a/runtime/src/machine/scudsp.cpp
@@ -3186,10 +3824,10 @@ index ef4f660..13864ed 100644
              }
          }
 diff --git a/runtime/src/machine/state.cpp b/runtime/src/machine/state.cpp
-index 67ccdd3..5f380b9 100644
+index 67ccdd3..1d8c24d 100644
 --- a/runtime/src/machine/state.cpp
 +++ b/runtime/src/machine/state.cpp
-@@ -19,17 +19,52 @@
+@@ -19,17 +19,53 @@
  #include <filesystem>
  #include <map>
  #include <thread>
@@ -3243,10 +3881,11 @@ index 67ccdd3..5f380b9 100644
 -    {"cdfs", cdfs_state, true},   {"clock", clock_state, true}, {"cdpos", cdpos_state, true},
 +    {"sound", sound_state},     {"scsp", scsp_state},       {"tasks", tasks_state},     {"cddrive", cddrive_state, true}, {"cdpause", cdpause_state, true},
 +    {"cdfs", cdfs_state, true},   {"clock", clock_state, true}, {"cdpos", cdpos_state, true}, {"soundpart", sound_part_state, true},
++    {"cdcmd", cdcmd_state, true},
  };
  
  static std::string g_loading_path;
-@@ -54,10 +89,23 @@ void core_state(State& s) {
+@@ -54,10 +90,23 @@ void core_state(State& s) {
      }
  }
  
@@ -3270,7 +3909,7 @@ index 67ccdd3..5f380b9 100644
  static uint64_t g_at_vblank = ~0ull;            // --state-at: the first safe moment from this VBlank on
  static std::chrono::steady_clock::time_point g_next;
  static bool g_points;                           // the run has safe moments (state_enable)
-@@ -75,15 +123,55 @@ static void write_file(std::vector<uint8_t> bytes, std::string path, uint64_t vb
+@@ -75,15 +124,55 @@ static void write_file(std::vector<uint8_t> bytes, std::string path, uint64_t vb
      bool ok = f && std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
      if (f) ok = std::fclose(f) == 0 && ok;
      std::error_code e;
@@ -3328,7 +3967,7 @@ index 67ccdd3..5f380b9 100644
      if (!g_cfg.state_at.empty()) g_at_vblank = std::stoull(g_cfg.state_at);
      if (g_cfg.state_every) g_next = std::chrono::steady_clock::now() + std::chrono::seconds(g_cfg.state_every);
  }
-@@ -96,6 +184,12 @@ void state_poll() {
+@@ -96,6 +185,12 @@ void state_poll() {
          g_next = std::chrono::steady_clock::now() + std::chrono::seconds(g_cfg.state_every);
          g_wanted = true;
      }
@@ -3341,7 +3980,7 @@ index 67ccdd3..5f380b9 100644
      if (g_stop_why && sat_vblanks() >= g_stop_by) {
          sat_note("state: no safe moment came, so none was written at the stop");
          sat_stop(g_stop_why);
-@@ -103,6 +197,7 @@ void state_poll() {
+@@ -103,6 +198,7 @@ void state_poll() {
  }
  
  void state_stop(const char* why) {
@@ -3349,7 +3988,7 @@ index 67ccdd3..5f380b9 100644
      if (g_cfg.state_out.empty() || !g_points) sat_stop(why);
      if (g_stop_why) return;
      g_stop_why = why;
-@@ -113,10 +208,15 @@ void state_stop(const char* why) {
+@@ -113,10 +209,15 @@ void state_stop(const char* why) {
  void state_point(SH2Context& c) {
      if (!g_wanted || g_writing || c.cpu != 0 || sat_in_interrupt() || state_slave_busy()) return;
      g_wanted = false;
@@ -3365,7 +4004,7 @@ index 67ccdd3..5f380b9 100644
      for (auto& p : kParts) {
          State s;
          p.fn(s);
-@@ -127,6 +227,9 @@ void state_point(SH2Context& c) {
+@@ -127,6 +228,9 @@ void state_point(SH2Context& c) {
          put(out, &size, sizeof size);
          put(out, s.data.data(), s.data.size());
      }
@@ -3375,7 +4014,7 @@ index 67ccdd3..5f380b9 100644
      if (g_writer.joinable()) g_writer.join();
      g_writing = true;
      g_writer = std::thread(write_file, std::move(out), g_cfg.state_out, sat_vblanks());
-@@ -140,6 +243,35 @@ void state_finish() {
+@@ -140,6 +244,35 @@ void state_finish() {
      if (g_writer.joinable()) g_writer.join();
  }
  
@@ -3411,7 +4050,7 @@ index 67ccdd3..5f380b9 100644
  // ---- loading --------------------------------------------------------------------------------
  void state_load(const std::string& path) {
      g_loading_path = path;
-@@ -147,13 +279,24 @@ void state_load(const std::string& path) {
+@@ -147,13 +280,24 @@ void state_load(const std::string& path) {
      if (!f) state_fail("cannot open it");
      std::vector<uint8_t> bytes;
      uint8_t buf[1 << 16];
@@ -3437,7 +4076,7 @@ index 67ccdd3..5f380b9 100644
      std::map<std::string, std::vector<uint8_t>> parts;
      while (at < bytes.size()) {
          uint8_t n = bytes[at++];
-@@ -163,6 +306,7 @@ void state_load(const std::string& path) {
+@@ -163,6 +307,7 @@ void state_load(const std::string& path) {
          std::memcpy(&size, bytes.data() + at + n, sizeof size);
          at += n + sizeof size;
          if (bytes.size() - at < size) state_fail("cut short");
@@ -3446,7 +4085,7 @@ index 67ccdd3..5f380b9 100644
          at += size;
      }
 diff --git a/runtime/src/machine/state.h b/runtime/src/machine/state.h
-index 91d606c..5032015 100644
+index 91d606c..f467d54 100644
 --- a/runtime/src/machine/state.h
 +++ b/runtime/src/machine/state.h
 @@ -34,6 +34,7 @@ struct State {
@@ -3473,13 +4112,14 @@ index 91d606c..5032015 100644
  void mmio_state(State& s);
  void bios_state(State& s);
  void scu_state(State& s);
-@@ -62,11 +65,13 @@ void clock_state(State& s);
+@@ -62,11 +65,14 @@ void clock_state(State& s);
  void smpc_state(State& s);
  void cdblock_state(State& s);
  void cddrive_state(State& s);
 +void cdpause_state(State& s);
  void cdfs_state(State& s);
  void cdpos_state(State& s);
++void cdcmd_state(State& s);
  void video_state(State& s);
  void vdp1_state(State& s);
  void vdp2_state(State& s);
@@ -3535,7 +4175,7 @@ index c37141d..6517551 100644
      if (mco_uninit(t->co) != MCO_SUCCESS || mco_init(t->co, &desc) != MCO_SUCCESS)
          sat_fatal("tasks: the fiber cannot start over at %08X", pc);
 diff --git a/runtime/src/sound/scsp.cpp b/runtime/src/sound/scsp.cpp
-index b40fefc..8369242 100644
+index b40fefc..74c2091 100644
 --- a/runtime/src/sound/scsp.cpp
 +++ b/runtime/src/sound/scsp.cpp
 @@ -34,8 +34,7 @@
@@ -4116,6 +4756,15 @@ index b40fefc..8369242 100644
      return (uint16_t)((g_com[4] & 0xF800) | ca << 7 | sgc << 5 | eg);
  }
  
+@@ -496,7 +526,7 @@ uint16_t read16(uint32_t off) {
+     }
+     if (off >= 0x600 && off < 0x680) return (uint16_t)g_stack[(off - 0x600) >> 1];
+     if (off >= 0x700 && off < 0x780) return (uint16_t)g_dsp.coef[(off - 0x700) >> 1];
+-    if (off >= 0x780 && off < 0x800) return g_dsp.madrs[(off - 0x780) >> 1 & 31];
++    if (off >= 0x780 && off < 0x7C0) return g_dsp.madrs[(off - 0x780) >> 1];   // 0x7C0-0x7FF: no register
+     if (off >= 0x800 && off < 0xC00) return g_dsp.mpro[(off - 0x800) >> 1];
+     auto half = [&](int32_t v) { return (uint16_t)(off & 2 ? v & 0xFFFF : (uint32_t)v >> 16); };
+     if (off >= 0xC00 && off < 0xE00) return half(g_dsp.temp[(off >> 2) & 0x7F]);
 @@ -514,24 +544,11 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
          int w = off >> 1 & 15;
          if (w >= 12) return;
@@ -4146,6 +4795,15 @@ index b40fefc..8369242 100644
          return;
      }
      if (off < 0x430) {
+@@ -566,7 +583,7 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
+     auto merge = [&](uint16_t old) { return (uint16_t)((old & ~mask) | (v & mask)); };
+     if (off >= 0x600 && off < 0x680) { int32_t& x = g_stack[(off - 0x600) >> 1]; x = (int16_t)merge((uint16_t)x); return; }
+     if (off >= 0x700 && off < 0x780) { int16_t& x = g_dsp.coef[(off - 0x700) >> 1]; x = (int16_t)merge((uint16_t)x); return; }
+-    if (off >= 0x780 && off < 0x800) { uint16_t& x = g_dsp.madrs[(off - 0x780) >> 1 & 31]; x = merge(x); return; }
++    if (off >= 0x780 && off < 0x7C0) { uint16_t& x = g_dsp.madrs[(off - 0x780) >> 1]; x = merge(x); return; }
+     if (off >= 0x800 && off < 0xC00) {
+         uint16_t& x = g_dsp.mpro[(off - 0x800) >> 1];
+         x = merge(x);
 @@ -590,13 +607,17 @@ void write16(uint32_t off, uint16_t v, uint16_t mask) {
  void scsp_reset() {
      static bool tables;
@@ -6293,7 +6951,7 @@ index 4c8bcb1..246c28b 100644
 -void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
-index 88d1642..d58960b 100644
+index 88d1642..23cf50c 100644
 --- a/runtime/src/video/video.cpp
 +++ b/runtime/src/video/video.cpp
 @@ -3,7 +3,8 @@
@@ -6388,7 +7046,7 @@ index 88d1642..d58960b 100644
      if (vdp1_interp_field(compose) && compose) {
          uint8_t saved[0x30];
          std::copy(g_vdp2_regs + 0x70, g_vdp2_regs + 0xA0, saved);
-@@ -84,27 +117,44 @@ static void vblank_in(uint64_t now) {
+@@ -84,31 +117,74 @@ static void vblank_in(uint64_t now) {
          std::copy(saved, saved + 0x30, g_vdp2_regs + 0x70);
          if (shot) write_png(g_cfg.out + "/shot-" + n + ".png", g_frame);
          movie_frame(g_frame);
@@ -6438,7 +7096,37 @@ index 88d1642..d58960b 100644
      }
      vdp1_tick(now);
  }
-@@ -132,9 +182,11 @@ uint32_t video_read(uint32_t a, int size) {
+ 
++// An SCU DMA word to VDP2 VRAM (the bus model, --accurate-drive; scu.cpp): with RBG0 on, on a display
++// line, a bank waits by how many of its 8 cycle-pattern slots are taken (not E or F): 8, 7, 6, 5, 4 taken
++// give 5, 4, 3, 2, 2 cycles a 16-bit word; a bank RAMCTL gives to rotation (RDBS not 0) counts as 8 taken;
++// A1 and B1 take A0's and B0's settings when the bank is not split (VRAMD, VRBMD). In VBlank, with RBG0
++// off, or 3 or fewer taken: no wait beyond the DMA's own rate. Measured on a reference emulator as a black
++// box (tools: dma3.py, in the game's battle-load state, BGON 001F, RAMCTL 130B, 240 lines): 4 KB to A0
++// (rotation) 10368 cycles, to B1 (2 taken) 2304; B0 pattern 0125 2566 (8 taken) 10368, ..256E 8320,
++// ..25EE 6272, ..2EEE / ..EEEE / ..FFFF / 0E0E0E0E 4224, 012F FFFF 2304; BGON 000E/0001/000F: all 2176-2304
++// (BGON 0010 alone: as 001F); RAMCTL 1303/1300/13C0/1330/100B/0000 move the slow banks as above;
++// 12 consecutive 4 KB to A0 from the field's top: 10240-10368 each to line 240, then 2176-2304.
++int video_vdp2_dma_word16(uint32_t a, uint64_t t) {
++    if (!(reg16(g_vdp2_regs, 0x20) & 0x10)) return 0;
++    if ((int)(t / kLineNs % kLines) >= display_lines()) return 0;
++    const uint16_t ramctl = reg16(g_vdp2_regs, 0x0E);
++    int bank = (int)((a & 0x7FFFF) >> 17);
++    if (bank == 1 && !(ramctl & 0x100)) bank = 0;
++    if (bank == 3 && !(ramctl & 0x200)) bank = 2;
++    int taken = 8;
++    if (!(ramctl >> (2 * bank) & 3)) {
++        const uint32_t pat = (uint32_t)reg16(g_vdp2_regs, 0x10 + 4 * bank) << 16 | reg16(g_vdp2_regs, 0x12 + 4 * bank);
++        taken = 0;
++        for (int i = 0; i < 8; ++i) taken += (pat >> (28 - 4 * i) & 0xF) < 0xE;
++    }
++    return taken >= 5 ? (taken - 3) * 16 : taken == 4 ? 32 : 0;
++}
++
+ // ---- the bus -------------------------------------------------------------------------
+ bool video_owns(uint32_t a) {
+     return (a >= 0x05A00000u && a < 0x05B01000u) || (a >= 0x05C00000u && a < 0x05D00020u) ||
+@@ -132,9 +208,11 @@ uint32_t video_read(uint32_t a, int size) {
      off = a & 0x1FF;
      if (off == 0x04 || off == 0x08 || off == 0x0A) {   // TVSTAT, HCNT, VCNT: from the raster
          int line = (int)(g_line_abs % kLines);
@@ -6452,7 +7140,7 @@ index 88d1642..d58960b 100644
          uint16_t tvstat = (uint16_t)((line >= display_lines() ? 8 : 0) | (hblank ? 4 : 0) | ((g_vblanks & 1) ? 2 : 0));
          set16(g_vdp2_regs, 0x04, tvstat);
          set16(g_vdp2_regs, 0x0A, (uint16_t)line);
-@@ -143,7 +195,20 @@ uint32_t video_read(uint32_t a, int size) {
+@@ -143,7 +221,20 @@ uint32_t video_read(uint32_t a, int size) {
  }
  
  void video_write(uint32_t a, uint32_t v, int size) {
@@ -6474,7 +7162,7 @@ index 88d1642..d58960b 100644
      uint32_t off;
      if (uint8_t* p = area(a, off)) { mem_wr(p, off, v, size); return; }
      if (a < 0x05D00000u) { vdp1_fb_write(a & 0x3FFFF, v, size); return; }
-@@ -151,4 +216,10 @@ void video_write(uint32_t a, uint32_t v, int size) {
+@@ -151,4 +242,10 @@ void video_write(uint32_t a, uint32_t v, int size) {
      mem_wr(g_vdp2_regs, a & 0x1FF, v, size);
  }
  
@@ -6658,6 +7346,27 @@ index 0000000..1efd736
 +    CHECK_EQ(g_test_frames.size(), (size_t)0);
 +    g_sh2_frames = saved;
 +}
+diff --git a/runtime/tests/cdrom_test.cpp b/runtime/tests/cdrom_test.cpp
+index b3c4db7..714b10c 100644
+--- a/runtime/tests/cdrom_test.cpp
++++ b/runtime/tests/cdrom_test.cpp
+@@ -113,7 +113,15 @@ TEST(a_change_directory_ends_at_once_but_on_the_accurate_drive_only_once_the_dri
+     CHECK_EQ(change_to_root() & (CMOK | EFLS), CMOK | EFLS);
+     g_cfg.accurate_drive = true;
+     cd_init();
+-    CHECK_EQ(change_to_root() & (CMOK | EFLS), CMOK);
++    // There CMOK itself comes up microseconds after CR4 (cdblock.cpp issue()): not yet, then after 20 us.
++    SH2Context* const was = g_cpu;
++    g_cpu = &g_master;
++    const int32_t budget = g_master.budget;
++    CHECK_EQ(change_to_root() & (CMOK | EFLS), 0);
++    g_master.budget -= 4 * (int32_t)(20000000ull / onchip_ps_per_cycle());
++    CHECK_EQ(cd_read(0x90008, 2) & (CMOK | EFLS), CMOK);
++    g_master.budget = budget;
++    g_cpu = was;
+     g_cfg.accurate_drive = false;
+ }
+ 
 diff --git a/runtime/tests/frame_change_test.cpp b/runtime/tests/frame_change_test.cpp
 index ab9b24b..dad2387 100644
 --- a/runtime/tests/frame_change_test.cpp
@@ -7250,10 +7959,10 @@ index 0000000..64371d5
 +}
 diff --git a/runtime/tests/scsp_test.cpp b/runtime/tests/scsp_test.cpp
 new file mode 100644
-index 0000000..4da6913
+index 0000000..9a4d3a7
 --- /dev/null
 +++ b/runtime/tests/scsp_test.cpp
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,245 @@
 +// The SCSP and the sound 68000 against numbers measured on Beetle Saturn as a black box (its output
 +// and save states only).
 +#include <cstring>
@@ -7486,6 +8195,18 @@ index 0000000..4da6913
 +        CHECK_EQ(scsp_get_internal(SCSP_LOST, 0), from == 9 ? 1u : 0u);
 +        CHECK_EQ(scsp_get_internal(SCSP_ADDR, 0), from == 9 ? 11u : 0u);
 +    }
++}
++
++// MADRS is 32 words at 0x780-0x7BF; 0x7C0-0x7FF holds no register. A sound driver that clears the
++// whole 0x700-0x7FF block after setting MADRS (Shining Force III's) must keep its delay taps.
++TEST(writes_past_madrs_leave_the_delay_addresses_alone) {
++    scsp_reset();
++    scsp_write(0x782, 0x1234, 2);
++    scsp_write(0x7C2, 0x0000, 2);
++    scsp_write(0x7FE, 0xFFFF, 2);
++    CHECK_EQ(scsp_read(0x782, 2), 0x1234u);
++    CHECK_EQ(scsp_read(0x7BE, 2), 0u);
++    CHECK_EQ(scsp_read(0x7C2, 2), 0u);
 +}
 diff --git a/runtime/tests/vdp1_raster_test.cpp b/runtime/tests/vdp1_raster_test.cpp
 new file mode 100644
@@ -8014,10 +8735,10 @@ index 3396388..70e2000 100644
                      else:
                          if slot not in f.code:
 diff --git a/src/saturnrecomp/recomp/emit.py b/src/saturnrecomp/recomp/emit.py
-index 4cf69d5..90ee831 100644
+index 4cf69d5..1bd92be 100644
 --- a/src/saturnrecomp/recomp/emit.py
 +++ b/src/saturnrecomp/recomp/emit.py
-@@ -16,8 +16,11 @@ into a C++ function:
+@@ -16,13 +16,18 @@ into a C++ function:
    know goes to sh2_call, as a tail. Calls through registers compare with the
    target analysis expects and otherwise dispatch: a wrong guess costs a
    lookup, never a wrong call;
@@ -8031,7 +8752,14 @@ index 4cf69d5..90ee831 100644
  
  Every multi-statement instruction is its own block, so a `goto` never
  crosses an initialisation.
-@@ -237,7 +240,7 @@ def stmt(ins, literal=None):
+ """
+ 
++import re
++
+ 
+ class Unsupported(Exception):
+     pass
+@@ -237,7 +242,7 @@ def stmt(ins, literal=None):
          else:
              head, v = "", R(m)
          if reg == "sr":
@@ -8040,7 +8768,7 @@ index 4cf69d5..90ee831 100644
          else:
              body = "c.%s = %s;" % (reg, v)
          return "{ %s%s }" % (head, body) if head else body
-@@ -255,6 +258,35 @@ def stmt(ins, literal=None):
+@@ -255,6 +260,109 @@ def stmt(ins, literal=None):
  
  BRANCHES = {"bt", "bf", "bt/s", "bf/s", "bra", "bsr", "jmp", "jsr", "braf", "bsrf", "rts", "rte"}
  
@@ -8073,10 +8801,84 @@ index 4cf69d5..90ee831 100644
 +    return n, mem
 +
 +
++# The bus model's extra cycles (SH2_CYC2's last count; only --accurate-drive charges them, sh2.h).
++# Each rule was measured as a black box on a reference emulator with timed loops in the game's own
++# states (FRC around 4096 iterations, a matching baseline subtracted):
++#  - a data access by an instruction at pc 2 mod 4 meets the next instruction pair's fetch: +1 for a read
++#    (a cache hit, Work RAM or the CD block alike) and +1 for a write (mov.x rN,@... at 2 mod 4 against
++#    0 mod 4);
++#  - except just before an unconditional branch (bra, bsr, jmp, jsr, braf, bsrf, rts, rte): +0;
++#  - lds.l/sts.l pay that cycle at 0 mod 4 instead (+1 there, +0 at 2 mod 4), ldc.l/stc.l at neither;
++#  - load-use: an instruction using the register a mov.x @...,rN just before it loaded: +1, unless either
++#    already pays the 2-mod-4 cycle (a branch using it does not wait);
++#  - mul.l, dmuls.l, dmulu.l: +1 (3 cycles to the next multiply-unit use, not 2); tas.b: +7.
++# Together they put the game's decompressor (0601366C/06013F38) within a few percent of the reference
++# per call (literal loop, match copy, FAC table scan).
++_READS = ("and.b", "or.b", "xor.b", "tst.b", "tas.b", "mac.l", "mac.w")
++_UNCOND = ("bra", "bsr", "jmp", "jsr", "braf", "bsrf", "rts", "rte")
++_DEST_ONLY = ("mov", "mov.b", "mov.w", "mov.l", "movt", "sts", "stc", "mova", "extu.b", "extu.w",
++              "exts.b", "exts.w", "neg", "not", "swap.b", "swap.w")
++
++
++def _args(text):
++    p = text.split(None, 1)
++    return [x.strip() for x in re.split(r",(?![^(]*\))", p[1])] if len(p) > 1 else []
++
++
++def _parity(pc, op, text):
++    """1 if the instruction's data access costs the 2-mod-4 cycle (lds.l/sts.l: the 0-mod-4 one)."""
++    if op in ("lds.l", "sts.l"):
++        return 1 if pc & 3 == 0 else 0
++    if op in ("ldc.l", "stc.l") or pc & 3 != 2:
++        return 0
++    if op in _READS:
++        return 1
++    if op in ("mov.b", "mov.w", "mov.l"):
++        a = _args(text)
++        if len(a) == 2 and (not a[0].startswith(("r", "#")) or a[1].startswith("@")):
++            return 1
++    return 0
++
++
++def _loaded(op, text):
++    a = _args(text)
++    if op in ("mov.b", "mov.w", "mov.l") and len(a) == 2 and a[0].startswith("@") and re.fullmatch(r"r\d+", a[1]):
++        return a[1]
++    return None
++
++
++def _uses(op, text, r):
++    a = _args(text)
++    if op in _DEST_ONLY and a and re.fullmatch(r"r\d+", a[-1]):
++        a = a[:-1]
++    return any(re.search(r"(?<![\w])%s(?!\d)" % r, x) for x in a)
++
++
++def contended(seq):
++    """The bus model's extra cycles for a block: seq, its instructions in order (delay slots included)."""
++    k = 0
++    prev = None
++    for n, ins in enumerate(seq):
++        op, pc, text = ins.op, ins.pc, ins.text
++        ci = _parity(pc, op, text)
++        if ci and n + 1 < len(seq) and seq[n + 1].pc == pc + 2 and seq[n + 1].op in _UNCOND:
++            ci = 0
++        k += ci
++        if op in ("mul.l", "dmuls.l", "dmulu.l"):
++            k += 1
++        if op == "tas.b":
++            k += 7
++        if prev is not None and prev[0] + 2 == pc and op not in BRANCHES:
++            r = _loaded(prev[1], prev[2])
++            if r and not prev[3] and not ci and _uses(op, text, r):
++                k += 1
++        prev = (pc, op, text, ci)
++    return k
++
  
  class Body:
      """One discovered function as C++.
-@@ -268,17 +300,37 @@ class Body:
+@@ -268,17 +376,37 @@ class Body:
      its own ("insn") as well when something jumps to it.
      """
  
@@ -8115,7 +8917,7 @@ index 4cf69d5..90ee831 100644
  
      # -- analysis
      def _resolve(self):
-@@ -328,15 +380,20 @@ class Body:
+@@ -328,15 +456,20 @@ class Body:
          if t not in self.f.code:
              return "{ %s }" % self._tail(t)
          if t <= src:
@@ -8139,7 +8941,7 @@ index 4cf69d5..90ee831 100644
  
      def _call(self, t):
          if t in self.entries:
-@@ -371,16 +428,16 @@ class Body:
+@@ -371,16 +504,16 @@ class Body:
                  cases.append("case %s: goto L_%08X;" % (_h(v), v))
                  back |= v <= a
              elif v in self.entries:
@@ -8161,7 +8963,7 @@ index 4cf69d5..90ee831 100644
          code = self.f.code
          self._fallback = sorted(a for a in code if a not in self.slots)
          for a, ins in self.ops.items():
-@@ -402,7 +459,7 @@ class Body:
+@@ -402,7 +535,7 @@ class Body:
          if op not in BRANCHES:
              return self._stmt(ins), a + 2
          if op in ("bt", "bf"):
@@ -8170,7 +8972,7 @@ index 4cf69d5..90ee831 100644
          slot = self._stmt(self.img.insn(a + 2))
          if slot == ";":
              slot = ""
-@@ -410,21 +467,31 @@ class Body:
+@@ -410,21 +543,31 @@ class Body:
          ret = _h(a + 4)
          check = "if (c.pc != %s) return;" % ret if self.unwind_returns else "SH2_RET(c, %s);" % ret
          if op in ("bt/s", "bf/s"):
@@ -8207,7 +9009,7 @@ index 4cf69d5..90ee831 100644
          if op == "rte":
              return ("{ const uint32_t x = ld32(c.r[15]); c.r[15] += 4; sh2_set_sr(c, ld32(c.r[15]) & 0x3F3u); "
                      "c.r[15] += 4; %sc.pc = x; return; }" % s), None
-@@ -434,15 +501,50 @@ class Body:
+@@ -434,15 +577,58 @@ class Body:
          """The C++ function, as a list of lines."""
          labels = self.labels()
          code = self.f.code
@@ -8233,15 +9035,19 @@ index 4cf69d5..90ee831 100644
 +                # A block: this instruction up to the next label or branch,
 +                # charged as it is entered.
 +                cyc = mem = nins = 0
++                seq = []
 +                for b in order[i:]:
 +                    if b != a and (b in labels or b in late):
 +                        break
 +                    insb = self.ops[b]
 +                    n, m = cycles(insb)
 +                    cyc, mem, nins = cyc + n, mem + m, nins + 1
++                    seq.append(insb)
 +                    if insb.delay and b + 2 in code:
-+                        n, m = cycles(self.img.insn(b + 2))
++                        slot = self.img.insn(b + 2)
++                        n, m = cycles(slot)
 +                        cyc, mem, nins = cyc + n, mem + m, nins + 1
++                        seq.append(slot)
 +                    if insb.op in BRANCHES:
 +                        break
 +                # A state point comes before the charge: a loaded state
@@ -8250,7 +9056,11 @@ index 4cf69d5..90ee831 100644
 +                if self.resume_points and a in self.state_points:
 +                    lines.append("    SH2_STATE_POINT(c, %s);" % _h(a))
 +                    pointed = a
-+                lines.append("    SH2_CYC(c, %d, %d);" % (cyc, mem))
++                cont = contended(seq)
++                if cont:
++                    lines.append("    SH2_CYC2(c, %d, %d, %d);" % (cyc, mem, cont))
++                else:
++                    lines.append("    SH2_CYC(c, %d, %d);" % (cyc, mem))
 +                if self.block_base is not None:
 +                    lines.append("    SH2_BLK(c, %d);" % (self.block_base + len(self.blocks)))
 +                    self.blocks.append((a, nins))
@@ -8258,7 +9068,7 @@ index 4cf69d5..90ee831 100644
              text, succ = self._insn(a)
              ins = self.ops[a]
              if self.comments:
-@@ -453,7 +555,11 @@ class Body:
+@@ -453,7 +639,11 @@ class Body:
              self.locations.append((a, len(lines), "insn"))
              if ins.delay and a + 2 in code:
                  self.locations.append((a + 2, len(lines), "slot"))
@@ -8270,7 +9080,7 @@ index 4cf69d5..90ee831 100644
              nxt = order[i + 1] if i + 1 < len(order) else None
              if succ is not None and succ != nxt:
                  if succ in code:
-@@ -462,4 +568,7 @@ class Body:
+@@ -462,4 +652,7 @@ class Body:
                  else:
                      lines.append("    " + self._tail(succ))
          lines.append("}")
@@ -8322,6 +9132,60 @@ index 0000000..442a4fa
 +    assert all(on[i + 1].startswith("SH2_BLK(") for i in charges)
 +    assert [l for l in on if not l.startswith("SH2_BLK(")] == off      # the code itself is unchanged
 +    assert b.blocks[0][0] == BASE and all(n >= 1 for _, n in b.blocks)
+diff --git a/tests/test_contention.py b/tests/test_contention.py
+new file mode 100644
+index 0000000..6ca8cea
+--- /dev/null
++++ b/tests/test_contention.py
+@@ -0,0 +1,48 @@
++"""The bus model's extra cycles (emit.contended, SH2_CYC2's last count). Each rule is a black-box
++measurement on a reference emulator: timed loops of the instruction at each pc parity, a baseline
++subtracted (see the comment above emit._READS)."""
++from conftest import BASE, assemble
++
++from saturnrecomp import sh2
++from saturnrecomp.recomp import discover
++from saturnrecomp.recomp import emit as E
++
++NOP, RTS = 0x0009, 0x000B
++
++
++def charge(*words):
++    """The first block's charge: (its line, its extra cycles)."""
++    assert BASE % 4 == 0
++    img = sh2.Image(assemble(*words), BASE)
++    prog = discover.Program(img, [BASE])
++    out = [l.strip() for l in E.Body(prog, prog.funcs[BASE], set(prog.funcs)).emit()]
++    line = [l for l in out if l.startswith("SH2_CYC")][0]
++    return line, (int(line.rstrip(");").split(",")[-1]) if line.startswith("SH2_CYC2(") else 0)
++
++
++def test_a_read_or_a_write_at_pc_2_mod_4_costs_a_cycle():
++    # nop; mov.l @r4,r1 (2 mod 4); nop; mov.l r0,@r4 (2 mod 4); mov.l r0,@r4 (0 mod 4); nop; rts; nop
++    assert charge(NOP, 0x6142, NOP, 0x2402, 0x2402, NOP, RTS, NOP)[1] == 2
++
++
++def test_no_such_cycle_just_before_an_unconditional_branch():
++    assert charge(NOP, 0x6142, RTS, NOP)[0].startswith("SH2_CYC(")
++    assert charge(NOP, 0x6142, NOP, RTS, NOP)[1] == 1
++
++
++def test_lds_l_and_sts_l_pay_at_0_mod_4():
++    # sts.l pr,@-r15 (0 mod 4: +1); lds.l @r15+,pr (2 mod 4: +0)
++    assert charge(0x4F22, 0x4F26, NOP, NOP, RTS, NOP)[1] == 1
++
++
++def test_using_the_register_the_instruction_before_loaded():
++    assert charge(0x6142, 0x321C, NOP, NOP, RTS, NOP)[1] == 1   # mov.l @r4,r1; add r1,r2
++    assert charge(0x6142, 0x323C, NOP, NOP, RTS, NOP)[1] == 0   # mov.l @r4,r1; add r3,r2
++
++
++def test_mul_l_and_tas_b():
++    assert charge(0x0217, NOP, 0x441B, NOP, RTS, NOP)[1] == 1 + 7   # mul.l r1,r2; tas.b @r4 (0 mod 4)
++
++
++def test_code_without_such_accesses_keeps_the_plain_charge():
++    assert charge(0x6042, NOP, RTS, NOP)[0].startswith("SH2_CYC(")
 diff --git a/tests/test_state_points.py b/tests/test_state_points.py
 new file mode 100644
 index 0000000..2af6ff8
