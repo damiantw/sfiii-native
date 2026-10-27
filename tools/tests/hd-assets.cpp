@@ -26,6 +26,17 @@ int main(int argc,char** argv) {
     Frame output;output.w=output.h=8;output.px.assign(64,0xF80000);
     assets.apply(source,output);
     if(output.px[0]!=0x7F7FFF || assets.last_pixels()!=32) return 4;
+    hd_fingerprint(t->fingerprint,uint64_t(1)<<32|1);
+    hd_fingerprint(t->fingerprint,t->rgba[0]);
+    ++source.hd->geometry;output.px.assign(64,0xF80000);assets.apply(source,output);
+    if(output.px[0]!=0x7F7FFF || assets.last_pixels()!=32)return 28;
+    // A decoder fingerprint is a lookup hint, never permission to replace
+    // different source bytes or dimensions (including a stale/colliding hint).
+    t->rgba[0]^=1;++source.hd->geometry;assets.apply(source,output);
+    if(assets.last_pixels())return 29;
+    t->rgba[0]^=1;t->w=2;++source.hd->geometry;assets.apply(source,output);
+    if(assets.last_pixels())return 30;
+    t->w=1;t->fingerprint=0;++source.hd->geometry;
     source.hd->quads[0].gpu_flags=0;++source.hd->geometry;
     output.px.assign(64,0xF80000);assets.apply(source,output);
     if(assets.last_pixels() || output.px[0]!=0xF80000)return 14; // Ordinary sprites/UI stay native.
