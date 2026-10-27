@@ -114,7 +114,7 @@ class PortableTests(unittest.TestCase):
             commands=[]
             def run(args,**kwargs):commands.append(args);return SimpleNamespace(returncode=0)
             with patch.object(sessions,'lock',return_value=contextlib.nullcontext()),patch.object(sessions,'package_root',return_value=Path(d)/'app'),patch.object(sessions,'identities',return_value=('build','disc')),patch.object(sessions.subprocess,'run',side_effect=run):
-                sessions.play(work,state)
+                sessions.play(work,state,separate=True)
             self.assertEqual(len(commands),1)
             self.assertIn('--state-in',commands[0]);self.assertNotIn('--resume',commands[0]);self.assertNotIn('--input',commands[0])
             session=next((work/'sessions').iterdir())
@@ -153,7 +153,7 @@ class PortableTests(unittest.TestCase):
                     self.assertFalse(Path(args[args.index('--settings')+1]).exists())
                     self.assertEqual(args[args.index('--clock')+1],'2000-01-02T03:04:05')
                 return SimpleNamespace(returncode=0)
-            with patch.object(sessions,'lock',return_value=contextlib.nullcontext()),patch.object(sessions,'package_root',return_value=Path(d)/'app'),patch.object(sessions,'identities',return_value=('build','disc')),patch.object(sessions.subprocess,'run',side_effect=run):sessions.play(work)
+            with patch.object(sessions,'lock',return_value=contextlib.nullcontext()),patch.object(sessions,'package_root',return_value=Path(d)/'app'),patch.object(sessions,'identities',return_value=('build','disc')),patch.object(sessions.subprocess,'run',side_effect=run):sessions.play(work,separate=True)
             self.assertEqual(len(games),2)
             self.assertEqual((work/'experimental-backup.bin').read_bytes(),b'live-internal')
             self.assertEqual((work/'experimental-backup.bin.cartridge').read_bytes(),b'live-cartridge')

@@ -23,6 +23,8 @@ class Launcher : Form {
     readonly Button selectDisc = new Button(), selectWork = new Button(), prepare = new Button(), play = new Button(), cancel = new Button(), controller = new Button(), import = new Button(), openFolder = new Button(), graphics = new Button(), originalGraphics = new Button();
     readonly Label state = new Label();
     readonly ComboBox gameChoice = new ComboBox();
+    // One backup memory for all scenarios (like one Saturn) unless the player keeps separate saves.
+    readonly CheckBox separateSaves = new CheckBox();
     int activeGame;
     string defaultDataRoot;
     readonly ProgressBar progress = new ProgressBar();
@@ -59,7 +61,7 @@ class Launcher : Form {
     }
     public Launcher(string testRoot) {
         Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-        Text="Shining Force III Native"; ClientSize=new Size(850,455);MinimumSize=Size;MaximumSize=Size;
+        Text="Shining Force III Native"; ClientSize=new Size(850,480);MinimumSize=Size;MaximumSize=Size;
         Font=new Font("Segoe UI",10);StartPosition=FormStartPosition.CenterScreen;FormBorderStyle=FormBorderStyle.FixedSingle;MaximizeBox=false;
         TextAt("Shining Force III Native",24,20,800,35).Font=new Font("Segoe UI",20,FontStyle.Bold);
         TextAt("Game",25,65,120,25);
@@ -92,12 +94,15 @@ class Launcher : Form {
         ButtonAt(graphics,"Optional graphics...",25,397,180,delegate {SelectGraphics();});
         ButtonAt(originalGraphics,"Use original graphics",215,397,200,delegate {RunGraphicsTool(null);});
         TextAt("Optional local artwork; build packs from your own disc.",430,403,395,34);
+        separateSaves.Text="Separate saves per scenario (no automatic transfer between scenarios)";separateSaves.SetBounds(25,442,795,26);Controls.Add(separateSaves);
+        separateSaves.CheckedChanged+=delegate {if(!busy)SaveSettings();};
         fallbackSettingsPath=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SFIII Native","launcher.json");
         settingsPath=Path.Combine(root,"launcher-settings.json");
         work.Text=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SFIII Native","Game");
         if(testRoot!=null) {settingsPath=Path.Combine(testRoot,"launcher.json");fallbackSettingsPath=null;work.Text=Path.Combine(testRoot,"Game");}
         defaultDataRoot=work.Text;
         try {var s=ReadSavedSettings();cue.Text=(string)s["cue"];work.Text=(string)s["work"];
+            if(s.ContainsKey("separate_saves"))separateSaves.Checked=Convert.ToBoolean(s["separate_saves"]);
             if(s.ContainsKey("selected")) {activeGame=Math.Max(0,Math.Min(Profiles.Length-1,Convert.ToInt32(s["selected"])));gameChoice.SelectedIndex=activeGame;}
         } catch { }
         gameChoice.SelectedIndexChanged+=delegate {
@@ -122,7 +127,7 @@ class Launcher : Form {
         Dictionary<string,object> games=new Dictionary<string,object>();
         try {games=(Dictionary<string,object>)ReadSavedSettings()["games"];} catch { }
         games[activeGame.ToString()]=new Dictionary<string,object>{{"cue",cue.Text},{"work",work.Text}};
-        string text=json.Serialize(new Dictionary<string,object>{{"cue",cue.Text},{"work",work.Text},{"selected",activeGame},{"games",games}});
+        string text=json.Serialize(new Dictionary<string,object>{{"cue",cue.Text},{"work",work.Text},{"selected",activeGame},{"separate_saves",separateSaves.Checked},{"games",games}});
         try {File.WriteAllText(settingsPath,text);} catch(Exception error) {
             if(String.IsNullOrEmpty(fallbackSettingsPath) || !(error is IOException || error is UnauthorizedAccessException))throw;
             Directory.CreateDirectory(Path.GetDirectoryName(fallbackSettingsPath));File.WriteAllText(fallbackSettingsPath,text);
@@ -149,12 +154,12 @@ class Launcher : Form {
         bool ready=Ready(),playing=game!=null;
         play.Enabled=ready && !playing;controller.Enabled=ready && !playing;import.Enabled=ready && !playing;
         graphics.Enabled=ready && !playing;originalGraphics.Enabled=ready && !playing && File.Exists(Path.Combine(work.Text,"ai-packs.json"));
-        gameChoice.Enabled=!playing;prepare.Enabled=packageId!=null && !playing;selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!playing;
+        gameChoice.Enabled=separateSaves.Enabled=!playing;prepare.Enabled=packageId!=null && !playing;selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!playing;
         cancel.Enabled=false;
         state.Text=packageId==null ? "Extract the complete application ZIP before running it." : playing ? "Game running. Close the game to change setup or import saves." : ready ? "Ready to play." : "Select your CUE or CHD image and click Prepare game.";
     }
     void SetBusy(bool value) {
-        busy=value;gameChoice.Enabled=!value;prepare.Enabled=play.Enabled=controller.Enabled=import.Enabled=graphics.Enabled=originalGraphics.Enabled=selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!value;
+        busy=value;gameChoice.Enabled=separateSaves.Enabled=!value;prepare.Enabled=play.Enabled=controller.Enabled=import.Enabled=graphics.Enabled=originalGraphics.Enabled=selectDisc.Enabled=selectWork.Enabled=cue.Enabled=work.Enabled=!value;
         cancel.Enabled=value;progress.Style=value ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;progress.Value=0;
         if(!value)RefreshReady();
     }
@@ -199,7 +204,14 @@ class Launcher : Form {
             var launchLog=new StreamWriter(Path.Combine(work.Text,"desktop-launch.log"),false,Encoding.UTF8) {AutoFlush=true};
             launchLog.WriteLine(start.FileName+" "+start.Arguments);
             game=new Process {StartInfo=start,EnableRaisingEvents=true};
-            game.OutputDataReceived+=delegate(object s,DataReceivedEventArgs output) {if(output.Data!=null)lock(launchLog)launchLog.WriteLine(output.Data);};
+            game.OutputDataReceived+=delegate(object s,DataReceivedEventArgs output) {
+                if(output.Data==null)return;lock(launchLog)launchLog.WriteLine(output.Data);
+                if(!output.Data.StartsWith("SF3_STATUS "))return;
+                try {var data=json.Deserialize<Dictionary<string,object>>(output.Data.Substring(11));string message=(string)data["message"];Ui(delegate {
+                    state.Text=message;
+                    if(message.Contains("full") || message.Contains("WARNING"))MessageBox.Show(this,message,"Shared backup memory",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+                });} catch { }
+            };
             game.ErrorDataReceived+=delegate(object s,DataReceivedEventArgs output) {if(output.Data!=null)lock(launchLog)launchLog.WriteLine(output.Data);};
             game.Exited+=delegate {game.WaitForExit();int code=game.ExitCode;launchLog.Dispose();Ui(delegate {
                 game.Dispose();game=null;RefreshReady();
@@ -208,13 +220,18 @@ class Launcher : Form {
             });};game.Start();game.BeginOutputReadLine();game.BeginErrorReadLine();RefreshReady();
         } catch(Exception error) {game=null;RefreshReady();MessageBox.Show(this,error.Message,"Could not launch game");}
     }
+    string SaveArguments() {
+        if(separateSaves.Checked)return " -SeparateSaves";
+        string settings=File.Exists(settingsPath) || String.IsNullOrEmpty(fallbackSettingsPath) ? settingsPath : fallbackSettingsPath;
+        return " -LauncherSettings "+Quote(settings);
+    }
     ProcessStartInfo ScriptStart(string name,bool sta) {
         string powershell=Path.Combine(Environment.SystemDirectory,"WindowsPowerShell","v1.0","powershell.exe");
-        var start=new ProcessStartInfo(powershell,"-NoProfile -ExecutionPolicy Bypass "+(sta ? "-STA " : "")+"-File "+Quote(Path.Combine(work.Text,name))+" -Work "+Quote(work.Text)) {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=work.Text};
+        var start=new ProcessStartInfo(powershell,"-NoProfile -ExecutionPolicy Bypass "+(sta ? "-STA " : "")+"-File "+Quote(Path.Combine(work.Text,name))+" -Work "+Quote(work.Text)+SaveArguments()) {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=work.Text};
         start.EnvironmentVariables["PSModulePath"]=Path.Combine(Environment.SystemDirectory,"WindowsPowerShell","v1.0","Modules");
         return start;
     }
-    void LaunchScript(string name,bool sta) {try {Process.Start(ScriptStart(name,sta));} catch(Exception e) {MessageBox.Show(this,e.Message);}}
+    void LaunchScript(string name,bool sta) {try {SaveSettings();File.WriteAllText(Path.Combine(work.Text,"save-import-python.txt"),Path.Combine(root,"payload","python","python.exe"));Process.Start(ScriptStart(name,sta));} catch(Exception e) {MessageBox.Show(this,e.Message);}}
     ProcessStartInfo ControllerSetupStart() {
         // Setup asks for console input. The wrapper also keeps detection/error
         // messages visible when setup exits before a controller is selected.

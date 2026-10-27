@@ -181,6 +181,7 @@ def prepare(cue, work, scenario=None):
             atomic_json(work/'game.json',dict(cue=str(cue),source=str(source),profile_id=profile['id']))
             (work/'save-import-python.txt').write_text(str(python),encoding='utf-8')
             shutil.copyfile(APP/'desktop/ai_packs.py',work/'ai-packs-helper.py')
+            shutil.copyfile(APP/'desktop/shared_saves.py',work/'shared-saves.py')
             (work/'ai-profiles').mkdir(exist_ok=True)
             for artwork_profile in (APP/'profiles').glob('*.json'):
                 shutil.copyfile(artwork_profile,work/'ai-profiles'/artwork_profile.name)
