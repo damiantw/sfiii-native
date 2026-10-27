@@ -23,6 +23,7 @@ $config | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $workPath 'game.j
 $pythonCommand = (Get-Command $Python -ErrorAction Stop).Source
 [IO.File]::WriteAllText((Join-Path $workPath 'save-import-python.txt'),$pythonCommand)
 Copy-Item -LiteralPath (Join-Path $repo 'desktop\ai_packs.py') -Destination (Join-Path $workPath 'ai-packs-helper.py') -Force
+Copy-Item -LiteralPath (Join-Path $repo 'desktop\shared_saves.py') -Destination (Join-Path $workPath 'shared-saves.py') -Force
 $artworkProfiles = Join-Path $workPath 'ai-profiles'
 New-Item -ItemType Directory -Path $artworkProfiles -Force | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $repo 'profiles') -Filter '*.json' | Copy-Item -Destination $artworkProfiles -Force

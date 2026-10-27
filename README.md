@@ -189,18 +189,28 @@ WORK="$HOME/.local/share/SFIII Native/Scenario1-USA"
 "$PKG/python/bin/python3" -B "$PKG/app/desktop/run_posix.py" --work "$WORK"
 ```
 
-`--scenario` is `1`, `2` or `3`. `run_posix.py` also takes `--state FILE` to start from a native save state.
+`--scenario` is `1`, `2` or `3`. `run_posix.py` also takes:
+
+- `--state FILE` to start from a native save state
+- `--separate-saves` to turn off the shared backup memory
+- `--shared-saves DIR` to choose its folder
+
+See [Saves](#saves-and-transfer-between-scenarios).
 
 **Fast loading vs. accurate drive.** By default, CD reads complete quickly, so loading is faster than on a
 Saturn. **`--accurate-drive`** makes the drive seek before each read and read at the real 2× speed, and makes the
 SH-2 bus and CD block timing follow the hardware more closely. Loads then take as long as on a real console. When the
 flag is off, the default mode is unchanged. The launcher does not expose the option yet. To use it, run the
-prepared binary directly with the same save and settings files the launcher uses:
+prepared binary directly with the same save and settings files the launcher uses. A direct run does not merge or
+lock the shared memory, so close other games first:
 
 ```sh
 "$WORK/$(cat "$WORK/native-build.txt")/saturn" --cue ~/sf3/sc1/disc.cue \
-  --save "$WORK/experimental-backup.bin" --settings "$WORK/settings.ini" --accurate-drive
+  --save "$HOME/.local/share/SFIII Native/Shared Backup Memory/backup.bin" \
+  --settings "$WORK/settings.ini" --accurate-drive
 ```
+
+That `--save` path is the Linux default. With separate saves, use `"$WORK/experimental-backup.bin"` instead.
 
 Other `saturn` options include:
 
@@ -231,21 +241,55 @@ Bind gamepads in **Controller Setup**. See [docs/USAGE.md](docs/USAGE.md).
 
 ## Saves and transfer between scenarios
 
-- **Save files.** In-game saves go to the scenario's data folder, in `experimental-backup.bin` (internal memory,
-  32 KiB) and `experimental-backup.bin.cartridge` (512 KiB cartridge). They are written the moment the game saves.
-- **Native save states** (F5/F9) are tied to one build and one disc. To keep progress across builds, use an in-game save.
-- **Import saves** from emulators or real hardware with the launcher's **Import saves** button, or with
-  `tools/import-saturn-save.py --backup WORK/experimental-backup.bin [--device internal|cartridge] FILES...`.
+Like one Saturn, **all scenarios share one backup memory by default**, so a finished scenario carries over to the next
+with no manual step. Full details are in
+[docs/USAGE.md](docs/USAGE.md#shared-backup-memory-campaign-carryover).
+
+- **Shared files.** The shared memory is `backup.bin` (internal, 32 KiB) and `backup.bin.cartridge` (cartridge,
+  512 KiB), kept in:
+  - Linux: `$XDG_DATA_HOME/SFIII Native/Shared Backup Memory` (default `~/.local/share/SFIII Native/Shared Backup Memory`)
+  - macOS: `~/Library/Application Support/SFIII Native/Shared Backup Memory`
+  - Windows: `%LOCALAPPDATA%\SFIII Native\Shared Backup Memory`
+
+  To use another folder, pass `run_posix.py --shared-saves DIR` (or `-SharedSaveDir` on Windows). The folder must
+  be outside every game-data folder. Each game-data folder gets a `shared-backup-memory.txt` that names the file in
+  use. Saves are written to disk the moment the game saves.
+- **Scenario transfer.**
+  1. Finish a scenario and write its **COMPLETE** save.
+  2. Start a new game in the next scenario. Its own import ("continue your previous adventure?") offers the record.
+
+  In Scenario 2, the start menu defaults to *Continue* when Scenario 2 already has its own save. Press **Up** to
+  choose *Begin* for a new game with the import. Scenario 3 offers only a COMPLETE record. The Sc1 → Sc2 and
+  Sc2 → Sc3 transfers were checked byte for byte against Beetle Saturn.
+- **One-time migration.** At launch, existing per-scenario `experimental-backup.bin(.cartridge)` files are merged
+  into the shared memory, save by save:
+  - Original files are never changed or deleted.
+  - Before any write, the shared files are copied to `migration-backups/<UTC time>/`.
+  - `shared-saves.json` reports what happened to every save.
+  - Identical saves are stored once. A different save with the same name gets the next free slot name.
+  - A save that fits nowhere is **not dropped**. It stays in its original file, is reported with a warning, and is
+    retried at every launch.
+- **Capacity warning.** At each launch the launcher warns when internal memory cannot fit a new save of the scenario
+  you start, and when both devices are full. The warning appears in the status line and as `SF3 saves:` in the log.
+  - Internal memory has 510 usable blocks. It holds one Sc3 save (382 blocks), or one Sc1 save (204) and one Sc2
+    save (256).
+  - The cartridge has 1022 usable blocks and holds many saves. If your Sc1 and Sc2 saves are on internal memory,
+    save Sc3 to the cartridge.
+  - On a full device, the game's own save fails with its normal message. Existing records are never overwritten.
+- **One game at a time.** A game session or import locks the shared memory (`backup.lock`). A second game or import
+  is refused until the first one closes.
+- **Separate saves.** To go back to each data folder's own `experimental-backup.bin`, tick **Separate saves per
+  scenario** in the launcher, or pass `--separate-saves` (`-SeparateSaves` on Windows). Transfer then needs
+  **Import saves**, and the shared memory is left as it is.
+- **Native save states** (F5/F9) are tied to one build and one disc, and each holds the whole backup memory of its
+  moment. After you load one, the other scenarios' records are put back as they were, so loading an Sc3 state does
+  not roll back your Sc2 saves. To keep progress across builds, use an in-game save.
+- **Import saves** from emulators or real hardware with the launcher's **Import saves** button. It writes into the
+  shared memory, or into the folder's own file when separate saves are on. The command-line importer
+  `tools/import-saturn-save.py --backup BACKUP.bin [--device internal|cartridge] FILES...` takes no lock, so run it
+  only while no game is running.
   - It accepts raw `SFORCE31_XX.BIN`, `SFORCE32_XX.BIN` and `SFORCE33_XX.BIN` saves, and version-1 JSON `.ysbak` exports.
   - Whole backup-RAM images and emulator save states are not supported.
-- **Scenario transfer** works as it does on the Saturn:
-  1. Finish a scenario and write its **COMPLETE** save.
-  2. Put that record into the next scenario's backup storage.
-  3. Start a new game in the next scenario. It offers to import the record.
-
-  The Sc1 COMPLETE → Sc2 and Sc2 COMPLETE → Sc3 transfers were checked byte for byte against Beetle Saturn.
-  Sc3 only offers the import for a COMPLETE record. Use cartridge storage: an Sc2 save takes 33 blocks and an Sc3
-  save takes 49, so internal memory fits only one.
 
 ## Status and known issues
 

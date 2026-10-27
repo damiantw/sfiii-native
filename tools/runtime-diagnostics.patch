@@ -1,5 +1,5 @@
 diff --git a/runtime/include/saturn/sh2.h b/runtime/include/saturn/sh2.h
-index 1219a02..190931c 100644
+index 1219a02..4e3daa3 100644
 --- a/runtime/include/saturn/sh2.h
 +++ b/runtime/include/saturn/sh2.h
 @@ -11,9 +11,11 @@
@@ -139,11 +139,12 @@ index 1219a02..190931c 100644
      else sh2_io_write(a, v, 4);
  }
  
-@@ -196,6 +250,7 @@ const SH2Module* sh2_identify(uint32_t base);     // the module whose image is i
+@@ -196,6 +250,8 @@ const SH2Module* sh2_identify(uint32_t base);     // the module whose image is i
  const SH2Module* sh2_identify_containing(uint32_t addr, bool* exact);   // a module whose image in memory holds addr
  void    sh2_activate(const SH2Module* m);          // replaces any active module it overlaps
  SH2Func sh2_lookup(uint32_t addr);                  // nullptr if not an entry of an active module
 +uint64_t sh2_dispatch_audit_reports();               // SF3_DISPATCH_AUDIT=1: entries run over other bytes, logged (core.cpp)
++uint32_t sh2_audit_window(const uint8_t* image, uint32_t n);   // bytes the audit compares at an entry
  void    sh2_call_unknown(SH2Context& c, uint32_t addr);   // services: not an entry (the BIOS...)
  void    sh2_program_start(SH2Context& c, uint32_t addr);  // services: restart at a program entry
  uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc = 0);
@@ -251,7 +252,7 @@ index 0000000..712a96c
 +    ~SH2CallFrame() { g_sh2_frames->pop(depth); }
 +};
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..c208d96 100644
+index cb6af72..ef13591 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
 @@ -3,8 +3,16 @@
@@ -338,7 +339,7 @@ index cb6af72..c208d96 100644
  const SH2Module* sh2_module(const char* name) {
      for (int i = 0; i < g_sh2_nmodules; ++i)
          if (!std::strcmp(g_sh2_modules[i]->name, name)) return g_sh2_modules[i];
-@@ -113,42 +135,173 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +135,188 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -424,6 +425,20 @@ index cb6af72..c208d96 100644
 +    if (!p || !host(m->base + m->size - 1) || sh2_crc32(p, m->size) != m->crc) return;
 +    g_audit_image[m].assign(p, p + m->size);
 +}
++// The bytes compared: the entry's straight-line code in the image, up to and including the delay
++// slot of its first unconditional branch (bra, braf, jmp, rts, rte). What follows such a branch is
++// not run from here and is often its literal pool, where hand-written code keeps variables it
++// stores to (mova SLOT,r0; rts; mov.w r4,@r0): those change by design and are not stale code.
++uint32_t sh2_audit_window(const uint8_t* image, uint32_t n) {
++    for (uint32_t i = 0; i + 1 < n; i += 2) {
++        uint16_t w = uint16_t(image[i] << 8 | image[i + 1]);
++        bool branch = (w & 0xF000) == 0xA000 || w == 0x000B || w == 0x002B ||
++                      (w & 0xF0FF) == 0x0023 || (w & 0xF0FF) == 0x402B;
++        if (branch) return i + 4 < n ? i + 4 : n;
++    }
++    return n;
++}
++static uint32_t audit_window(const uint8_t* image, uint32_t n) { return sh2_audit_window(image, n); }
 +static void audit_call(const SH2Context& c, uint32_t addr) {
 +    const SH2Module* m = nullptr; uint32_t k = 0;
 +    for (int slot = 0; slot < kSlots && !m; ++slot) {
@@ -450,6 +465,7 @@ index cb6af72..c208d96 100644
 +    uint32_t off = addr - m->base, n = m->sizes && m->sizes[k] ? 2u * m->sizes[k] : 2u;
 +    if (n > 16) n = 16;
 +    if (off + n > m->size) n = m->size - off;
++    n = audit_window(it->second.data() + off, n);
 +    const uint8_t* p = host(addr);
 +    if (!p || std::memcmp(p, it->second.data() + off, n) == 0) return;
 +    if (!g_audit_seen.insert((uint64_t)(uintptr_t)m ^ ((uint64_t)addr << 32 | 1)).second) return;
@@ -525,7 +541,7 @@ index cb6af72..c208d96 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -183,14 +336,59 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -183,14 +351,59 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  

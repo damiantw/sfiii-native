@@ -7,7 +7,12 @@ param(
     [string]$ReplayCheckpoint = '',
     [string]$NativeState = '',
     [switch]$LoadNativeLatest,
-    [switch]$Diagnostics
+    [switch]$Diagnostics,
+    # Default: one backup memory shared by all scenarios, so each game's new-game import finds the
+    # previous scenario's COMPLETE record. -SeparateSaves keeps this folder's own file (old behaviour).
+    [switch]$SeparateSaves,
+    [string]$SharedSaveDir = '',
+    [string]$LauncherSettings = ''
 )
 $ErrorActionPreference = 'Stop'
 $Work = [System.IO.Path]::GetFullPath($Work)
@@ -69,6 +74,39 @@ if (Test-Path -LiteralPath (Join-Path $Work 'ai-packs.json')) {
     if ($LASTEXITCODE -ne 0) { throw 'Optional graphics could not be validated. Choose Use original graphics in the launcher, or reattach a matching builder report.' }
     $artworkEnvironment = $resolvedArtwork | ConvertFrom-Json
 }
+function Write-SavesStatus([string]$Message) {
+    Write-Host ('SF3_STATUS ' + (ConvertTo-Json -Compress @{ phase = 'saves'; message = $Message; done = 0; total = 0 }))
+    Write-Host "SF3 saves: $Message"
+}
+$sharedDir = ''
+$sharedLock = $null
+$sharedPython = ''
+$sharedHelper = Join-Path $Work 'shared-saves.py'
+if (-not $SeparateSaves -and (-not (Test-Path -LiteralPath $sharedHelper) -or -not (Test-Path -LiteralPath (Join-Path $Work 'save-import-python.txt')))) {
+    # Folders made by older or manual builds lack the helper; keep them playable with their own file.
+    Write-SavesStatus 'WARNING: the shared backup memory needs this game prepared again with the updated application; using this folder''s own saves for now.'
+    $SeparateSaves = $true
+}
+if (-not $SeparateSaves) {
+    $sharedDir = if ($SharedSaveDir) { [IO.Path]::GetFullPath($SharedSaveDir) } else { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'SFIII Native\Shared Backup Memory' }
+    if (($sharedDir + '\').StartsWith($Work + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'The shared backup memory folder must be outside the game-data folder.' }
+    $pythonFile = Join-Path $Work 'save-import-python.txt'
+    $sharedPython = [IO.File]::ReadAllText($pythonFile).Trim()
+    New-Item -ItemType Directory -Force $sharedDir | Out-Null
+    # Held for the whole session: a second scenario (or a save import) cannot use the same files.
+    try { $sharedLock = [IO.File]::Open((Join-Path $sharedDir 'backup.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+    catch { throw "Another Shining Force III game, save import or merge is using the shared backup memory ($sharedDir). Close it first, or choose separate saves per scenario." }
+    try {
+        $prepareArguments = @('-X', 'utf8', '-B', $sharedHelper, 'prepare', '--work', $Work, '--shared', $sharedDir)
+        if ($LauncherSettings) { $prepareArguments += @('--settings', $LauncherSettings) }
+        $prepared = & $sharedPython @prepareArguments
+        if ($LASTEXITCODE -ne 0) { throw 'The shared backup memory could not be prepared; nothing was changed. See the message above, or choose separate saves per scenario.' }
+        $sharedReport = ($prepared -join "`n") | ConvertFrom-Json
+    }
+    catch { $sharedLock.Dispose(); throw }
+    foreach ($message in $sharedReport.messages) { Write-SavesStatus $message }
+    [IO.File]::WriteAllText((Join-Path $Work 'shared-backup-memory.txt'), "This game uses the backup memory shared by all scenarios:`r`n" + (Join-Path $sharedDir 'backup.bin') + "`r`nAny experimental-backup.bin in this folder was merged into it once and is kept unchanged;`r`nit is used again only when you choose separate saves per scenario.`r`n")
+}
 foreach ($name in @('SF3_CONTROLLER_DIR', 'SF3_RAM_DUMP', 'SF3_CRASH_DIR', 'SF3_REPLAY_ROOT', 'SF3_REPLAY_SEED', 'SF3_STATE_ROOT', 'SF3_STATE_ID', 'SF3_AI_VIDEO_DIR', 'SF3_AI_ASSET_DIR', 'SF3_AI_NATURAL_DIR')) {
     $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
@@ -84,7 +122,7 @@ try {
         [IO.File]::WriteAllText((Join-Path $seed 'disc-id.txt'), $discId)
         $context = [ordered]@{ format = 'SF3REPLAY1'; clock = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'); executableSha256 = $buildId; discSha256 = $discId; tracks = $trackInfo }
         $resumeFrame = 0L
-        $save = Join-Path $Work 'experimental-backup.bin'
+        $save = if ($sharedDir) { Join-Path $sharedDir 'backup.bin' } else { Join-Path $Work 'experimental-backup.bin' }
         $settings = Join-Path $Work 'settings.ini'
         if ($ReplayCheckpoint) {
             $ReplayCheckpoint = [IO.Path]::GetFullPath($ReplayCheckpoint)
@@ -118,6 +156,12 @@ try {
             $source = Join-Path $Work $name
             if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination (Join-Path $run ('before-' + $name)) }
         }
+        if ($sharedDir) {
+            foreach ($suffix in @('', '.cartridge')) {
+                $source = Join-Path $sharedDir ('backup.bin' + $suffix)
+                if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination (Join-Path $run ('before-shared-backup.bin' + $suffix)) }
+            }
+        }
         New-Item -ItemType File -Path (Join-Path $run 'input.txt') | Out-Null
         $clockText = if ($context.clock -is [DateTime]) { $context.clock.ToString('yyyy-MM-ddTHH:mm:ss') } else { [string]$context.clock }
         $options = @('--cue', $cuePath, '--save', $save, '--settings', $settings, '--clock', $clockText, '--out', $run,
@@ -130,8 +174,9 @@ try {
             # Keep the exact pre-load progress and source state before restoring.
             Copy-Item -LiteralPath $NativeState -Destination (Join-Path $run 'loaded.satstate')
             $presence = [ordered]@{}
-            foreach ($name in @('experimental-backup.bin', 'experimental-backup.bin.cartridge')) {
-                $source = Join-Path $Work $name
+            $liveName = Split-Path $save -Leaf
+            foreach ($name in @($liveName, ($liveName + '.cartridge'))) {
+                $source = Join-Path (Split-Path $save -Parent) $name
                 $presence[$name] = Test-Path -LiteralPath $source
                 if ($presence[$name]) { Copy-Item -LiteralPath $source -Destination (Join-Path $run ('before-native-state-load-' + $name)) }
             }
@@ -167,8 +212,23 @@ try {
         } catch { $manifest.launcherError = $_.Exception.Message; throw }
         finally {
             if ($ReplayCheckpoint) {
-                try { & (Join-Path $PSScriptRoot 'publish-replay-save.ps1') -Work $Work -Session $run -ResumeFrame $resumeFrame }
+                try {
+                    if ($sharedDir) { & (Join-Path $PSScriptRoot 'publish-replay-save.ps1') -Work $Work -Session $run -ResumeFrame $resumeFrame -SharedSaveDir $sharedDir -Python $sharedPython }
+                    else { & (Join-Path $PSScriptRoot 'publish-replay-save.ps1') -Work $Work -Session $run -ResumeFrame $resumeFrame }
+                }
                 catch { Write-Warning "Could not publish the replay save: $_. It remains in $save" }
+            } elseif ($sharedDir -and $NativeState) {
+                # A native state brings back the whole backup memory of its moment; keep the other
+                # scenarios' saves as they were before this session.
+                $guard = & $sharedPython -X utf8 -B $sharedHelper guard --work $Work --shared $sharedDir --before (Join-Path $run 'before-native-state-load-backup.bin')
+                if ($LASTEXITCODE -ne 0) { Write-Warning 'Could not check the other scenarios'' saves after the native state load.' }
+                else {
+                    $guard | Set-Content -LiteralPath (Join-Path $run 'shared-saves-guard.json') -Encoding utf8
+                    $guardReport = ($guard -join "`n") | ConvertFrom-Json
+                    $changed = @($guardReport.restored).Count + @($guardReport.removed).Count
+                    if ($changed) { Write-SavesStatus "Kept the other scenarios' saves as they were before the native state load ($changed record(s)); copies in $($guardReport.backup)" }
+                    if (@($guardReport.not_restored).Count) { Write-SavesStatus "WARNING: no room to restore some saves; kept in $($guardReport.backup)" }
+                }
             }
             $manifest.finishedUtc = [DateTime]::UtcNow.ToString('o')
             $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8
@@ -184,6 +244,7 @@ try {
 } finally {
     foreach ($name in $previousEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process') }
     Pop-Location
+    if ($sharedLock) { $sharedLock.Dispose() }
 }
 if ($result -ne 0) {
     Write-Host "Native runtime stopped with exit code $result"
