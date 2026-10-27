@@ -120,6 +120,29 @@ class BattleWorkerTests(unittest.TestCase):
         worker.atomic_json(Path(command[-1]), dict(status='unsupported', images=[]))
         return 0
 
+    def test_resumed_world_membership_preserves_old_pack_without_stale_materials(self):
+        fixture = fixtures.CharacterPacksTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        job = worker.Job({}, fixture.cache, APP)
+        first = fixture.world_asset
+        second = fixture.asset('world', '/OTHER.MPD', bytes((16, 32, 48, 255, 0, 0, 0, 0)))
+        cache = {'video': dict(signature=fixture.signature,
+                              ready={a['id']: fixture.enhanced / a['id'] for a in (first, second)})}
+        catalog = dict(scenario=2, profile='synthetic', assets={a['id']: a for a in (first, second)})
+        old = job.pack({fixture.revision: catalog}, cache)[0]
+        catalog['assets'] = {first['id']: first}
+        new = job.pack({fixture.revision: catalog}, cache)[0]
+        self.assertNotEqual(old['path'], new['path'])
+        self.assertTrue((Path(old['path']) / second['id']).exists())
+        self.assertFalse((Path(new['path']) / second['id']).exists())
+        self.assertEqual(new['material_count'], 1)
+        self.assertEqual(job.pack({fixture.revision: catalog}, cache)[0]['path'], new['path'])
+        fixture.catalog = [first]
+        character_packs.atomic_json(fixture.disc / 'catalog.json', fixture.catalog)
+        result = character_packs.package(fixture.cache, fixture.out, new)
+        self.assertEqual(result['material_count'], 1)
+
     def test_parser_revision_invalidates_only_exact_model_receipts(self):
         base = 'original-library-fingerprint'
         first = worker.decoder_fingerprint(base, 'X8PC01A.BIN')

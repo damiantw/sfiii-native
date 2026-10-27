@@ -305,7 +305,14 @@ class Job:
         for revision,catalog in catalogs.items():
             for model,cache in completed.items():
                 self.update('pack',f"Building Scenario {catalog['scenario']} {model} world-texture pack")
-                pack=self.out/'packs'/revision[:20]/model/cache['signature'][:16];pack.mkdir(parents=True,exist_ok=True)
+                # A resumed extraction can change the world-material set while
+                # retaining the same disc and model. Keep prior packs intact,
+                # but never mix their obsolete materials into the new index.
+                world_ids=sorted(identity for identity,asset in catalog['assets'].items()
+                                 if any(r['category']=='world' for r in asset['refs'])
+                                 and identity in cache['ready'])
+                membership=hashlib.sha256('\n'.join(world_ids).encode()).hexdigest()[:20]
+                pack=self.out/'packs'/revision[:20]/model/membership/cache['signature'][:16];pack.mkdir(parents=True,exist_ok=True)
                 if (pack/'manifest.json').exists() and json.loads((pack/'manifest.json').read_text())['revision']!=revision:
                     raise ValueError('Pack identity collision; choose a fresh output folder')
                 count=0;size=0;missing=[]
