@@ -185,6 +185,33 @@ def _play(s, job, frames, seed, explore):
                          watch=tuple([job['leader']] + list(job.get('protect') or ())) if job.get('watch_fall') else None)
 
 
+def slim_dirs(cdir, levels):
+    """--slim (round 28, Sc3 v92 held 286 candidate saves, 1.5 GB at level 50): keep only the stack
+    path, one picked candidate per level (each the parent its level expands from); untried
+    alternatives lose their saves and are replayed from their parent with their seed on a backtrack."""
+    if not cdir.is_dir():
+        return 0
+    keep = {Path(lv["state"]).parent.resolve() for lv in levels}
+    gone = 0
+    for d in cdir.iterdir():
+        if d.is_dir() and d.resolve() not in keep:
+            shutil.rmtree(d, ignore_errors=True)
+            gone += 1
+    return gone
+
+
+def restore_alt(c, prev, common, run):
+    """--slim backtrack: the alternative `c` (a ranked result of level `prev`) has no save left; run
+    it again from the parent with its seed and explore into its own dir. Returns the new result and
+    whether it matched the first run (VBlank and score)."""
+    if Path(c["state"]).exists():
+        return c, True
+    out = Path(c.get("out") or Path(c["state"]).parent)
+    r = run(dict(common, state=prev["state"], backup=prev["backup"], v=prev["v"], seed=c["seed"],
+                 explore=c["explore"], out=str(out)))
+    return r, r.get("v") == c.get("v") and round(r["score"], 3) == round(c["score"], 3)
+
+
 def candidate(job):
     """One branch: restore job['state'], play W (+ lookahead L). Runs in a worker process."""
     from saturnrecomp import agent
@@ -327,7 +354,9 @@ def search(a):
         while levels[-1]['v'] - v0 < a.frames and len(log) < a.max_levels:
             if getattr(a, 'keep_alts', None) is not None:
                 cap_alternatives(levels, a.keep_alts)
-            if getattr(a, 'prune', False):
+            if getattr(a, 'slim', False):
+                slim_dirs(out / 'c', levels)
+            elif getattr(a, 'prune', False):
                 prune_dead(out / 'c', levels)
             cur = levels[-1]
             n = len(log)
@@ -347,6 +376,14 @@ def search(a):
                     levels.pop()
                     prev = levels[-1]
                     prev['pick'] += 1
+                    while getattr(a, 'slim', False) and prev['pick'] < len(prev['ranked']) and prev['ranked'][prev['pick']]['score'] > -1e6 \
+                            and not Path(prev['ranked'][prev['pick']].get('state') or '/nonexistent').exists():
+                        c, same = restore_alt(prev['ranked'][prev['pick']], prev, common, lambda j: ex.submit(candidate, j).result())
+                        prev['ranked'][prev['pick']] = c
+                        print(f"  slim: replayed candidate {prev['pick']} at level {len(levels) - 1} ({'same' if same else 'DIFFERS, now ' + str(round(c['score'], 2))})", flush=True)
+                        if c['score'] > -1e6 and c.get('state'):
+                            break
+                        prev['pick'] += 1
                     if prev['pick'] < len(prev['ranked']) and prev['ranked'][prev['pick']]['score'] > -1e6:
                         c = prev['ranked'][prev['pick']]
                         levels.append(dict(state=c['state'], v=c['v'], actions=prev['actions'] + c['actions'],

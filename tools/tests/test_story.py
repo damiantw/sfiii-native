@@ -421,6 +421,35 @@ class StoryTest(unittest.TestCase):
         self.assertGreaterEqual(p[1], 8)
         self.assertEqual(autoplay.retreat_path((5, 5), [(5, 2)], allies, {}, reach=0), [])
 
+    def test_slim_keeps_only_the_path(self):
+        import tempfile
+        from sf3test import search
+        with tempfile.TemporaryDirectory() as td:
+            c = Path(td) / "c"
+            for n in ("0000-0", "0000-1", "0000-2", "0001-0", "0001-1"):
+                (c / n).mkdir(parents=True)
+                (c / n / "commit.state").write_text("x")
+            st = lambda n: str(c / n / "commit.state")
+            levels = [dict(state="/root.state", ranked=[dict(state=st("0000-1"), score=5), dict(state=st("0000-0"), score=4)], pick=0),
+                      dict(state=st("0000-1"), ranked=[dict(state=st("0001-0"), score=3), dict(state=st("0001-1"), score=2)], pick=0),
+                      dict(state=st("0001-0"), ranked=[], pick=0)]
+            self.assertEqual(search.slim_dirs(c, levels), 3)
+            self.assertEqual(sorted(p.name for p in c.iterdir()), ["0000-1", "0001-0"])
+            # a backtrack to the dropped 0001-1 replays it from its parent with its own seed
+            calls = []
+            def run(job):
+                calls.append(job)
+                return dict(seed=job["seed"], explore=job["explore"], score=2.0, v=900, state=job["out"] + "/commit.state")
+            alt = dict(state=st("0001-1"), score=2, v=900, seed=17, explore=0.6)
+            parent = dict(state=st("0000-1"), backup="/b.bin", v=500)
+            r, same = search.restore_alt(alt, parent, dict(W=10), run)
+            self.assertTrue(same)
+            self.assertEqual((calls[0]["state"], calls[0]["v"], calls[0]["seed"], calls[0]["explore"], calls[0]["out"]),
+                             (st("0000-1"), 500, 17, 0.6, str(c / "0001-1")))
+            kept = dict(state=st("0001-0"), score=3)
+            self.assertEqual(search.restore_alt(kept, parent, {}, run), (kept, True))
+            self.assertEqual(len(calls), 1)
+
     def test_prune_keeps_backtrack_frontier(self):
         import tempfile
         from pathlib import Path
