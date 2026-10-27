@@ -70,7 +70,7 @@ class Launcher : Form {
         TextAt("Shining Force III Native",24,20,800,35).Font=new Font("Segoe UI",20,FontStyle.Bold);
         TextAt("Game",25,65,120,25);
         gameChoice.DropDownStyle=ComboBoxStyle.DropDownList;gameChoice.SetBounds(155,62,667,28);
-        gameChoice.Items.AddRange(new object[]{"Scenario 1 USA (V1.001 or Translation V25.1)","Scenario 2 Translation V25.1 / v24 (experimental)","Scenario 3 Translation V25.1 (experimental)"});
+        gameChoice.Items.AddRange(new object[]{"Scenario 1 USA (V1.001 or Translation V25.1)","Scenario 2 Translation V25.1 / V25 / v24 (experimental)","Scenario 3 Translation V25.1 (experimental)"});
         gameChoice.SelectedIndex=0;Controls.Add(gameChoice);
         gameChoice.DrawMode=DrawMode.OwnerDrawFixed;
         gameChoice.DrawItem+=delegate(object sender,DrawItemEventArgs e) {

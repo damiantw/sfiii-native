@@ -46,7 +46,7 @@ class Launcher:
         frame.pack(fill='both',expand=True)
         frame.columnconfigure(1,weight=1)
         ttk.Label(frame,text='Shining Force III Native',font=('',22,'bold')).grid(row=0,column=0,columnspan=3,sticky='w',pady=(0,18))
-        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 USA (V1.001 or Translation Project V25.1)','Scenario 2 Translation Project V25.1 / v24 (experimental)','Scenario 3 Translation Project V25.1 (experimental)'])
+        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 USA (V1.001 or Translation Project V25.1)','Scenario 2 Translation Project V25.1 / V25 / v24 (experimental)','Scenario 3 Translation Project V25.1 (experimental)'])
         self.selection.grid(row=1,column=1,sticky='ew',pady=5)
         ttk.Label(frame,text='Game').grid(row=1,column=0,sticky='w',padx=(0,12))
         self.cue, self.work = tk.StringVar(), tk.StringVar()
