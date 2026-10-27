@@ -123,6 +123,8 @@ The current Windows file-picker title still says “Scenarios 1 and 2”; the im
 
 Close the game, click **Import saves** in the desktop application (or open **Import Saturn Saves.cmd** in your work folder), select your exported saves, and choose **internal memory** or **cartridge memory**. Then launch the game and use its own load menu. The importer validates the save layout and checksum, leaves your original export untouched, and backs up an existing destination before writing. The desktop package includes Python; source builds require Python 3.11+. See [save formats and storage details](docs/USAGE.md#game-saves).
 
+All scenarios share one backup memory by default, like a real Saturn: a completed Scenario 1 or 2 save is offered by the next scenario's own new-game import with no extra step. On first launch your existing per-scenario saves are merged into it save by save; the originals are kept, backups are written first, and saves that do not fit are reported and left in place. Tick **Separate saves per scenario** (or pass `-SeparateSaves` / `--separate-saves`) to keep them apart. See [shared backup memory](docs/USAGE.md#shared-backup-memory-campaign-carryover).
+
 ## Status and validation
 
 The v0.6.0-preview1 Windows candidate passed **six runtime regression targets and nine focused Scenario 2 transition routes**: 16 checks including emission. Twelve captured scene/style GPU rendering cases and four live style/state continuations also passed with unchanged native frames. These checks cover the available fixtures, rather than every spell, character animation, transition or campaign. Five older route fixtures are unavailable and were not counted as passing or rerun for this candidate.

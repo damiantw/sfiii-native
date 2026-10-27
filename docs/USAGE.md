@@ -138,7 +138,34 @@ Use the game's save command for ordinary persistent progress. The external files
 
 Choose internal or cartridge storage. A Scenario 2 save occupies 33 cartridge blocks; internal storage fits one Scenario 2 save. Imports preserve payloads and back up the destination. YSBAK filename, ASCII comment, language and save date are retained; embedded screenshots and remote URLs are ignored. Raw BIN imports generate comment/date metadata. Emulator and Saroo exports must match a supported format; whole memory dumps and emulator save states are not interchangeable. Stop the game before importing. The desktop package supplies Python; source builds need Python 3.11+ installed.
 
-A Scenario 3 save occupies 49 cartridge blocks. Internal memory fits one Scenario 3 save; use cartridge storage when keeping completed earlier-scenario files alongside it. Each launcher scenario remembers its own disc and data folder. Carryover requires explicitly importing a completed earlier-scenario save into the destination scenario's backup storage; the launcher does not merge or overwrite your other games' progress.
+A Scenario 3 save occupies 49 cartridge blocks (382 internal blocks). Internal memory (510 usable blocks) fits one Scenario 3 save, or one Scenario 1 (204 blocks) and one Scenario 2 (256 blocks) save; the cartridge (1022 usable blocks) fits many.
+
+### Shared backup memory (campaign carryover)
+
+Like one real Saturn, **all scenarios now use one shared backup memory by default**, so a completed Scenario 1 or 2 save is offered by the next scenario's own *new game* import ("continue your previous adventure?" / "Select a record") without any manual step. The shared files are `backup.bin` and `backup.bin.cartridge` in:
+
+- Windows: `%LOCALAPPDATA%\SFIII Native\Shared Backup Memory`
+- Linux: `$XDG_DATA_HOME/SFIII Native/Shared Backup Memory` (default `~/.local/share/...`)
+- macOS: `~/Library/Application Support/SFIII Native/Shared Backup Memory`
+
+The launch scripts also accept another folder (`-SharedSaveDir` on Windows, `--shared-saves DIR` for `run_posix.py`); it must be outside every game-data folder. Each game-data folder gets `shared-backup-memory.txt` naming the file in use.
+
+**One-time migration.** At launch, the per-scenario `experimental-backup.bin(.cartridge)` files of this folder, every folder in the launcher settings and the default folders are merged into the shared memory, save by save:
+
+- The original files are never changed or deleted. Before any write the shared files are copied to `migration-backups/<UTC time>/`, and a report goes to `shared-saves.json`.
+- Identical saves (same name and contents) are stored once. A different save with the same name is kept under the next free slot name of that scenario (`SFORCE32_01` → `SFORCE32_02`), on the same device if it fits, otherwise on the other device. A scenario's own folder claims its names first.
+- A save that fits nowhere is **not dropped**: it stays in its original file, is listed with a warning, and is retried at every launch. A damaged file is reported and left alone.
+- A folder is merged again only when its file changes (for example after playing with separate saves).
+
+**Capacity.** At each launch the launcher reports, in its status line and the log (`SF3 saves:`), when the internal memory no longer fits a new save of the scenario you start and how many fit on the cartridge, and warns when both are full. With Scenario 1 and 2 saves both on internal memory, save Scenario 3 to the cartridge. A full device makes the game's own save fail with its normal message; existing records are never overwritten.
+
+**Opt-out.** Tick **Separate saves per scenario** in the launcher, or pass `-SeparateSaves` / `--separate-saves`, to use the folder's own `experimental-backup.bin` again (transfer then needs **Import saves**, as before). Your shared memory is left as it is.
+
+**One game at a time.** The shared memory is locked (`backup.lock`) for a whole session or import; a second game or import using it is refused with a message until the first closes.
+
+**Native states.** A native state contains the whole backup memory of its moment. After a session loaded from a native state, the other scenarios' records are put back as they were before the load (copies in `migration-backups/`), so loading a Scenario 3 state does not roll back your Scenario 2 saves. The scenario's own records follow the state, as before.
+
+Running the native executable directly, or old shortcuts, uses whatever `--save` file they name; only the launchers and scripts above share and lock.
 
 ## Native save states and replay checkpoints
 

@@ -1,4 +1,5 @@
 """Native sessions, backups and direct state/replay restarts for Linux/macOS."""
+import contextlib
 import datetime
 import json
 import os
@@ -14,6 +15,7 @@ import zlib
 sys.dont_write_bytecode = True
 from prepare_posix import APP, PAYLOAD, common, lock, package_root
 from ai_packs import validate_selection
+import shared_saves
 
 
 def within(path, root):
@@ -59,9 +61,34 @@ def copy_if_present(source, destination):
     return False
 
 
-def play(work, native_state=None, headless=0):
+def shared_setup(work, separate=False, shared_dir=None, settings=None, extra=()):
+    """(shared folder or None, session report). Merges this and the other known game-data folders'
+    per-scenario saves into the shared backup memory once, then checks its space."""
+    if separate:
+        return None, dict(mode='separate', save=str(work/'experimental-backup.bin'), messages=[])
+    shared = Path(shared_dir).resolve() if shared_dir else shared_saves.default_dir()
+    if shared == work or work in shared.parents:
+        raise ValueError('The shared backup memory folder must be outside the game-data folder.')
+    settings = shared_saves.default_settings() if settings is None else settings
+    extra = list(extra)+shared_saves.default_folders()
+    report = shared_saves.prepare_session(work,shared,settings,extra)
+    report['mode'] = 'shared'
+    (work/'shared-backup-memory.txt').write_text(
+        'This game uses the backup memory shared by all scenarios:\n'+str(shared/'backup.bin')+'\n'
+        'Any experimental-backup.bin in this folder was merged into it once and is kept unchanged;\n'
+        'it is used again only when you choose separate saves per scenario.\n')
+    return shared, report
+
+
+def play(work, native_state=None, headless=0, separate=False, shared_dir=None, settings=None, extra=()):
     work = common.external_work(work,package_root())
-    with lock(work):
+    with lock(work), contextlib.ExitStack() as stack:
+        if not separate:
+            stack.enter_context(shared_saves.lock(Path(shared_dir).resolve() if shared_dir else shared_saves.default_dir()))
+        shared, saves = shared_setup(work,separate,shared_dir,settings,extra)
+        for message in saves['messages']:
+            common.status('saves',message)
+            print('SF3 saves: '+message,file=sys.stderr)
         game = json.loads((work/'game.json').read_text())
         artwork_environment = validate_selection(work, APP/'profiles')
         build = selected_build(work)
@@ -81,7 +108,7 @@ def play(work, native_state=None, headless=0):
             (seed/'disc-id.txt').write_text(disc_id)
             clock = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
             context = dict(format='SF3REPLAY1',clock=clock,executableSha256=build_id,discSha256=disc_id)
-            save, settings = work/'experimental-backup.bin', work/'settings.ini'
+            save, settings = (shared/shared_saves.SAVE_NAME if shared else work/'experimental-backup.bin'), work/'settings.ini'
             for source,target in [(save,seed/'backup.bin'),(Path(str(save)+'.cartridge'),seed/'backup.bin.cartridge')]:
                 if not copy_if_present(source,target):
                     target.write_bytes(b'')
@@ -105,6 +132,10 @@ def play(work, native_state=None, headless=0):
                 copy_if_present(seed/'settings.ini',settings)
             for name in ['experimental-backup.bin','experimental-backup.bin.cartridge','settings.ini','controller-mappings.txt']:
                 copy_if_present(work/name,session/('before-'+name))
+            if shared:
+                for suffix in ['','.cartridge']:
+                    copy_if_present(shared/(shared_saves.SAVE_NAME+suffix),session/('before-shared-backup.bin'+suffix))
+            common.atomic_json(session/'saves.json',saves)
             (session/'input.txt').write_text('')
             args = [str(exe),'--cue',str(cue),'--save',str(save),'--settings',str(settings),
                     '--clock',context['clock'],'--out',str(session),'--log',str(session/'run.log'),
@@ -115,8 +146,9 @@ def play(work, native_state=None, headless=0):
                 native_state = within(native_state,work/'native-states')
                 check_state(native_state,identity)
                 shutil.copy2(native_state,session/'loaded.satstate')
-                presence = {name:copy_if_present(work/name,session/('before-native-state-load-'+name))
-                            for name in ['experimental-backup.bin','experimental-backup.bin.cartridge']}
+                live = save.parent
+                presence = {name:copy_if_present(live/name,session/('before-native-state-load-'+name))
+                            for name in [save.name,save.name+'.cartridge']}
                 common.atomic_json(session/'before-native-state-load.json',presence)
                 args += ['--state-in',str(session/'loaded.satstate')]
             if replay:
@@ -130,9 +162,20 @@ def play(work, native_state=None, headless=0):
             receipt = dict(executable_sha256=build_id,arguments=args,exit_code=None,replay=str(replay) if replay else None,
                            native_state=str(native_state) if native_state else None,live_replay_progress_published=False)
             common.atomic_json(session/'session.json',receipt)
+            before = shared_saves.snapshot(shared) if shared and native_state and not replay else None
             with (session/'console.log').open('wb') as log:
                 result = subprocess.run(args,env=env,stdout=log,stderr=subprocess.STDOUT)
             receipt['exit_code'] = result.returncode
+            if before is not None:
+                # A native state brings back the whole backup memory of its moment; keep the other
+                # scenarios' saves as they were before this session.
+                guard = shared_saves.guard_foreign(shared,saves['scenario'],before)
+                receipt['shared_saves_guard'] = guard
+                if guard['restored'] or guard['removed']:
+                    common.status('saves','Kept the other scenarios\' saves as they were before the native state load ('
+                                  +str(len(guard['restored'])+len(guard['removed']))+' record(s)); copies in '+guard['backup'])
+                if guard['not_restored']:
+                    common.status('saves','WARNING: no room to restore '+', '.join(r['name'] for r in guard['not_restored'])+'; kept in '+guard['backup'])
             common.atomic_json(session/'session.json',receipt)
             # Replay saves remain in their session; never adopt historical progress implicitly.
             if result.returncode:
@@ -152,9 +195,17 @@ if __name__ == '__main__':
     p.add_argument('--work',type=Path,required=True)
     p.add_argument('--state',type=Path)
     p.add_argument('--headless-fields',type=int,default=0)
+    p.add_argument('--separate-saves',action='store_true',
+                   help='use this folder\'s own experimental-backup.bin (the old behaviour: no automatic scenario transfer)')
+    p.add_argument('--shared-saves',type=Path,default=None,metavar='DIR',
+                   help='folder of the backup memory shared by all scenarios (default: '+str(shared_saves.default_dir())+')')
+    p.add_argument('--launcher-settings',type=Path,action='append',default=None,
+                   help='launcher settings whose game-data folders are merged once (default: the launcher\'s own)')
+    p.add_argument('--migrate-from',type=Path,action='append',default=[],metavar='WORK',
+                   help='another game-data folder whose saves are merged once into the shared memory')
     a = p.parse_args()
     try:
-        play(a.work,a.state,a.headless_fields)
+        play(a.work,a.state,a.headless_fields,a.separate_saves,a.shared_saves,a.launcher_settings,a.migrate_from)
     except Exception as e:
         print(str(e),file=sys.stderr)
         sys.exit(1)

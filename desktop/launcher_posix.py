@@ -14,6 +14,7 @@ sys.dont_write_bytecode = True
 from prepare_posix import APP, PAYLOAD, common, lock, package_root
 from run_posix import selected_build
 from ai_packs import install_selection, detach_selection
+import shared_saves
 
 # Accepted disc revision profiles (profiles/*.json ids) per game slot; the first is the recommended disc.
 PROFILES = (('scenario1-usa-v1_001', 'scenario1-usa-translation-v25_1'),
@@ -33,7 +34,7 @@ class Launcher:
         self.root, self.process = root, None
         self.events = queue.Queue()
         self.config = Path(config) if config else data_root()/'launcher.json'
-        self.preferences = dict(selected=0,games={})
+        self.preferences = dict(selected=0,games={},separate_saves=False)
         if self.config.is_file():
             self.preferences.update(json.loads(self.config.read_text()))
         root.title('Shining Force III Native')
@@ -70,6 +71,12 @@ class Launcher:
         self.artwork.pack(side='left',padx=(0,7))
         self.original_art=ttk.Button(artwork,text='Use original graphics',command=self.detach_artwork)
         self.original_art.pack(side='left')
+        # One backup memory for every scenario (like one Saturn), so each game's own new-game
+        # import finds the previous scenario's COMPLETE record. Opt out to keep one file per game.
+        self.separate=tk.BooleanVar(value=bool(self.preferences.get('separate_saves',False)))
+        self.separate_box=ttk.Checkbutton(artwork,text='Separate saves per scenario (no automatic transfer)',variable=self.separate,command=self.remember)
+        self.separate_box.pack(side='left',padx=(14,0))
+        self.saves_note=''
         self.state=tk.StringVar(value='Choose your supported disc, then prepare the game.')
         ttk.Label(frame,textvariable=self.state,wraplength=780).grid(row=6,column=0,columnspan=3,sticky='w',pady=5)
         self.progress=ttk.Progressbar(frame,mode='indeterminate')
@@ -84,6 +91,7 @@ class Launcher:
 
     def remember(self):
         self.preferences['selected']=self.active
+        if hasattr(self,'separate'):self.preferences['separate_saves']=bool(self.separate.get())
         self.preferences['games'][str(self.active)]=dict(cue=self.cue.get(),work=self.work.get())
         self.config.parent.mkdir(parents=True,exist_ok=True)
         common.atomic_json(self.config,self.preferences)
@@ -117,6 +125,7 @@ class Launcher:
         self.cancel.configure(state='normal' if busy and self.task=='prepare' else 'disabled')
         self.selection.configure(state='disabled' if busy else 'readonly')
         for widget in self.entries:widget.configure(state='disabled' if busy else 'normal')
+        if hasattr(self,'separate_box'):self.separate_box.configure(state='disabled' if busy else 'normal')
 
     def browse_disc(self):
         path=filedialog.askopenfilename(filetypes=[('Saturn images','*.cue *.CUE *.chd *.CHD'),('All files','*')])
@@ -150,8 +159,17 @@ class Launcher:
         self.start([PAYLOAD/'python/bin/python3','-X','utf8','-B',APP/'desktop/prepare_posix.py',
                     '--cue',self.cue.get(),'--work',self.work.get(),'--scenario',str(self.active+1)],'prepare')
 
+    def play_args(self):
+        args=[PAYLOAD/'python/bin/python3','-X','utf8','-B',APP/'desktop/run_posix.py','--work',self.work.get()]
+        if self.separate.get():return args+['--separate-saves']
+        args+=['--launcher-settings',self.config]
+        for entry in self.preferences.get('games',{}).values():
+            if isinstance(entry,dict) and entry.get('work'):args+=['--migrate-from',entry['work']]
+        return args
+
     def play_game(self):
-        self.start([PAYLOAD/'python/bin/python3','-X','utf8','-B',APP/'desktop/run_posix.py','--work',self.work.get()],'game')
+        self.saves_note=''
+        self.start(self.play_args(),'game')
 
     def attach_artwork(self):
         report=filedialog.askopenfilename(title='Select locally generated packs-report.json',filetypes=[('Artwork pack report','*.json')])
@@ -192,8 +210,16 @@ class Launcher:
                 module=importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(module)
                 work=common.external_work(Path(self.work.get()),package_root())
-                with lock(work):module.import_files(work/'experimental-backup.bin',choice.get(),list(map(Path,paths)),replace.get())
-                self.state.set('Saves imported. Use the game’s own Load menu.')
+                if self.separate.get():
+                    with lock(work):module.import_files(work/'experimental-backup.bin',choice.get(),list(map(Path,paths)),replace.get())
+                    self.state.set('Saves imported. Use the game’s own Load menu.')
+                else:
+                    shared=shared_saves.default_dir()
+                    with lock(work),shared_saves.lock(shared):
+                        # Merge the per-scenario files first, so an import never shadows an unmerged save.
+                        shared_saves.prepare_session(work,shared,[self.config],[Path(e['work']) for e in self.preferences.get('games',{}).values() if isinstance(e,dict) and e.get('work')])
+                        module.import_files(shared/shared_saves.SAVE_NAME,choice.get(),list(map(Path,paths)),replace.get())
+                    self.state.set('Saves imported into the backup memory shared by all scenarios. Use the game’s own Load menu.')
                 dialog.destroy()
             except Exception as e:messagebox.showerror('Could not import',str(e),parent=dialog)
         ttk.Button(dialog,text='Import',command=apply).pack(padx=20,pady=15)
@@ -206,12 +232,18 @@ class Launcher:
     def poll(self):
         while not self.events.empty():
             event,data=self.events.get()
-            if event=='status':self.state.set(json.loads(data)['message'])
+            if event=='status':
+                status=json.loads(data)
+                self.state.set(status['message'])
+                if status.get('phase')=='saves':
+                    self.saves_note=(self.saves_note+' '+status['message']).strip()
+                    if 'full' in status['message'] or 'WARNING' in status['message']:
+                        messagebox.showwarning('Shared backup memory',status['message'],parent=self.root)
             else:
                 code,text=data
                 self.process=None
                 self.progress.stop()
-                self.state.set('Ready.' if code==0 else text[-800:] or 'Stopped; inspect the local session/setup log.')
+                self.state.set(('Ready. '+self.saves_note).strip() if code==0 else text[-800:] or 'Stopped; inspect the local session/setup log.')
                 self.refresh()
         self.root.after(100,self.poll)
 
