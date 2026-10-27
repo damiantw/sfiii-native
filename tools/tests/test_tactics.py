@@ -161,6 +161,17 @@ class TacticsTest(unittest.TestCase):
         self.assertGreater(tactics.md(force[2], (10, 12)), 2, force)
 
 
+    def test_avoid_all_walks_any_unit_out_of_the_zone(self):
+        # the Sc2 blast zone, invented: an ordinary unit starting its turn inside walks out
+        foe = [(0, 10, 13, 0, 30)]
+        force = {2: (10, 10), 9: (40, 40)}
+        turn(force, foe, leader=9, avoid=(10, 10, 3), tactics={"avoid_all": True})
+        self.assertGreater(tactics.md(force[2], (10, 10)), 3, force)
+        # off by default: only the leader and protected units leave; it walks up to the enemy
+        force = {2: (10, 10), 9: (40, 40)}
+        turn(force, foe, leader=9, avoid=(10, 10, 3))
+        self.assertEqual(tactics.md(force[2], (10, 13)), 1, force)
+
     def test_tactics_of_search_args(self):
         import argparse
         from sf3test import search

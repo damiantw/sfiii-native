@@ -916,7 +916,12 @@ def aimed_turn(side, units, pol, press):
     # enemies (through teammates, to a free tile)
     cautious = lead_attack = False
     lead = pol.leader if getattr(pol, 'leader', None) in before else min(before)
-    if me == lead or me in (getattr(pol, 'protect', None) or ()):
+    # v115 (Sc2 Ch6 Garvin fight): the blast at 34-38,37-40 every ~8.6k VBlanks killed every unit
+    # left in it, not only the leader. --avoid-all: any unit that starts its turn in the --avoid
+    # zone plays the cautious turn (walks out, strikes only what is in reach)
+    av0 = getattr(pol, "avoid", None) if tac.get("avoid_all") else None
+    zone_all = bool(av0 and me in before and abs(before[me][0] - av0[0]) + abs(before[me][1] - av0[1]) <= av0[2])
+    if me == lead or me in (getattr(pol, 'protect', None) or ()) or zone_all:
         press(('B',), 6)
         press((), 20)
         if not hud_up(side.frame()):

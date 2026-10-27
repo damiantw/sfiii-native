@@ -380,6 +380,7 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
   - `--guard-hp`: the HP floor for those units
   - `--escort`: keep units next to a guest
   - `--avoid X,Y,R`: leave a trap zone
+  - `--avoid-all`: every unit, not only the leader and protected units, walks out of the `--avoid` zone
   - `--keep-away`: stay clear of enemies
   - `--focus`: preferred targets
   - `--heal` and `--heal-item`: heal with a spell, or with an item on a hurt neighbour

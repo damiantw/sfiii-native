@@ -181,7 +181,7 @@ def run_args(job, state=None):
 def tactics_of(a):
     """The round-29 opt-in tactics (sf3-story.py --hold-until, --ranged, --casters, --healers,
     --item-attack) as the dict autoplay.play takes."""
-    t = {k: getattr(a, k, None) for k in ('hold_until', 'ranged', 'casters', 'healers', 'item_attack', 'passive')}
+    t = {k: getattr(a, k, None) for k in ('hold_until', 'ranged', 'casters', 'healers', 'item_attack', 'passive', 'avoid_all')}
     return {k: v for k, v in t.items() if v}
 
 
