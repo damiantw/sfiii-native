@@ -147,6 +147,12 @@ class TacticsTest(unittest.TestCase):
         self.assertEqual(tactics.md(force[2], (10, 15)), 1, force)
         self.assertGreater(tactics.md(force[2], (11, 16)), 1, force)
 
+    def test_passive_protected_unit_never_attacks(self):
+        force = {2: (10, 10), 9: (40, 40)}
+        pol, _, _ = turn(force, [(0, 10, 15, 0, 30)], leader=9, protect=[2], tactics={"passive": [2]})
+        self.assertEqual(getattr(pol, "protect_attacks", 0), 0)
+        self.assertGreater(tactics.md(force[2], (10, 15)), 1, force)
+
     def test_protect_still_retreats_when_hurt(self):
         force = {2: (10, 10), 9: (40, 40)}
         pol, _, _ = turn(force, [(0, 10, 12, 0, 30)], hurt=lambda rd, b, k, s: b == "F" and k == 2,

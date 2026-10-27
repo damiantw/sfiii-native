@@ -956,12 +956,14 @@ def aimed_turn(side, units, pol, press):
             if tgt:
                 goal, hold_back, lead_attack = [tgt], False, True
                 pol.leader_attacks = getattr(pol, "leader_attacks", 0) + 1
-        if (me != lead and pol.pathing and me in now and not lead_attack
+        if (me != lead and pol.pathing and me in now and not lead_attack and me not in tac.get("passive", ())
                 and not (in_zone or near_threat or is_hurt(rd, units["force"], me, LEADER_SAFE))):
             # round 29 (Sc3 dock v99, Sc1 v102: protected units only retreated and the fights stalled):
             # --protect means avoid danger, not never attack. A protected unit walks to and attacks a
             # target (focus first) it can hit within HOLD_MOVE steps from a tile not next to a
-            # stationary enemy (one that has not moved: the Sc1 boss pocket) nor in the --avoid zone
+            # stationary enemy (one that has not moved: the Sc1 boss pocket) nor in the --avoid zone.
+            # --passive slots keep the old never-attack play (Sc3 v105: the guest Julian went in and fell
+            # to 1/40 HP by level 4)
             fx = [(x, y) for k, x, y, f, hp in enemies if hp > 1 and k in (getattr(pol, "focus", None) or ()) and k not in phantoms]
             heavy = [(x, y) for k, x, y, f, hp in enemies if k in still]
             st = tactics.safe_target(now[me], fx or [(x, y) for k, x, y, f, hp in enemies if hp > 1 and k not in phantoms],

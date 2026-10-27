@@ -338,7 +338,7 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
 - **Story replays:** `tools/sf3-story.py` plays forward from saves. It records deterministic, pad-only segments
   (`tools/story-replays/`), which replay frame-exactly with a fixed clock. `sf3-story.py search` finds battle
   inputs by branching and backtracking. Its battle-policy options (all pad inputs only, no RAM pokes) include:
-  - `--leader` and `--protect`: units whose fall loses the battle. Protected units avoid danger (they retreat when hurt, in the `--avoid` zone or within `--keep-away`) but still attack a target they can hit without ending next to a stationary enemy
+  - `--leader` and `--protect`: units whose fall loses the battle. Protected units avoid danger (they retreat when hurt, in the `--avoid` zone or within `--keep-away`) but still attack a target they can hit without ending next to a stationary enemy; `--passive` slots never attack
   - `--guard-hp`: the HP floor for those units
   - `--escort`: keep units next to a guest
   - `--avoid X,Y,R`: leave a trap zone

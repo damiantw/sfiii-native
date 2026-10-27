@@ -481,6 +481,7 @@ def main():
     q.add_argument('--casters', type=int, nargs='+', help='force slots that cast their first attack spell (Blaze, Freeze, Bolt; first level) on an enemy within 2 tiles while they have MP')
     q.add_argument('--item-attack', type=int, nargs='+', help='force slots that use their first item (an attack item) on an enemy within 2 tiles')
     q.add_argument('--healers', type=int, nargs='+', help='force slots that cast Heal (first spell) on the most hurt ally next to them, or walk to one within 6 tiles, before attacking (Sc3 dock: nobody healed Gracia)')
+    q.add_argument('--passive', type=int, nargs='+', help='--protect slots that never attack (they only retreat and hold), the behaviour before --protect could attack (Sc3 dock: the guest Julian, 7)')
     q.add_argument('--slim', action='store_true', help='keep only the saves on the search path (one per level); an untried alternative is replayed from its parent with its seed when the search backtracks to it')
     q.add_argument('--prune', action='store_true', help='delete candidate saves the search can never backtrack to (keeps the stack top and the untried alternatives)')
     q.add_argument('--no-left', action='store_true', help='do not score battle id 0 as Egress/defeat (Sc2 V1.003: its map/battle bytes do not track in Ch6)')
