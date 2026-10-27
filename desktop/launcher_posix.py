@@ -18,9 +18,9 @@ import shared_saves
 from disc_profile import canonical_profile_id
 
 # Accepted disc revision profiles (profiles/*.json ids) per game slot; the first is the recommended disc.
-PROFILES = (('scenario1-usa-v1_001', 'scenario1-translation-v25_1', 'scenario1-translation-v25_1-addons'),
-            ('scenario2-translation-v25_1-v2_000', 'scenario2-translation-v25_1-v1_003', 'scenario2-translation-v25_1-upgrade', 'scenario2-supplied-v1003', 'scenario2-translation-v24', 'scenario2-translation-v25_1-addons-v2_000', 'scenario2-translation-v25_1-addons-v1_003'),
-            ('scenario3-translation-v25_1-redump', 'scenario3-translation-v25_1', 'scenario3-translation-v25_1-addons-redump'))
+PROFILES = (('scenario1-translation-v25_1-addons', 'scenario1-usa-v1_001', 'scenario1-translation-v25_1'),
+            ('scenario2-translation-v25_1-addons-v2_000', 'scenario2-translation-v25_1-addons-v1_003', 'scenario2-translation-v25_1-v2_000', 'scenario2-translation-v25_1-v1_003', 'scenario2-translation-v25_1-upgrade', 'scenario2-supplied-v1003', 'scenario2-translation-v24'),
+            ('scenario3-translation-v25_1-addons-redump', 'scenario3-translation-v25_1-redump', 'scenario3-translation-v25_1'))
 # Default data folders keep their original names so existing game data stays where it was.
 DATA_FOLDERS = ('Scenario1-USA', 'Scenario2-v24', 'Scenario3-v25_1')
 

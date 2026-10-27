@@ -224,13 +224,47 @@ Results on Linux x86-64 (Debian 13, clang 19, `tools/windows.cmake` host, headle
 
 There were no crashes, hangs, or fatal or unresolved-call messages in the run logs. The audit's remaining "undefined" discovery findings in configured modules (X021/X022/X032, and X019 `060A0000` on Sc3) are the same as on the upstream baseline. This is a **boot check only**. Battles, saves, scene coverage and the routes in [testing-plan.md](testing-plan.md) are not validated yet.
 
-**Why there are no `--addons` profiles.** Every patch selection gives a new `content_sha256`, so the set of possible identities is combinatorial. The V25+ add-ons also change code: Mod Essentials and the icon mods change `X014`/`X017`, and Music Resume Fix changes `1ST.BIN`. Each one would need its own seed revalidation and its own audit. The policy stays as above: one canonical profile per scenario and base, using the wizard's default selection. An add-on profile can be added later, using the same steps, for a selection the Translation Project recommends. The `--addons` images were made and pass EDC/ECC and extraction, but they are not registered.
-
 **Premium Disc (6106979 V1.000).** Not done. The patched content id is `a5976aa8…0ac2`. It needs:
 - a fourth launcher slot and data folder, in both launchers and in `prepare*.py --scenario`;
 - a base profile from scratch: its load bases, `model_bases`, BOOT seeds and stack-return sites (there is no existing profile to copy);
 - a full module audit with `--require-complete`;
 - save-format handling, if it uses one.
+
+## Add-on profiles (V25.1 + V25+)
+
+The recommended discs. Each was made from the Redump dump with `tools/sf3patch patch --addons <V25+ folder>` and the **default add-on selection**: every V25+ zip from `fetch` is applied, the five base patches that newer add-ons replace are dropped (Blacksmith Interface Update v3.1, Blacksmith Results v2.1, Critical and Counter Fix v1.11, Irene Insane Buff 1.02 and Rogan Sprite Fix v5 supersede their older versions), and *Magic Resistance Icons v2* stays off. `--reproducible` does not change the content id. Any other selection gives a different `content_sha256` and is refused.
+
+| Launcher slot | Profile id | Base disc (Redump) | `content_sha256` | Seeds |
+|---|---|---|---|---|
+| Scenario 1 | `scenario1-translation-v25_1-addons` | MK-81383 V1.001 | `64d62cfb…ff71` | copied from `scenario1-translation-v25_1` |
+| Scenario 2 | `scenario2-translation-v25_1-addons-v2_000` | GS-9188 V2.000 (Rev A) | `e2dd53f6…e1db` | copied from `scenario2-translation-v25_1-v2_000` |
+| Scenario 2 | `scenario2-translation-v25_1-addons-v1_003` | GS-9188 V1.003 | `6e702ff5…70a0` | copied from `scenario2-translation-v25_1-v1_003` |
+| Scenario 3 | `scenario3-translation-v25_1-addons-redump` | GS-9203 V1.001 | `1b4d7442…bae8` | copied from `scenario3-translation-v25_1-redump` |
+
+The add-ons change code files, not only text and graphics:
+
+- Sc1: `X002`, `X013`, `X014`, `X017`, `X1MY_RM`, `X1MY_RM2`, `X1RINOIN`;
+- Sc2 (both bases): `X017`, `X1SO_2FA`, `X1STIN`, `X1S_RM51`, `X5STOIN`;
+- Sc3: `1ST.BIN` (BOOT), `X007`, `X013`, `X014`, `X017` (27032 → 28672 bytes), `X027` (32008 → 24948 bytes).
+
+The root directory order (file IDs), and the bytes at every copied seed and BOOT stack-return site (64 bytes each) and at every evidence address are the same as on the V25.1 disc, so the V25.1 profiles were copied with only `id`, `title`, `version`, `content_sha256` and `support` changed. The changed `X014`/`X017` code at `06088000` is found by the module audit, as on V25.1.
+
+Results on Linux x86-64 (Debian 13, clang 19, headless, software rendering), 2026-10-27. Coverage builds (`--block-coverage`) of this tree and of the V25.1 profiles from the same tree, `SF3_DISPATCH_AUDIT=1`:
+
+| Profile | Modules | Emission check | Review items | 4500-vblank boot |
+|---|---|---|---|---|
+| Sc1 add-ons | 252 | 16574 entries, 0 missing | X004, X019, X3ELEM5 (as V25.1) | clean |
+| Sc2 add-ons / V2.000 | 285 | 20954 entries, 0 missing | X004, X019, X3ELEM5 (as V25.1) | clean |
+| Sc2 add-ons / V1.003 | 285 | 20962 entries, 0 missing | X004, X019, X3ELEM5 (as V25.1) | clean |
+| Sc3 add-ons | 273 | 25233 entries, 0 missing | X004 (as V25.1) | clean |
+
+Gameplay, each route run on the add-on disc and, as a twin, on the V25.1 disc with the same inputs:
+
+- Chapter 1 field and battle start from a community save, on all four discs, plus 9 field-menu and debug-warp routes (Sc1 Battle 13-22 HQ, Sc2 Ch5/Ch3 menus, Sc3 Ch4/Ch6 HQs and a TRANSFER crawl). No FATAL, no unresolved call and no dispatch-audit report. Without add-on profiles the same discs fail on V25.1 builds (Sc3 does not boot, Sc1 and Sc2 V1.003 stop at calls into the moved `X002`/`X017` code).
+- Hit blocks per run match the V25.1 twin exactly in 10 of 13 runs. The three differences are all in add-on code: Sc1 Ch1 battle start `X014` +13 blocks (2993 → 3006), Sc2 V1.003 and V2.000 Ch5 menu route `X017` −5 (1218 → 1213). Every block hit in only one of the twins lies in a function whose bytes differ between the two discs.
+- Short soak with the autoplay soak harness: 5 save targets per disc (every 25th community-save record, 36000 frames each, seed 405), 20/20 ok, no fatal, stall, freeze or unimplemented report. For 9 of the 10 Sc1/Sc3 targets the maps and battles reached are the same as in the earlier V25.1 soak of those records (whose per-target seeds differ).
+
+Not validated yet: full playthroughs, endings and saves written on add-on discs being read by V25.1 builds (or the reverse).
 
 ## Prioritized roadmap
 
