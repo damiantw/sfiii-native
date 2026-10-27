@@ -76,6 +76,35 @@ class SceneDataEntries(unittest.TestCase):
         self.assertEqual(set(self.rows), {0x00, 0x02, 0x08, 0x6C, 0x80, 0xA0, 0x200})
 
 
+@unittest.skipUnless(Program, "framework source unavailable; run dependency setup")
+class RegressionSeeds(unittest.TestCase):
+    @staticmethod
+    def scene(base):
+        words = [0x0000] * 0x80
+        words[0:2] = [0x000B, 0x0009]
+        words[0x68 // 2:0x6C // 2] = [0x6141, 0x6141]
+        words[0x6C // 2:0x72 // 2] = [0x740A, 0x000B, 0x2411]   # no table points here
+        return Image(b"".join(w.to_bytes(2, "big") for w in words), base)
+
+    def test_guard_seed_is_validated_and_added_for_jasn01_and_futtin(self):
+        img = self.scene(0x0605E000)
+        for name in ("X1JASN01", "X1FUTTIN"):
+            accepted, rows = data_table_entries(img, Program(img, [img.base]), name)
+            self.assertEqual(accepted, {0x0605E06C}, name)
+            self.assertEqual(rows, [(0x0605E06C, "accepted", "regression seed, plausible code", [])])
+        self.assertEqual(data_table_entries(img, Program(img, [img.base]), "X1OTHER")[0], set())
+
+    def test_guard_seed_outside_the_image_is_skipped(self):
+        img = self.scene(0x0605F000)    # Scenario 1 scene base
+        self.assertEqual(data_table_entries(img, Program(img, [img.base]), "X1JASN01"), (set(), []))
+
+    def test_guard_seed_that_is_not_code_is_rejected(self):
+        img = Image(bytes(0x100), 0x0605E000)
+        accepted, rows = data_table_entries(img, Program(img, [img.base]), "X1JASN01")
+        self.assertEqual(accepted, set())
+        self.assertEqual(rows[-1][:2], (0x0605E06C, "rejected"))
+
+
 class SceneNames(unittest.TestCase):
     def test_only_x1_scene_modules_use_the_rule(self):
         for name in ("X1JASN01", "X1FUTTIN", "X1SHOP_T", "X12BAL_1"):
