@@ -72,7 +72,7 @@ def prepare(source, work, scenario):
         with (work/'disc-input.log').open('w', encoding='utf-8') as log:
             cue = common.resolve_disc(source, work, PAYLOAD/'chdman/chdman', log, common.status)
         common.checked_disc(cue)
-        profile = common.disc_revision(cue)
+        profile = common.disc_revision(cue,work)
         if profile['scenario'] != scenario:
             raise ValueError('The disc does not match the selected scenario.')
         if (work/'game.json').exists():

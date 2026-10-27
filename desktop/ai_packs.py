@@ -15,7 +15,6 @@ import uuid
 
 MODEL_ENV = {'video': 'SF3_AI_VIDEO_DIR', 'anime': 'SF3_AI_ASSET_DIR',
              'general': 'SF3_AI_NATURAL_DIR'}
-PROFILE_FILES = ('usa-v1.001.json', 'scenario2-v24.json', 'scenario3-v25_1.json')
 SELECTION = 'ai-packs.json'
 # Preparation also copies this standalone helper beside player data. Only the
 # original desktop/ module has an enclosing application/source root.
@@ -49,8 +48,8 @@ def disc_profile(game_dir, profiles_root):
     identifier = game.get('profile_id')
     if not isinstance(identifier, str):
         raise ValueError('Prepare this game again to record its verified disc profile before attaching artwork.')
-    records = [dict(read_json(Path(profiles_root) / name), profile_file=name) for name in PROFILE_FILES
-               if (Path(profiles_root) / name).is_file()]
+    records = [dict(read_json(path), profile_file=path.name)
+               for path in sorted(Path(profiles_root).glob('*.json'))]
     matches = [record for record in records if record.get('id') == identifier]
     if len(matches) != 1 or not re.fullmatch(r'[0-9a-f]{64}', matches[0].get('content_sha256', '')):
         raise ValueError('The prepared game has no registered artwork disc profile.')

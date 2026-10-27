@@ -1,4 +1,4 @@
-"""Standalone, resumable local disc -> artwork -> GPU-upscaled packs pipeline. No network/API calls."""
+"""Local disc -> artwork -> GPU packs. No AI API; first-use CHD setup may download tools."""
 import argparse
 from collections import Counter, deque
 import hashlib
@@ -22,6 +22,23 @@ MODELS = {'video': 'realesr-animevideov3', 'anime': 'realesrgan-x4plus-anime', '
 def sha(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def effective_categories(config):
+    selected = set(config.get('categories', ['world', 'backgrounds', 'sprites', 'battle_models']))
+    # Older builder GUIs persist the character checkbox as "sprites". Keep those
+    # configurations useful while limiting model extraction to its own category.
+    if 'sprites' in selected:
+        selected.add('battle_models')
+    return selected
+
+
+def decoder_fingerprint(base, filename):
+    import battle_textures
+    if not battle_textures.supports(filename):
+        return base
+    return hashlib.sha256((base + ':' + battle_textures.DECODER_VERSION + ':' +
+                           sha(Path(battle_textures.__file__))).encode()).hexdigest()
 
 
 def atomic_json(path, value):
@@ -126,6 +143,24 @@ class Job:
                 except subprocess.TimeoutExpired:process.kill();process.wait()
                 raise
 
+    def decode_file(self, extractor, scenario, source, receipt, log, digest, decoder):
+        """Try the regular decoder, then the bounded X8PC-only model fallback."""
+        try:
+            code = self.run_process([extractor, scenario, source, self.out/'assets', receipt], log, 120)
+            cached = json.loads(receipt.read_text()) if receipt.exists() else dict(status='failed', images=[])
+            if code and cached.get('status') != 'failed':
+                cached.update(status='failed', error='Extractor exited ' + str(code))
+            import battle_textures
+            if battle_textures.supports(source.name) and not cached.get('images') and cached.get('status') in ('unsupported', 'no_images'):
+                cached = battle_textures.extract(source, self.out/'assets', receipt, scenario)
+                if cached.get('status') == 'unsupported':
+                    cached.update(status='failed', error='Recognized X8PC model was not decoded by the battle fallback', images=[])
+        except TimeoutError as error:
+            cached = dict(status='failed', images=[], error=str(error))
+        cached.update(source_sha256=digest, decoder_sha256=decoder)
+        atomic_json(receipt, cached)
+        return cached
+
     def inventory(self,sample_files=0):
         sys.path.insert(0,str(self.app/'vendor'))
         from saturnrecomp.disc import Disc, manifest
@@ -167,23 +202,19 @@ class Job:
                     if not extracted.exists() or sha(extracted)!=digest:extracted.write_bytes(data)
                     receipt=folder/'receipts'/(hashlib.sha256(record.path.encode()).hexdigest()+'.json')
                     cached=json.loads(receipt.read_text()) if receipt.exists() else {}
-                    valid=cached.get('status')!='failed' and cached.get('source_sha256')==digest and cached.get('decoder_sha256')==decoder
+                    file_decoder=decoder_fingerprint(decoder,name)
+                    valid=cached.get('status')!='failed' and cached.get('source_sha256')==digest and cached.get('decoder_sha256')==file_decoder
                     if valid:
                         for image in cached.get('images',[]):
                             original=self.out/'assets'/image['id']/'original.rgba'
                             if not original.exists() or sha(original)!=image['original_sha256']:valid=False;break
                     if not valid:
                         self.update('extract',f"Scenario {number}: {record.path}",i,len(records))
-                        try:
-                            code=self.run_process([extractor,number,extracted,self.out/'assets',receipt],
-                                folder/'logs'/(relative.name+'.log'),120)
-                            cached=json.loads(receipt.read_text()) if receipt.exists() else dict(status='failed',images=[])
-                            if code and cached.get('status')!='failed':cached.update(status='failed',error='Extractor exited '+str(code))
-                        except TimeoutError as error:cached=dict(status='failed',images=[],error=str(error))
-                        cached.update(source_sha256=digest,decoder_sha256=decoder)
-                        atomic_json(receipt,cached)
+                        cached=self.decode_file(extractor,number,extracted,receipt,
+                            folder/'logs'/(relative.name+'.log'),digest,file_decoder)
                     files.append(dict(path=record.path,status=cached['status'],images=len(cached.get('images',[])),
-                        receipt=str(receipt),error=cached.get('error'),warnings=cached.get('warnings',[])))
+                        receipt=str(receipt),error=cached.get('error'),warnings=cached.get('warnings',[]),
+                        decoder=cached.get('decoder'),textures_decoded=cached.get('textures_decoded')))
                     for image in cached.get('images',[]):
                         asset=catalog.setdefault(image['id'],dict(image,refs=[]))
                         asset['refs'].append(dict(file=record.path,category=image['category'],location=image['location'],
@@ -201,7 +232,7 @@ class Job:
 
     def enhance(self,catalogs,limit=0):
         all_assets={}
-        categories=set(self.config.get('categories',['world','backgrounds','sprites']))
+        categories=effective_categories(self.config)
         for catalog in catalogs.values():
             for identity,asset in catalog['assets'].items():
                 if not any(r['category'] in categories for r in asset['refs']):continue
@@ -301,7 +332,8 @@ class Job:
                     count+=1;size+=enhanced.stat().st_size
                 record=dict(scenario=catalog['scenario'],revision=revision,profile=catalog['profile'],model=model,
                     material_count=count,replacement_bytes=size,missing=missing,path=str(pack),
-                    scope='World textures only. Sprite/background enhancements are cached separately; their renderer integration is pending. Menus are unchanged.')
+                    scope='World-texture intermediate pack only. Combined packs add CHR/CHP sprites and supported X8PC RGB555 battle-model textures. '
+                          'Menus, indexed spell effects, untextured polygons and background planes remain original.')
                 atomic_json(pack/'manifest.json',record)
                 build_index(pack)
                 reports.append(record)
@@ -335,8 +367,8 @@ def main():
             atomic_json(job.status,dict(state='inventory_complete',phase='complete',message='Inventory complete; no GPU processing requested',pid=os.getpid()));return 0
         completed,failures=job.enhance(catalogs,args.limit);packs=job.pack(catalogs,completed)
         combined=[]
-        if 'sprites' in config.get('categories',[]) and not args.sample_files and not args.limit:
-            job.update('characters','Verifying exact character transparency and assembling indexed playable packs')
+        if effective_categories(config).intersection(('sprites','battle_models')) and not args.sample_files and not args.limit:
+            job.update('characters','Assembling indexed world + CHR/CHP sprite + X8PC battle-model texture packs; exact alpha is verified')
             destination=job.out/'playable-packs'/time.strftime('%Y%m%d-%H%M%S')
             command=[sys.executable,'-B',args.app/'character_packs.py','--cache',job.out,'--output',destination]
             for scenario in sorted({int(s['scenario']) for s in config['scenarios']}):command.extend(['--scenario',str(scenario)])
@@ -358,12 +390,13 @@ def main():
 <p>{'SAMPLE CHECK — the full catalog has not been processed.' if args.sample_files or args.limit else 'Offline processing finished.'} Packs have not been installed into your game.</p>
 <p>Extraction: {counts['extracted']} files decoded; {counts['partial']} partial; {counts['failed']} failed; {counts['unsupported']} unknown candidate formats. GPU failures: {len(failures)}.</p>
 <table><tr><th>Scenario</th><th>Style</th><th>World materials ready</th><th>Missing</th><th>Replacement memory</th></tr>{rows}</table>
-<p>{'Indexed world + CHR/CHP character packs are ready in playable-packs-report.json. Use Attach packs to game in the builder.' if combined else 'World-texture packs are ready. A full run with character processing also assembles playable character packs.'} Background-plane replacement remains pending. Menus remain original. Extraction and processing do not validate every scene, tile seam or animation.</p>
+<p>{'Indexed world + CHR/CHP sprite + supported X8PC battle-model texture packs are ready in playable-packs-report.json. Use Attach packs to game in the builder.' if combined else 'World-texture intermediate packs are ready. A full run with character/model processing also assembles the combined packs.'} Model coverage is limited to decoded RGB555 X8PC textures. Indexed spell effects, untextured polygons and background planes are separate gaps and remain original. Menus remain original. Extraction and processing do not validate every scene, tile seam or animation.</p>
 <p><a href="packs-report.json">World-pack paths</a> · <a href="playable-packs-report.json">World + character packs</a> · <a href="inventory-report.json">Extraction report</a> · <a href="upscale-failures.json">GPU failures</a></p>'''
         (job.out/'report.html').write_text(summary,encoding='utf-8')
         atomic_json(job.status,dict(state='complete_with_gaps' if gaps else 'complete',phase='complete',
             message='Quick check finished. Start / Resume runs the full catalog.' if args.sample_files else
-                'Offline processing finished. Review inventory and pack reports for coverage; packs were not activated.',
+                'Offline processing finished. Combined packs cover world, CHR/CHP sprites and supported X8PC textures only. '
+                'Review reports for gaps; indexed spell effects and untextured polygons remain original. Packs were not activated.',
             elapsed_seconds=round(time.time()-job.started),pid=os.getpid(),packs=len(packs),character_packs=len(combined),upscale_failures=len(failures),
             sample_file_limit=args.sample_files,sample_image_limit=args.limit))
         return 0

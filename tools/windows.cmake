@@ -110,6 +110,16 @@ if(SDL3_FOUND AND TARGET saturn_host)
 endif()
 if(WIN32)
   enable_language(RC)
+  # Executables below embed our application manifest through windows.rc.
+  # Clang's MSVC link rule also embeds a default manifest unless removed,
+  # which produces a duplicate resource error with lld-link.
+  if(NOT MINGW)
+    foreach(_language C CXX)
+      if(DEFINED CMAKE_${_language}_LINK_EXECUTABLE)
+        string(REPLACE "-Xlinker /MANIFEST:EMBED" "" CMAKE_${_language}_LINK_EXECUTABLE "${CMAKE_${_language}_LINK_EXECUTABLE}")
+      endif()
+    endforeach()
+  endif()
   set(SF3_APP_ICON "" CACHE FILEPATH "Optional locally supplied application ICO; keep artwork outside the source tree")
   if(SF3_APP_ICON)
     if(NOT EXISTS "${SF3_APP_ICON}")

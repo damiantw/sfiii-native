@@ -32,6 +32,13 @@ Linux/macOS candidate packages additionally bundle the Zig toolchain (MIT and in
 
 ## Optional offline graphics builder
 
+The X8 battle-model texture decoder uses format information from the MIT-licensed
+[SF3Unity](https://github.com/AndreasScholl/SF3Unity) battle-mesh parser, revision
+`893fd3fe1df5fc125b67f00dc697efe0d7edd53b`. Its copyright and permission notice is
+retained in `LICENSES/SF3Unity.txt` and accompanies the optional builder. This
+reference covers texture definitions and compressed texels, not imported game
+models, animations or artwork.
+
 The separate Windows builder ZIP contains this project's original Python/C# adapter source, the MIT-licensed saturn-recomp disc reader and its notice, and CPython 3.12 with Tk and Pillow. CPython's complete `LICENSE.txt` (including bundled-component notices), Tcl/Tk notices, and Pillow's distribution licenses accompany the runtime. No game-derived packs, model weights, compiled SF3Lib libraries or SF3Tools resources are included in that ZIP.
 
 First launch obtains pinned upstream SF3Tools revision `35d64099970b9d6e96d1e07c5ec2c522c4b37969` directly from [Synival/sf3tools](https://github.com/Synival/sf3tools), plus Microsoft's portable .NET 9.0.305 SDK, and automatically compiles the extraction adapter on the user's PC. That SF3Tools tree declares Synival's copyright and has no redistribution license. Its local source, generated extractor binaries and resources remain user-local and must not be repackaged with releases. An upstream download is not a grant to redistribute. NuGet restore obtains SF3Lib's declared dependencies directly from nuget.org; their downloaded notices remain in the local preparation cache.

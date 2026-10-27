@@ -34,6 +34,37 @@ Disc verification checks contents, so a matching filename or translation label a
 
 Current priorities are broader gameplay/save-state validation, remaining background and texture defects, improved widescreen culling, and more disc editions. Background-plane artwork replacement and complete character/campaign artwork coverage remain unfinished. See [upcoming work](#upcoming-features).
 
+### Disc and translation compatibility
+
+The target is **original USA Scenario 1 plus v25-family translations of
+Scenarios 1–3**. This is not a claim that every such image currently works.
+Native compilation requires a reviewed profile for the exact disc contents;
+renaming an image or recognizing its title screen cannot establish compatibility.
+Premium Disc is deferred. Unregistered patch versions need their executable
+mappings and native routes investigated before being listed as compatible.
+
+The development launcher has separate entries for original USA Scenario 1,
+translated Scenario 1, translated Scenario 2 and translated Scenario 3, each with
+independent game-data paths. It selects among registered revisions within each entry.
+Scenario 1 translation
+v25.1 has an independent profile, with intro, original-save load and fresh opening
+routes checked; the original USA profile remains separate. Development profiles also
+include the experimental Scenario 2 v24-to-v25.1 translation migration and the
+supplied V1.003 image whose header reports V24. Its exact translation version is
+unverified, and its historical battle replay does not reach battle. These local
+additions are **not included in the existing published downloads**.
+
+The development save manager also exports ordinary saves as individual raw BIN
+files for use with compatible emulator or Saroo save tools. Export does not
+modify the native backup-memory files. The optional artwork builder now decodes
+supported close-up battle-model textures; one Scenario 3 battle-model format
+remains unsupported, and full artwork coverage is not established.
+
+Unknown revisions produce a local `unregistered-disc.json` identification report
+without replacing existing saves or builds. A different revision needs a separate
+game-data folder. Ordinary saves can be imported between compatible game versions;
+native snapshots and replay checkpoints remain tied to their original build/disc.
+
 When updating, extract into a new application folder and choose your existing scenario data folder, then run **Prepare game** again. The bundled tools handle preparation automatically. Existing in-game saves remain in the separate data folder. Native quick states are build-specific: keep your previous application and prepared build if you need its old states; use an ordinary in-game save to transfer progress to the new build.
 
 ## Features

@@ -14,9 +14,12 @@ sys.dont_write_bytecode = True
 from prepare_posix import APP, PAYLOAD, common, lock, package_root
 from run_posix import selected_build
 from ai_packs import install_selection, detach_selection
+from disc_profile import profile_scenario
 
 PROFILES = ('scenario1-usa-v1_001', 'scenario2-translation-v24', 'scenario3-translation-v25_1')
-DATA_FOLDERS = ('Scenario1-USA', 'Scenario2-v24', 'Scenario3-v25_1')
+DATA_FOLDERS = ('Scenario1-USA', 'Scenario2-v24', 'Scenario3-v25_1', 'Scenario1-Translated')
+SCENARIOS = (1,2,3,1)
+DISPLAY_GAMES = (0,3,1,2)
 
 def data_root():
     if sys.platform == 'darwin':
@@ -39,7 +42,7 @@ class Launcher:
         frame.pack(fill='both',expand=True)
         frame.columnconfigure(1,weight=1)
         ttk.Label(frame,text='Shining Force III Native',font=('',22,'bold')).grid(row=0,column=0,columnspan=3,sticky='w',pady=(0,18))
-        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 USA V1.001','Scenario 2 Translation Project v24 (experimental)','Scenario 3 Translation Project v25.1 (experimental)'])
+        self.selection = ttk.Combobox(frame,state='readonly',values=['Scenario 1 — original USA','Scenario 1 — translated (experimental)','Scenario 2 — translated (experimental)','Scenario 3 — translated (experimental)'])
         self.selection.grid(row=1,column=1,sticky='ew',pady=5)
         ttk.Label(frame,text='Game').grid(row=1,column=0,sticky='w',padx=(0,12))
         self.cue, self.work = tk.StringVar(), tk.StringVar()
@@ -57,7 +60,7 @@ class Launcher:
         self.play=ttk.Button(bar,text='Play',command=self.play_game)
         self.controller=ttk.Button(bar,text='Controller setup',command=lambda:self.controller_tool('--setup'))
         self.test=ttk.Button(bar,text='Test controller',command=lambda:self.controller_tool('--test'))
-        self.import_button=ttk.Button(bar,text='Import saves',command=self.import_saves)
+        self.import_button=ttk.Button(bar,text='Save manager',command=self.import_saves)
         self.cancel=ttk.Button(bar,text='Cancel setup',command=self.cancel_setup)
         for button in [self.prepare,self.play,self.controller,self.test,self.import_button,self.cancel]:button.pack(side='left',padx=(0,7))
         artwork=ttk.Frame(frame)
@@ -71,8 +74,8 @@ class Launcher:
         self.progress=ttk.Progressbar(frame,mode='indeterminate')
         self.progress.grid(row=7,column=0,columnspan=3,sticky='ew',pady=10)
         ttk.Label(frame,text='Experimental Linux/macOS preview. Keep a backup of your game-data folder.\nNo game assets or BIOS included. Setup and compilation run locally with bundled tools.',wraplength=780).grid(row=8,column=0,columnspan=3,sticky='w')
-        self.active=max(0,min(len(PROFILES)-1,int(self.preferences.get('selected',0))))
-        self.selection.current(self.active)
+        self.active=max(0,min(len(SCENARIOS)-1,int(self.preferences.get('selected',0))))
+        self.selection.current(DISPLAY_GAMES.index(self.active))
         self.restore()
         self.selection.bind('<<ComboboxSelected>>',self.change_game)
         root.protocol('WM_DELETE_WINDOW',self.close)
@@ -92,7 +95,7 @@ class Launcher:
 
     def change_game(self,event=None):
         self.remember()
-        self.active=self.selection.current()
+        self.active=DISPLAY_GAMES[self.selection.current()]
         self.restore()
         self.remember()
 
@@ -101,8 +104,10 @@ class Launcher:
             work=Path(self.work.get())
             ready=json.loads((work/'desktop-ready.json').read_text())
             package=json.loads((PAYLOAD/'package.json').read_text())
-            expected=PROFILES[self.active]
-            return (ready['build_id']==package['build_id'] and ready['profile_id']==expected
+            scenario=profile_scenario(ready['profile_id'],APP/'profiles')
+            if scenario is None:return False
+            slot=3 if scenario==1 and ready['profile_id']!=PROFILES[0] else scenario-1
+            return (ready['build_id']==package['build_id'] and slot==self.active
                     and common.sha(selected_build(work)/'saturn')==ready['executable_sha256'])
         except (OSError,ValueError,KeyError):return False
 
@@ -145,7 +150,7 @@ class Launcher:
 
     def prepare_game(self):
         self.start([PAYLOAD/'python/bin/python3','-X','utf8','-B',APP/'desktop/prepare_posix.py',
-                    '--cue',self.cue.get(),'--work',self.work.get(),'--scenario',str(self.active+1)],'prepare')
+                    '--cue',self.cue.get(),'--work',self.work.get(),'--scenario',str(SCENARIOS[self.active])],'prepare')
 
     def play_game(self):
         self.start([PAYLOAD/'python/bin/python3','-X','utf8','-B',APP/'desktop/run_posix.py','--work',self.work.get()],'game')
@@ -172,6 +177,22 @@ class Launcher:
         self.start([selected_build(Path(self.work.get()))/'controller_setup',mode],'controller',env)
 
     def import_saves(self):
+        action=messagebox.askyesnocancel('Save manager','Export ordinary saves as BIN files?\nYes: Export for Saturn / Saroo editor\nNo: Import BIN / YSBAK saves',parent=self.root)
+        if action is None:return
+        if action:
+            folder=filedialog.askdirectory(title='Choose export location')
+            if not folder:return
+            device='cartridge' if messagebox.askyesno('Save storage','Export from cartridge memory?\nNo selects internal memory.',parent=self.root) else 'internal'
+            try:
+                import importlib.util,time
+                spec=importlib.util.spec_from_file_location('sf3_import',APP/'tools/import-saturn-save.py')
+                module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+                work=common.external_work(Path(self.work.get()),package_root())
+                destination=Path(folder)/('SFIII-save-export-'+str(time.time_ns()))
+                with lock(work):module.export_files(work/'experimental-backup.bin',device,destination)
+                messagebox.showinfo('Export complete','BIN saves exported to '+str(destination),parent=self.root)
+            except Exception as e:messagebox.showerror('Could not export',str(e),parent=self.root)
+            return
         paths=filedialog.askopenfilenames(filetypes=[('Saturn saves','*.BIN *.bin *.ysbak'),('All files','*')])
         if not paths:return
         dialog=tk.Toplevel(self.root)

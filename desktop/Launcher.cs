@@ -11,7 +11,27 @@ using System.Windows.Forms;
 
 class Launcher : Form {
     static readonly string[] Profiles = {"scenario1-usa-v1_001", "scenario2-translation-v24", "scenario3-translation-v25_1"};
-    static readonly string[] DataSuffixes = {"", "-Scenario2-v24", "-Scenario3-v25_1"};
+    int ProfileScenario(string identifier) {
+        string folder=Path.Combine(root,"payload","app","profiles");
+        if(!Directory.Exists(folder))return Array.IndexOf(Profiles,identifier)+1;
+        int result=0;
+        foreach(string file in Directory.GetFiles(folder,"*.json")) {
+            var profile=Read(file);
+            if((string)profile["id"]!=identifier)continue;
+            if(result!=0)throw new Exception("Duplicate revision profile ID");
+            result=Convert.ToInt32(profile["scenario"]);
+        }
+        return result;
+    }
+    // Stable stored keys retain older users' Scenario 2/3 folders.
+    static readonly int[] Scenarios = {1,2,3,1};
+    static readonly int[] DisplayGames = {0,3,1,2};
+    static readonly string[] DataSuffixes = {"", "-Scenario2-v24", "-Scenario3-v25_1", "-Scenario1-Translated"};
+    int ProfileGame(string identifier) {
+        int scenario=ProfileScenario(identifier);
+        return scenario<1 || scenario>3 ? -1 : scenario==1 && identifier!=Profiles[0] ? 3 : scenario-1;
+    }
+    void SelectGame(int key) {gameChoice.SelectedIndex=Array.IndexOf(DisplayGames,key);}
     readonly string root = AppDomain.CurrentDomain.BaseDirectory;
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
     readonly TextBox cue = new TextBox(), work = new TextBox();
@@ -59,7 +79,7 @@ class Launcher : Form {
         TextAt("Shining Force III Native",24,20,800,35).Font=new Font("Segoe UI",20,FontStyle.Bold);
         TextAt("Game",25,65,120,25);
         gameChoice.DropDownStyle=ComboBoxStyle.DropDownList;gameChoice.SetBounds(155,62,667,28);
-        gameChoice.Items.AddRange(new object[]{"Scenario 1 USA (unpatched V1.001)","Scenario 2 Translation v24 (experimental)","Scenario 3 Translation v25.1 (experimental)"});
+        gameChoice.Items.AddRange(new object[]{"Scenario 1 — original USA","Scenario 1 — translated (experimental)","Scenario 2 — translated (experimental)","Scenario 3 — translated (experimental)"});
         gameChoice.SelectedIndex=0;Controls.Add(gameChoice);
         gameChoice.DrawMode=DrawMode.OwnerDrawFixed;
         gameChoice.DrawItem+=delegate(object sender,DrawItemEventArgs e) {
@@ -81,7 +101,7 @@ class Launcher : Form {
         ButtonAt(prepare,"Prepare game",25,346,140,Prepare);
         ButtonAt(play,"Play",175,346,80,Play);
         ButtonAt(controller,"Controller setup",265,346,155,delegate {LaunchControllerSetup();});
-        ButtonAt(import,"Import saves",430,346,125,delegate {LaunchScript("import-saturn-save.ps1",true);});
+        ButtonAt(import,"Save manager",430,346,125,delegate {LaunchScript("import-saturn-save.ps1",true);});
         ButtonAt(openFolder,"Open data folder",565,346,145,delegate {if(Directory.Exists(work.Text)) Process.Start("explorer.exe",Quote(work.Text));});
         ButtonAt(cancel,"Cancel",720,346,100,delegate {CancelWorker();});
         ButtonAt(graphics,"Optional graphics...",25,397,180,delegate {SelectGraphics();});
@@ -93,10 +113,10 @@ class Launcher : Form {
         if(testRoot!=null) {settingsPath=Path.Combine(testRoot,"launcher.json");fallbackSettingsPath=null;work.Text=Path.Combine(testRoot,"Game");}
         defaultDataRoot=work.Text;
         try {var s=ReadSavedSettings();cue.Text=(string)s["cue"];work.Text=(string)s["work"];
-            if(s.ContainsKey("selected")) {activeGame=Math.Max(0,Math.Min(Profiles.Length-1,Convert.ToInt32(s["selected"])));gameChoice.SelectedIndex=activeGame;}
+            if(s.ContainsKey("selected")) {activeGame=Math.Max(0,Math.Min(Scenarios.Length-1,Convert.ToInt32(s["selected"])));SelectGame(activeGame);}
         } catch { }
         gameChoice.SelectedIndexChanged+=delegate {
-            if(busy)return;SaveSettings();activeGame=gameChoice.SelectedIndex;busy=true;
+            if(busy)return;SaveSettings();activeGame=DisplayGames[gameChoice.SelectedIndex];busy=true;
             cue.Text="";work.Text=defaultDataRoot+DataSuffixes[activeGame];
             try {var s=ReadSavedSettings();var games=(Dictionary<string,object>)s["games"];
                 var entry=(Dictionary<string,object>)games[activeGame.ToString()];cue.Text=(string)entry["cue"];work.Text=(string)entry["work"];
@@ -128,9 +148,8 @@ class Launcher : Form {
             var prepared=Read(Path.Combine(work.Text,"desktop-ready.json"));
             string preparedCue=(string)prepared["cue"];
             string source=prepared.ContainsKey("source") ? (string)prepared["source"] : preparedCue;
-            string profile=Profiles[activeGame];
             if(!prepared.ContainsKey("profile_id") && activeGame!=0)return false;
-            if(prepared.ContainsKey("profile_id") && (string)prepared["profile_id"]!=profile)return false;
+            if(prepared.ContainsKey("profile_id") && ProfileGame((string)prepared["profile_id"])!=activeGame)return false;
             if(String.IsNullOrWhiteSpace(cue.Text))cue.Text=source;
             if(!String.Equals(Path.GetFullPath(cue.Text),Path.GetFullPath(source),StringComparison.OrdinalIgnoreCase))return false;
             string selected=File.ReadAllText(Path.Combine(work.Text,"native-build.txt")).Trim();
@@ -160,7 +179,7 @@ class Launcher : Form {
             work.Text=Path.GetFullPath(work.Text);cue.Text=Path.GetFullPath(cue.Text);SaveSettings();
             cancelled=false;lastError=null;
             string python=Path.Combine(root,"payload","python","python.exe"),script=Path.Combine(root,"payload","app","desktop","prepare.py");
-            worker=new Process {StartInfo=new ProcessStartInfo(python,"-X utf8 -B "+Quote(script)+" --cue "+Quote(cue.Text)+" --work "+Quote(work.Text)+" --scenario "+(activeGame+1)) {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true},EnableRaisingEvents=true};
+            worker=new Process {StartInfo=new ProcessStartInfo(python,"-X utf8 -B "+Quote(script)+" --cue "+Quote(cue.Text)+" --work "+Quote(work.Text)+" --scenario "+Scenarios[activeGame]) {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true},EnableRaisingEvents=true};
             worker.OutputDataReceived+=delegate(object s,DataReceivedEventArgs output) {
                 if(output.Data==null || !output.Data.StartsWith("SF3_STATUS "))return;
                 try {var data=json.Deserialize<Dictionary<string,object>>(output.Data.Substring(11));Ui(delegate {
@@ -243,15 +262,21 @@ class Launcher : Form {
             try {
                 var ready=form.Read(Path.Combine(testRoot,"desktop-ready.json"));
                 if(ready.ContainsKey("profile_id")) {
-                    int index=Array.IndexOf(Profiles,(string)ready["profile_id"]);
-                    if(index>=0) {form.busy=true;form.activeGame=index;form.gameChoice.SelectedIndex=index;form.busy=false;}
+                    int index=form.ProfileGame((string)ready["profile_id"]);
+                    if(index>=0) {form.busy=true;form.activeGame=index;form.SelectGame(index);form.busy=false;}
                 }
             } catch { }
             form.work.Text=testRoot;form.smokePlayRoot=testRoot;
             form.Shown+=delegate {
+                int wanted=form.activeGame;
+                for(int key=0;key<Scenarios.Length;++key) {
+                    form.activeGame=key;
+                    if(form.Ready()!=(key==wanted)) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared revision accepted by wrong game entry");Environment.ExitCode=1;form.Close();return;}
+                }
+                form.activeGame=wanted;
                 form.RefreshReady();
                 if(!form.Ready() || !form.play.Enabled || !form.controller.Enabled || !form.import.Enabled || !form.graphics.Enabled || form.originalGraphics.Enabled!=File.Exists(Path.Combine(testRoot,"ai-packs.json"))) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared controls are not ready");Environment.ExitCode=1;form.Close();return;}
-                if(form.gameChoice.SelectedIndex!=form.activeGame || !form.gameChoice.Text.Contains("Scenario "+(form.activeGame+1))) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared game selection is incorrect");Environment.ExitCode=1;form.Close();return;}
+                if(form.gameChoice.SelectedIndex!=Array.IndexOf(DisplayGames,form.activeGame) || !form.gameChoice.Text.Contains("Scenario "+Scenarios[form.activeGame])) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared game selection is incorrect");Environment.ExitCode=1;form.Close();return;}
                 form.Refresh();form.gameChoice.Refresh();Application.DoEvents();
                 using(var image=new Bitmap(form.Width,form.Height)) {form.DrawToBitmap(image,new Rectangle(Point.Empty,form.Size));image.Save(Path.Combine(testRoot,"ready-launcher.png"));}
                 form.Play(null,EventArgs.Empty);
@@ -267,17 +292,23 @@ class Launcher : Form {
                 if(!controllerStart.UseShellExecute || controllerStart.CreateNoWindow || controllerStart.WindowStyle!=ProcessWindowStyle.Normal || controllerStart.FileName!=Path.Combine(form.work.Text,"Controller Setup.cmd") || controllerStart.WorkingDirectory!=form.work.Text)
                     throw new Exception("Controller setup must open the persistent interactive console in this game's folder");
                 string firstWork=form.work.Text;form.cue.Text=Path.Combine(testRoot,"first.cue");
-                form.gameChoice.SelectedIndex=1;
+                form.SelectGame(1);
                 if(form.work.Text==firstWork || form.cue.Text!="")throw new Exception("Game selection must isolate progress");
-                form.cue.Text=Path.Combine(testRoot,"second.chd");form.gameChoice.SelectedIndex=0;
+                form.cue.Text=Path.Combine(testRoot,"second.chd");form.SelectGame(0);
                 if(form.work.Text!=firstWork || form.cue.Text!=Path.Combine(testRoot,"first.cue") || form.gameChoice.SelectedIndex!=0 || !form.gameChoice.Text.Contains("Scenario 1"))throw new Exception("Game selection did not remember per-game paths");
-                form.gameChoice.SelectedIndex=2;string thirdWork=form.work.Text;
+                form.SelectGame(2);string thirdWork=form.work.Text;
                 if(thirdWork==firstWork || !thirdWork.EndsWith("-Scenario3-v25_1") || form.cue.Text!="")throw new Exception("Scenario 3 needs a separate data folder");
-                form.cue.Text=Path.Combine(testRoot,"third.cue");form.gameChoice.SelectedIndex=1;
+                form.cue.Text=Path.Combine(testRoot,"third.cue");form.SelectGame(1);
                 if(form.cue.Text!=Path.Combine(testRoot,"second.chd") || form.work.Text==thirdWork)throw new Exception("Scenario 3 selection overwrote Scenario 2");
-                form.gameChoice.SelectedIndex=2;
+                form.SelectGame(2);
                 if(form.work.Text!=thirdWork || form.cue.Text!=Path.Combine(testRoot,"third.cue"))throw new Exception("Scenario 3 paths were not restored");
-                form.gameChoice.SelectedIndex=0;
+                form.SelectGame(3);string translatedWork=form.work.Text;
+                if(translatedWork==firstWork || translatedWork==thirdWork || Scenarios[form.activeGame]!=1)throw new Exception("Translated Scenario 1 must have separate progress and prepare as Scenario 1");
+                form.cue.Text=Path.Combine(testRoot,"translated.cue");form.SelectGame(0);
+                if(form.work.Text!=firstWork || form.cue.Text!=Path.Combine(testRoot,"first.cue"))throw new Exception("Translated Scenario 1 changed original USA settings");
+                form.SelectGame(3);
+                if(form.work.Text!=translatedWork || form.cue.Text!=Path.Combine(testRoot,"translated.cue"))throw new Exception("Translated Scenario 1 paths were not restored");
+                form.SelectGame(0);
                 using(var image=new Bitmap(form.Width,form.Height)) {form.DrawToBitmap(image,new Rectangle(Point.Empty,form.Size));image.Save(Path.Combine(testRoot,"launcher.png"));}
                 form.SaveSettings();
                 string legacy=Path.Combine(testRoot,"legacy-settings.json"),original=File.ReadAllText(form.settingsPath);

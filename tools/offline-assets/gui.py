@@ -46,7 +46,7 @@ def main():
     styles=tk.StringVar(value='All three' if len(settings.get('models',[]))==3 else settings.get('models',['video'])[0])
     ttk.Combobox(options,textvariable=styles,values=['All three','video','anime','general'],state='readonly',width=14).pack(side='left',padx=8)
     extras=tk.BooleanVar(value=True)
-    ttk.Checkbutton(frame,text='Include CHR/CHP characters; also cache backgrounds for future renderer support',variable=extras).pack(anchor='w')
+    ttk.Checkbutton(frame,text='Include character sprites and battle-model textures; also cache backgrounds',variable=extras).pack(anchor='w')
     ttk.Label(frame,text='video = AnimeVideo v3; anime = x4plus anime; general = x4plus general.\nKeep All three styles selected to attach finished packs to a game. Menus stay original. Failed or unsupported assets remain original.',wraplength=950).pack(anchor='w',pady=(8,12))
     buttons=ttk.Frame(frame);buttons.pack(fill='x')
     def persist():
@@ -58,7 +58,7 @@ def main():
         if any((p/'.git').exists() for p in (folder,*folder.parents)):raise ValueError('Choose an output folder outside a source repository')
         current=dict(scenarios=scenarios,out=str(folder),gpu=int(gpu.get()),
             models=['video','anime','general'] if styles.get()=='All three' else [styles.get()],
-            categories=['world','sprites','backgrounds'] if extras.get() else ['world'])
+            categories=['world','sprites','battle_models','backgrounds'] if extras.get() else ['world'])
         CONFIG.write_text(json.dumps(current,indent=2)+'\n',encoding='utf-8');folder.mkdir(parents=True,exist_ok=True)
         return folder
     def start(inventory=False,quick=False):

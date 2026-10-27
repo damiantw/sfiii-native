@@ -31,14 +31,14 @@ class PortableTests(unittest.TestCase):
             build=data/'build-synthetic';build.mkdir();(build/'saturn').write_bytes(b'invented executable')
             form=launcher.Launcher.__new__(launcher.Launcher)
             form.work=SimpleNamespace(get=lambda:str(data))
-            for index,profile in enumerate(launcher.PROFILES):
+            for index,profile in enumerate(launcher.PROFILES+('scenario1-translation-v25_1',)):
                 ready={'build_id':'synthetic-package','profile_id':profile,'executable_sha256':worker.common.sha(build/'saturn')}
                 (data/'desktop-ready.json').write_text(json.dumps(ready))
-                for selected in range(3):
+                for selected in range(4):
                     form.active=selected
                     with self.subTest(prepared=index,selected=selected),patch.object(launcher,'PAYLOAD',payload):
                         self.assertEqual(form.ready(),selected==index)
-            self.assertEqual(len(set(launcher.DATA_FOLDERS)),3)
+            self.assertEqual(len(set(launcher.DATA_FOLDERS)),4)
 
     def test_bundle_boundary_includes_entire_mac_application(self):
         path=Path('/Applications/SFIII Native.app/Contents/Resources/payload')

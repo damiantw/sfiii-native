@@ -25,7 +25,7 @@ class ArtworkSelectionTests(unittest.TestCase):
         self.profiles = self.root / 'profiles'
         self.profiles.mkdir()
         self.profile = dict(id='synthetic-test-profile', scenario=2, content_sha256='a'*64)
-        self.write(self.profiles / packs.PROFILE_FILES[1], self.profile)
+        self.write(self.profiles / 'synthetic-revision.json', self.profile)
         self.write(self.game / 'game.json', dict(profile_id=self.profile['id'], cue='never-read.cue'))
         self.rows = []
         for model in packs.MODEL_ENV:
@@ -130,7 +130,7 @@ class ArtworkSelectionTests(unittest.TestCase):
 
     def test_builder_profile_filename_resolves_to_same_pinned_identity(self):
         for row in self.rows:
-            row['profile'] = packs.PROFILE_FILES[1]
+            row['profile'] = 'synthetic-revision.json'
             self.write(Path(row['path']) / 'manifest.json', row)
         self.write(self.report, self.rows)
         record = self.install()

@@ -13,6 +13,19 @@ spec.loader.exec_module(module)
 
 
 class ImportTests(unittest.TestCase):
+    def test_export_roundtrip_and_no_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); archive,obj,data=self.archive(root);backup=root/'backup.bin'
+            module.import_files(backup,'cartridge',[archive])
+            before=Path(str(backup)+'.cartridge').read_bytes()
+            result=module.export_files(backup,'cartridge',root/'export')
+            exported=Path(result['exported'][0]['path'])
+            self.assertEqual(exported.read_bytes(),data)
+            self.assertEqual(module.raw_record(exported)[1][32:],data)
+            self.assertEqual(Path(str(backup)+'.cartridge').read_bytes(),before)
+            with self.assertRaisesRegex(ValueError,'already exists'):module.export_files(backup,'cartridge',root/'export')
+            with self.assertRaises(FileNotFoundError):module.export_files(backup,'internal',root/'empty')
+
     def test_scenario3_raw_and_archive_preserve_payloads_with_cartridge_capacity(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);data=(24336).to_bytes(4,'big')+(255).to_bytes(4,'big')+b'\xff'+bytes(24335)

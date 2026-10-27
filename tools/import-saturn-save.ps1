@@ -7,17 +7,31 @@ try {
         $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)
     }
     if ($running) { throw 'Close Native SFIII before importing saves.' }
+    $action = [System.Windows.Forms.MessageBox]::Show("Export saves for a Saturn / Saroo editor?`n`nYes: Export ordinary saves as BIN files`nNo: Import BIN / YSBAK saves`nCancel: Close", 'Save manager - Import / Export', 'YesNoCancel')
+    if ($action -eq [System.Windows.Forms.DialogResult]::Cancel) { exit 0 }
+    $exporting = $action -eq [System.Windows.Forms.DialogResult]::Yes
     $picker = New-Object System.Windows.Forms.OpenFileDialog
-    $picker.Title = 'Import Saturn saves - Scenarios 1 and 2'
+    $picker.Title = 'Import Saturn saves - Scenarios 1, 2 and 3'
     $picker.Filter = 'SFIII save exports (*.bin;*.ysbak)|*.bin;*.ysbak'
     $picker.Multiselect = $true
-    if ($picker.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 0 }
-    $choice = [System.Windows.Forms.MessageBox]::Show("Import into cartridge memory?`n`nYes: Cartridge (512 KiB)`nNo: Internal (32 KiB)`nCancel: Leave saves unchanged", 'Save destination', 'YesNoCancel')
+    if (-not $exporting -and $picker.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 0 }
+    $choice = [System.Windows.Forms.MessageBox]::Show("Use cartridge memory?`n`nYes: Cartridge (512 KiB)`nNo: Internal (32 KiB)`nCancel: Close", 'Save storage', 'YesNoCancel')
     if ($choice -eq [System.Windows.Forms.DialogResult]::Cancel) { exit 0 }
     $device = if ($choice -eq [System.Windows.Forms.DialogResult]::Yes) { 'cartridge' } else { 'internal' }
     $config = Join-Path $root 'save-import-python.txt'
     $python = if (Test-Path -LiteralPath $config) { ([IO.File]::ReadAllText($config)).Trim() } else { (Get-Command python -ErrorAction SilentlyContinue).Source }
     if (-not $python) { throw 'Python 3 is required. Put its executable path in save-import-python.txt beside the launcher.' }
+    if ($exporting) {
+        $folder = New-Object System.Windows.Forms.FolderBrowserDialog
+        $folder.Description = 'Choose an export location. A new timestamped folder will be created.'
+        if ($folder.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 0 }
+        $destination = Join-Path $folder.SelectedPath ('SFIII-save-export-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
+        $result = & $python -X utf8 -B (Join-Path $root 'import-saturn-save.py') --backup (Join-Path $root 'experimental-backup.bin') --device $device --export $destination 2>&1
+        if ($LASTEXITCODE -ne 0) { throw ($result -join "`n") }
+        [System.Windows.Forms.MessageBox]::Show("Exported ordinary saves to:`n$destination`n`nImport the BIN files using your Saroo save editor. Native save states are not Saturn saves. Your game saves were not changed.", 'Export complete') | Out-Null
+        Start-Process explorer.exe -ArgumentList ('"' + $destination + '"')
+        exit 0
+    }
     function Invoke-Importer([switch]$Replace) {
         $ErrorActionPreference = 'Continue' # Capture native stderr for the dialog, including duplicate-name errors.
         $arguments = @('-X', 'utf8', '-B', (Join-Path $root 'import-saturn-save.py'), '--backup', (Join-Path $root 'experimental-backup.bin'), '--device', $device)
