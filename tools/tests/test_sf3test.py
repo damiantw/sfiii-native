@@ -69,8 +69,12 @@ class Saves(unittest.TestCase):
 
 class MemoryMap(unittest.TestCase):
     def test_lookup(self):
-        mm = memory_map.lookup('scenario1-usa-v25_1.json')
+        mm = memory_map.lookup('scenario1-v25_1.json')
         self.assertEqual(mm['map_id'], mm['state_base'] + 0x1D)
+        # the fork's retired file stem and both profile ids resolve to the same map
+        for old in ('scenario1-usa-v25_1', 'scenario1-usa-v25_1.json', 'scenario1-usa-translation-v25_1',
+                    'scenario1-translation-v25_1'):
+            self.assertEqual(memory_map.lookup(old), mm)
         with self.assertRaises(KeyError):
             memory_map.lookup('nope')
 
@@ -227,7 +231,7 @@ class BattleUnits(unittest.TestCase):
         moves = [b for b, n in out if b in (('LEFT',), ('RIGHT',), ('UP',), ('DOWN',))]
         self.assertEqual(moves[:2], [('LEFT',), ('LEFT',)])   # two steps, then next to the live one
         self.assertEqual(moves[2], ('UP',))                    # Attack in the command menu
-        self.assertEqual(mm.lookup('scenario1-usa-v25_1')['units']['force'], 0x06032030)
+        self.assertEqual(mm.lookup('scenario1-v25_1')['units']['force'], 0x06032030)
 
 
 class BattleTurns(unittest.TestCase):
@@ -518,7 +522,7 @@ def test_search_finalize_takes_straight_replay_hashes(tmp_path, monkeypatch):
 
 def test_search_left_battle_is_a_loss():
     from sf3test import search, memory_map
-    prof = 'scenario1-usa-v25_1'
+    prof = 'scenario1-v25_1'
     bid = memory_map.lookup(prof)['battle_id']
     job = dict(profile=prof, root_battle=22)
     town = lambda addr, n: bytes([0]) if addr == bid else bytes(n)

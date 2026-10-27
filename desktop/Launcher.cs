@@ -12,10 +12,14 @@ using System.Windows.Forms;
 class Launcher : Form {
     // Accepted disc revision profiles per game slot (profiles/*.json ids). The first is the recommended disc.
     static readonly string[][] Profiles = {
-        new[]{"scenario1-usa-v1_001", "scenario1-usa-translation-v25_1"},
-        new[]{"scenario2-translation-v25_1-v2_000", "scenario2-translation-v25_1-v1_003", "scenario2-translation-v24"},
+        new[]{"scenario1-usa-v1_001", "scenario1-translation-v25_1"},
+        new[]{"scenario2-translation-v25_1-v2_000", "scenario2-translation-v25_1-v1_003", "scenario2-translation-v25_1-upgrade", "scenario2-supplied-v1003", "scenario2-translation-v24"},
         new[]{"scenario3-translation-v25_1-redump", "scenario3-translation-v25_1"}};
-    static int SlotOf(string profile) {for(int i=0;i<Profiles.Length;i++)if(Array.IndexOf(Profiles[i],profile)>=0)return i;return -1;}
+    // Retired ids that earlier builds stored in game.json / desktop-ready.json, mapped to the registered id of
+    // the same revision (same content_sha256; keep in sync with tools/disc_profile.py LEGACY_PROFILE_IDS).
+    static readonly Dictionary<string,string> LegacyProfiles = new Dictionary<string,string> {{"scenario1-usa-translation-v25_1", "scenario1-translation-v25_1"}};
+    static string CanonicalProfile(string profile) {string current;return profile!=null && LegacyProfiles.TryGetValue(profile,out current) ? current : profile;}
+    static int SlotOf(string profile) {profile=CanonicalProfile(profile);for(int i=0;i<Profiles.Length;i++)if(Array.IndexOf(Profiles[i],profile)>=0)return i;return -1;}
     static readonly string[] DataSuffixes = {"", "-Scenario2-v24", "-Scenario3-v25_1"};
     readonly string root = AppDomain.CurrentDomain.BaseDirectory;
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
@@ -88,7 +92,7 @@ class Launcher : Form {
         ButtonAt(prepare,"Prepare game",25,346,140,Prepare);
         ButtonAt(play,"Play",175,346,80,Play);
         ButtonAt(controller,"Controller setup",265,346,155,delegate {LaunchControllerSetup();});
-        ButtonAt(import,"Import saves",430,346,125,delegate {LaunchScript("import-saturn-save.ps1",true);});
+        ButtonAt(import,"Save manager",430,346,125,delegate {LaunchScript("import-saturn-save.ps1",true);});
         ButtonAt(openFolder,"Open data folder",565,346,145,delegate {if(Directory.Exists(work.Text)) Process.Start("explorer.exe",Quote(work.Text));});
         ButtonAt(cancel,"Cancel",720,346,100,delegate {CancelWorker();});
         ButtonAt(graphics,"Optional graphics...",25,397,180,delegate {SelectGraphics();});
@@ -139,7 +143,7 @@ class Launcher : Form {
             string preparedCue=(string)prepared["cue"];
             string source=prepared.ContainsKey("source") ? (string)prepared["source"] : preparedCue;
             if(!prepared.ContainsKey("profile_id") && activeGame!=0)return false;
-            if(prepared.ContainsKey("profile_id") && Array.IndexOf(Profiles[activeGame],(string)prepared["profile_id"])<0)return false;
+            if(prepared.ContainsKey("profile_id") && SlotOf((string)prepared["profile_id"])!=activeGame)return false;
             if(String.IsNullOrWhiteSpace(cue.Text))cue.Text=source;
             if(!String.Equals(Path.GetFullPath(cue.Text),Path.GetFullPath(source),StringComparison.OrdinalIgnoreCase))return false;
             string selected=File.ReadAllText(Path.Combine(work.Text,"native-build.txt")).Trim();
@@ -270,6 +274,12 @@ class Launcher : Form {
             } catch { }
             form.work.Text=testRoot;form.smokePlayRoot=testRoot;
             form.Shown+=delegate {
+                int wanted=form.activeGame;
+                for(int key=0;key<Profiles.Length;++key) {
+                    form.activeGame=key;
+                    if(form.Ready()!=(key==wanted)) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared revision accepted by wrong game entry");Environment.ExitCode=1;form.Close();return;}
+                }
+                form.activeGame=wanted;
                 form.RefreshReady();
                 if(!form.Ready() || !form.play.Enabled || !form.controller.Enabled || !form.import.Enabled || !form.graphics.Enabled || form.originalGraphics.Enabled!=File.Exists(Path.Combine(testRoot,"ai-packs.json"))) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared controls are not ready");Environment.ExitCode=1;form.Close();return;}
                 if(form.gameChoice.SelectedIndex!=form.activeGame || !form.gameChoice.Text.Contains("Scenario "+(form.activeGame+1))) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared game selection is incorrect");Environment.ExitCode=1;form.Close();return;}

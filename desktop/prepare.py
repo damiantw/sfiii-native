@@ -78,10 +78,19 @@ def checked_disc(cue, app=APP):
     identify(disc,manifest(disc),app/'profiles')
     return cue
 
-def disc_revision(cue):
+def disc_revision(cue, report_dir=None):
     from saturnrecomp.disc import Disc, manifest
     disc = Disc(str(cue))
-    return identify(disc,manifest(disc))[1]
+    contents = manifest(disc)
+    try:
+        return identify(disc,contents)[1]
+    except ValueError as error:
+        if report_dir is None:raise
+        from disc_profile import content_id
+        report = Path(report_dir)/'unregistered-disc.json'
+        atomic_json(report,dict(content_sha256=content_id(contents),disc_header=disc.ip.describe(),
+                               manifest=contents,status='unregistered; native compatibility not established'))
+        raise ValueError(str(error)+' Local identification report: '+str(report)) from error
 
 @contextlib.contextmanager
 def preparation_lock(work):
@@ -123,7 +132,7 @@ def prepare(cue, work, scenario=None):
         with (work/'disc-input.log').open('w',encoding='utf-8') as disc_log:
             cue = resolve_disc(source,work,PAYLOAD/'chdman/chdman.exe',disc_log,status)
         cue = checked_disc(cue)
-        profile = disc_revision(cue)
+        profile = disc_revision(cue,work)
         if scenario is not None and profile['scenario'] != scenario:
             raise ValueError('The selected image belongs to Scenario '+str(profile['scenario'])+'. Choose that game in the launcher first.')
         if (work/'game.json').exists():

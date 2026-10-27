@@ -5,7 +5,7 @@ import hashlib
 import json
 import pathlib
 import sys
-from disc_profile import identify
+from disc_profile import identify, content_id
 
 def digest(path):
     with path.open('rb') as stream:
@@ -28,7 +28,14 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     disc = Disc(str(a.cue.resolve()))
     contents = manifest(disc)
-    profile_path, profile = identify(disc, contents)
+    try:
+        profile_path, profile = identify(disc, contents)
+    except ValueError as error:
+        report = out/'unregistered-disc.json'
+        report.write_text(json.dumps(dict(content_sha256=content_id(contents),
+            disc_header=disc.ip.describe(), manifest=contents,
+            status='unregistered; native compatibility not established'),indent=2),encoding='utf-8')
+        raise SystemExit(str(error)+'\nLocal identification report: '+str(report))
     (out / 'disc-info.txt').write_text(disc.ip.describe(), encoding='utf-8')
     (out / 'manifest.json').write_text(json.dumps(contents, indent=2), encoding='utf-8')
     (out / 'revision.json').write_text(json.dumps(dict(profile=profile_path.name, title=profile['title'], scenario=profile['scenario']),indent=2),encoding='utf-8')

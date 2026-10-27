@@ -1,6 +1,6 @@
 """SF3 scene/battle reachability sweep (bring-your-own-disc; outputs stay outside the repository).
 
-  python tools/sf3-sweep.py --saturn BUILD/saturn --cue DISC.cue --profile scenario1-usa-v25_1 \
+  python tools/sf3-sweep.py --saturn BUILD/saturn --cue DISC.cue --profile scenario1-v25_1 \
       --out /private/sweep/sc1 --saves A.bin B.bkr ... [--maps 0-255 --map-base SAVE:NN] --jobs 6
 
 Each target is one save record (or a church save with its map id edited), loaded through the

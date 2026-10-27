@@ -123,7 +123,7 @@ def player_tile(x_raw, z_raw, shift=21):
 # Round 26: Sc1 late battles (Battle 30, record 3:25) use the same tables, but the force table is the
 # whole roster there and +0x80 is stale (Wolf 0xC0 off the field); +0x98/+0x99 are 1/1 for every
 # unit on the field in Battle 1 and Battle 30 alike, so Sc1 uses the 'live' test too.
-BATTLE_UNITS = {'scenario1-usa-v25_1': dict(enemies=0x0602F6F0, force=0x06032030, live=0x98)}
+BATTLE_UNITS = {'scenario1-v25_1': dict(enemies=0x0602F6F0, force=0x06032030, live=0x98)}
 # Round 13 (sc2-2.000 58271484, sc3 0e80231f; black-box, same method: scan work RAM for named
 # records at stride 0xB0 in a Ch1 battle, then read them against the status window: Sc2 Ch1 :01
 # Campbell 12/13, Sc3 Ch1 :01 Julian 52/52). Same layout, enemies again 60 records before the
@@ -186,15 +186,30 @@ INVALID_MAPS = {1: {0x70: 'black after the load on Beetle with a real BIOS',
 
 PROFILES = {
     # profile id: (scenario, state_base, tick)  tick: u32 the game adds one to each frame it runs
-    'scenario1-usa-v25_1': (1, 0x06090FE0, 0x0601FC68),
+    'scenario1-v25_1': (1, 0x06090FE0, 0x0601FC68),
     'scenario2-v25_1-v2_000': (2, 0x06090578, 0x0602143C),
     'scenario2-v25_1-v1_003': (2, 0x0609056C, 0x06021484),
     'scenario3-v25_1-redump': (3, 0x0609075C, 0x060214CC),
 }
 
 
-def lookup(profile):
+# Keys are profiles/*.json file stems. Earlier names of the same revision (the fork's
+# scenario1-usa-v25_1.json, and the registered ids) still resolve, so older scripts, segments
+# and result folders keep working.
+ALIASES = {'scenario1-usa-v25_1': 'scenario1-v25_1',
+           'scenario1-usa-translation-v25_1': 'scenario1-v25_1',
+           'scenario1-translation-v25_1': 'scenario1-v25_1'}
+
+
+def canonical(profile):
+    """The memory-map key (profile file stem) for a profile name, file name or retired name."""
+    profile = str(profile)
     profile = profile[:-5] if profile.endswith('.json') else profile
+    return ALIASES.get(profile, profile)
+
+
+def lookup(profile):
+    profile = canonical(profile)
     if profile not in PROFILES:
         raise KeyError(f'no SF3 memory map for profile {profile}')
     scenario, base, tick = PROFILES[profile]

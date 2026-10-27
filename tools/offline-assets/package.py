@@ -14,7 +14,7 @@ import sys
 import zipfile
 
 REPO = Path(__file__).resolve().parents[2]
-SCRIPTS = ('bootstrap.py', 'gui.py', 'worker.py', 'character_packs.py', 'index_packs.py',
+SCRIPTS = ('bootstrap.py', 'gui.py', 'worker.py', 'battle_textures.py', 'character_packs.py', 'index_packs.py',
            'archive_packs.py', 'select_packs.py', 'ExtractAssets.cs')
 
 
@@ -65,6 +65,7 @@ def package(destination, python, framework, make_zip=False):
     shutil.copy2(framework / 'src/saturnrecomp/disc.py', reader / 'disc.py')
     (reader / '__init__.py').write_text('')
     shutil.copy2(REPO / 'LICENSES/saturn-recomp.txt', app / 'vendor/SATURN-RECOMP-LICENSE.txt')
+    shutil.copy2(REPO / 'LICENSES/SF3Unity.txt', app / 'vendor/SF3UNITY-LICENSE.txt')
     shutil.copy2(REPO / 'LICENSE', destination / 'LICENSE.txt')
     shutil.copy2(REPO / 'THIRD_PARTY.md', destination / 'THIRD_PARTY.md')
     (destination / 'Start Offline Graphics Builder.cmd').write_text(
@@ -76,7 +77,8 @@ def package(destination, python, framework, make_zip=False):
         '2. The first run downloads pinned tools directly from their authors and prepares the extractor automatically.\n'
         '   Allow several minutes and several GB of space. No compiler or Python installation is needed.\n'
         '3. Select your own supported Scenario 1/2/3 CUE or CHD files and GPU index.\n'
-        '4. Start / Resume builds local AI world textures and CHR/CHP character packs. Keep all three styles\n'
+        '4. Start / Resume builds local AI world, CHR/CHP sprite and supported X8PC battle-model texture packs.\n'
+        '   Keep all three styles\n'
         '   selected to attach packs to the game. Try Quick check before the full multi-hour GPU job.\n'
         '5. Once finished, use Attach packs to game and select the prepared game-data folder.\n'
         '   Restart the game and choose AI graphics Off, video, anime or general.\n\n'
@@ -86,7 +88,8 @@ def package(destination, python, framework, make_zip=False):
         'No API key, paid service or Codex tokens are used. No game data is uploaded. After one-time setup, CUE processing is offline.\n'
         'The optional CHD tool downloads directly upstream the first time a CHD is used.\n\n'
         'Experimental: unsupported formats/failed images remain original and are reported. Menus stay original;\n'
-        'background-plane replacement is not implemented. Extracted frames are not proof of full gameplay coverage.\n'
+        'background planes, indexed spell effects and untextured battle polygons retain original graphics.\n'
+        'Extracted textures are not proof of full gameplay coverage or complete attack/spell enhancements.\n'
         'Packs may require several GB per style; all-three-scenario output/cache can require tens of GB.\n'
         'Keep saves backed up. Packs are optional; detaching restores original graphics.\n\n'
         'Do not redistribute your game-derived output. SF3Tools has no redistribution license in the pinned upstream tree;\n'

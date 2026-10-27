@@ -70,7 +70,7 @@ class DiscInputTests(unittest.TestCase):
             manifests=[{'files':{'/1ST.BIN':{'sha1':name,'size':64}},'audio':{},'ip_sha1':name}
                        for name in ('invented-scenario2','invented-scenario3')]
             for scenario,manifest in zip((2,3),manifests):
-                (root/f'scenario{scenario}.json').write_text(json.dumps({'scenario':scenario,'content_sha256':content_id(manifest)}))
+                (root/f'scenario{scenario}.json').write_text(json.dumps({'id':f'synthetic-{scenario}','scenario':scenario,'content_sha256':content_id(manifest)}))
             disc=types.SimpleNamespace(ip=types.SimpleNamespace(product='SF3TRANS',version='V25.1'))
             for scenario,manifest in zip((2,3),manifests):
                 self.assertEqual(identify(disc,manifest,root)[1]['scenario'],scenario)

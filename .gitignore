@@ -17,6 +17,7 @@
 !/LICENSES/
 /LICENSES/*
 !/LICENSES/saturn-recomp.txt
+!/LICENSES/SF3Unity.txt
 !/docs/
 /docs/*
 !/docs/BUILDING.md
@@ -31,9 +32,11 @@
 !/profiles/
 /profiles/*
 !/profiles/usa-v1.001.json
+!/profiles/scenario1-v25_1.json
 !/profiles/scenario2-v24.json
+!/profiles/scenario2-v25_1-upgrade.json
+!/profiles/scenario2-supplied-v1003.json
 !/profiles/scenario3-v25_1.json
-!/profiles/scenario1-usa-v25_1.json
 !/profiles/scenario2-v25_1-v1_003.json
 !/profiles/scenario2-v25_1-v2_000.json
 !/profiles/scenario3-v25_1-redump.json

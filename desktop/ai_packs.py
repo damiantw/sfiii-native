@@ -15,8 +15,12 @@ import uuid
 
 MODEL_ENV = {'video': 'SF3_AI_VIDEO_DIR', 'anime': 'SF3_AI_ASSET_DIR',
              'general': 'SF3_AI_NATURAL_DIR'}
-PROFILE_FILES = ('usa-v1.001.json', 'scenario2-v24.json', 'scenario3-v25_1.json')
 SELECTION = 'ai-packs.json'
+# Retired profile ids / file names of the same disc revision (content_sha256 is still checked).
+# This module is copied beside player data on its own, so it keeps its own copy; tests keep it equal
+# to tools/disc_profile.py LEGACY_PROFILE_IDS and LEGACY_PROFILE_FILES.
+LEGACY_PROFILES = {'scenario1-usa-translation-v25_1': 'scenario1-translation-v25_1',
+                   'scenario1-usa-v25_1.json': 'scenario1-v25_1.json'}
 # Preparation also copies this standalone helper beside player data. Only the
 # original desktop/ module has an enclosing application/source root.
 MODULE = Path(__file__).resolve()
@@ -49,8 +53,9 @@ def disc_profile(game_dir, profiles_root):
     identifier = game.get('profile_id')
     if not isinstance(identifier, str):
         raise ValueError('Prepare this game again to record its verified disc profile before attaching artwork.')
-    records = [dict(read_json(Path(profiles_root) / name), profile_file=name) for name in PROFILE_FILES
-               if (Path(profiles_root) / name).is_file()]
+    records = [dict(read_json(path), profile_file=path.name)
+               for path in sorted(Path(profiles_root).glob('*.json'))]
+    identifier = LEGACY_PROFILES.get(identifier, identifier)
     matches = [record for record in records if record.get('id') == identifier]
     if len(matches) != 1 or not re.fullmatch(r'[0-9a-f]{64}', matches[0].get('content_sha256', '')):
         raise ValueError('The prepared game has no registered artwork disc profile.')
@@ -60,6 +65,8 @@ def disc_profile(game_dir, profiles_root):
 def matches_profile(value, profile):
     # The disc inventory records the pinned profile filename; prepared games
     # record the profile's id. Both refer to this same authoritative document.
+    if isinstance(value, str):
+        value = LEGACY_PROFILES.get(value, value)
     return value in (profile['id'], profile['profile_file'])
 
 
