@@ -255,7 +255,8 @@ def candidate(job):
             m1.update(low_hp=low_hp(unit_hp(s.read, units), job['root'], [job['leader']] + list(job.get('protect') or ()), job['guard_hp']))
         if job.get('avoid'):
             m1.update(in_zone=in_zone(s.read, units, [job['leader']] + list(job.get('protect') or ()), job['avoid']))
-            if job.get('zone_fatal') and m1['in_zone']:
+            # v121: the whole force fights inside the zone from ~488k, so --zone-fatal V only applies from VBlank V
+            if job.get('zone_fatal') is not None and m1['in_zone'] and r.vblank >= job['zone_fatal']:
                 # --zone-fatal (v119, Sc2 Ch6: probe/p119 shows Medion at 34,37 inside the zone for
                 # L7-L9 despite the 3-point cost; the 504.6k blast then killed him): ending a window
                 # with the leader or a protected unit in the zone loses
@@ -356,7 +357,7 @@ def search(a):
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
-                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), focus=getattr(a, 'focus', None), max_deaths=getattr(a, 'max_deaths', None), zone_fatal=getattr(a, 'zone_fatal', False), guard_hp=getattr(a, 'guard_hp', None), heal=getattr(a, 'heal', None), escort=getattr(a, 'escort', None), heal_item=getattr(a, 'heal_item', None), leader_attack=getattr(a, 'leader_attack', None), tactics=tactics_of(a), root_epos=root_epos, state_id=state_id, W=a.window, L=a.look,
+                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), focus=getattr(a, 'focus', None), max_deaths=getattr(a, 'max_deaths', None), zone_fatal=getattr(a, 'zone_fatal', None), guard_hp=getattr(a, 'guard_hp', None), heal=getattr(a, 'heal', None), escort=getattr(a, 'escort', None), heal_item=getattr(a, 'heal_item', None), leader_attack=getattr(a, 'leader_attack', None), tactics=tactics_of(a), root_epos=root_epos, state_id=state_id, W=a.window, L=a.look,
                   progress=getattr(a, 'progress', False), root_pos=root_pos,
                   root_active=root_active, root_flag_bits=common_fb)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)

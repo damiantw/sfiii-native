@@ -381,7 +381,7 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
   - `--escort`: keep units next to a guest
   - `--avoid X,Y,R`: leave a trap zone
   - `--avoid-all`: every unit, not only the leader and protected units, walks out of the `--avoid` zone
-  - `--zone-fatal`: a window that ends with the leader or a protected unit in the `--avoid` zone loses instead of costing 3
+  - `--zone-fatal [V]`: from VBlank V on (default 0), a window that ends with the leader or a protected unit in the `--avoid` zone loses instead of costing 3
   - `--keep-away`: stay clear of enemies
   - `--focus`: preferred targets
   - `--heal` and `--heal-item`: heal with a spell, or with an item on a hurt neighbour
