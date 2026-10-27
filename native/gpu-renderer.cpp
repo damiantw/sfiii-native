@@ -35,19 +35,31 @@ SDL_Renderer* GpuRenderer::create_renderer(SDL_Window* window) {
     }
     return nullptr;
 }
-bool GpuRenderer::upload(SDL_GPUBuffer* buffer,const std::vector<uint32_t>& words) {
-    uint32_t bytes=uint32_t(words.size()*4);
-    SDL_GPUTransferBufferCreateInfo ti{};ti.usage=SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;ti.size=bytes;
-    auto* transfer=SDL_CreateGPUTransferBuffer(device_,&ti);if(!transfer)return false;
-    auto* data=SDL_MapGPUTransferBuffer(device_,transfer,false);
-    if(!data){SDL_ReleaseGPUTransferBuffer(device_,transfer);return false;}
-    std::memcpy(data,words.data(),bytes);SDL_UnmapGPUTransferBuffer(device_,transfer);
+bool GpuRenderer::upload(const std::vector<uint32_t>& scene,const std::vector<uint32_t>& textures) {
+    if(scene.empty() || textures.empty() || scene.size()>UINT32_MAX/4 || textures.size()>UINT32_MAX/4-scene.size())
+        return SDL_SetError("Invalid geometry upload size");
+    uint32_t first=uint32_t(scene.size()*4),second=uint32_t(textures.size()*4),bytes=first+second;
+    if(bytes>transfer_capacity_) {
+        SDL_GPUTransferBufferCreateInfo ti{};ti.usage=SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        ti.size=uint32_t(std::min(uint64_t(UINT32_MAX),std::max(uint64_t(bytes),uint64_t(transfer_capacity_)*2)));
+        auto* next=SDL_CreateGPUTransferBuffer(device_,&ti);if(!next)return false;
+        if(transfer_)SDL_ReleaseGPUTransferBuffer(device_,transfer_);
+        transfer_=next;transfer_capacity_=ti.size;
+    }
+    // Cycle the backing memory while earlier frames are in flight. Both scene
+    // metadata and source texels share one staging allocation and submission.
+    auto* data=SDL_MapGPUTransferBuffer(device_,transfer_,true);if(!data)return false;
+    std::memcpy(data,scene.data(),first);std::memcpy(static_cast<uint8_t*>(data)+first,textures.data(),second);
+    SDL_UnmapGPUTransferBuffer(device_,transfer_);
     auto* command=SDL_AcquireGPUCommandBuffer(device_);
-    if(!command){SDL_ReleaseGPUTransferBuffer(device_,transfer);return false;}
+    if(!command)return false;
     auto* copy=SDL_BeginGPUCopyPass(command);
-    SDL_GPUTransferBufferLocation from{transfer,0};SDL_GPUBufferRegion to{buffer,0,bytes};
+    if(!copy){SDL_CancelGPUCommandBuffer(command);return false;}
+    SDL_GPUTransferBufferLocation from{transfer_,0};SDL_GPUBufferRegion to{scene_,0,first};
+    SDL_UploadToGPUBuffer(copy,&from,&to,true);
+    from.offset=first;to={textures_,0,second};
     SDL_UploadToGPUBuffer(copy,&from,&to,true);SDL_EndGPUCopyPass(copy);
-    bool ok=SDL_SubmitGPUCommandBuffer(command);SDL_ReleaseGPUTransferBuffer(device_,transfer);return ok;
+    return SDL_SubmitGPUCommandBuffer(command);
 }
 bool GpuRenderer::initialize(SDL_Renderer* renderer,const std::string& dir) {
     renderer_=renderer;
@@ -157,7 +169,7 @@ SDL_Texture* GpuRenderer::render(const Frame& f,int scale) {
     // Exact packed inputs include pixels, clipping, effects, geometry, source
     // texels and dimensions. Repeated fields can reuse the completed picture.
     if(data==last_scene_ && tex==last_textures_) {++cache_hits_;return filtered_valid_?filtered_:output_;}
-    if(!SDL_FlushRenderer(renderer_) || !upload(scene_,data) || !upload(textures_,tex))return nullptr;
+    if(!SDL_FlushRenderer(renderer_) || !upload(data,tex))return nullptr;
     auto* previous=SDL_GetRenderTarget(renderer_);
     if(!SDL_SetRenderTarget(renderer_,output_))return nullptr;
     const uint32_t normal_pass[4]={0,0,0,0},effects_pass[4]={uint32_t(aa_?1:0)|uint32_t(ray_shadows_?2:0),0,0,0};
@@ -194,6 +206,6 @@ bool GpuRenderer::capture(Frame& f) {
     for(auto& p:f.px)p&=0xFFFFFF;SDL_DestroySurface(rgb);return true;
 }
 bool GpuRenderer::wait(){return device_ && SDL_WaitForGPUIdle(device_);}
-void GpuRenderer::release(){if(renderer_)SDL_FlushRenderer(renderer_);if(state_)SDL_DestroyGPURenderState(state_);if(white_)SDL_DestroyTexture(white_);if(output_)SDL_DestroyTexture(output_);if(filtered_)SDL_DestroyTexture(filtered_);if(device_){if(scene_)SDL_ReleaseGPUBuffer(device_,scene_);if(textures_)SDL_ReleaseGPUBuffer(device_,textures_);if(shader_)SDL_ReleaseGPUShader(device_,shader_);}state_=nullptr;white_=output_=filtered_=nullptr;filtered_valid_=false;scene_=textures_=nullptr;shader_=nullptr;width_=height_=0;last_scene_.clear();last_textures_.clear();submissions_=cache_hits_=0;}
+void GpuRenderer::release(){if(renderer_)SDL_FlushRenderer(renderer_);if(state_)SDL_DestroyGPURenderState(state_);if(white_)SDL_DestroyTexture(white_);if(output_)SDL_DestroyTexture(output_);if(filtered_)SDL_DestroyTexture(filtered_);if(device_){if(scene_)SDL_ReleaseGPUBuffer(device_,scene_);if(textures_)SDL_ReleaseGPUBuffer(device_,textures_);if(shader_)SDL_ReleaseGPUShader(device_,shader_);if(transfer_)SDL_ReleaseGPUTransferBuffer(device_,transfer_);}transfer_=nullptr;transfer_capacity_=0;state_=nullptr;white_=output_=filtered_=nullptr;filtered_valid_=false;scene_=textures_=nullptr;shader_=nullptr;width_=height_=0;last_scene_.clear();last_textures_.clear();submissions_=cache_hits_=0;}
 void GpuRenderer::destroy_device(){if(device_)SDL_DestroyGPUDevice(device_);device_=nullptr;}
 }

@@ -36,10 +36,12 @@ class HdAssets {
         return pair(a,b)|(pair(a>>8,b>>8)<<8);
     }
     static uint64_t key(int w,int h,const std::vector<uint32_t>& pixels) {
-        uint64_t value=14695981039346656037ull;
-        auto add=[&](uint8_t b){value=(value^b)*1099511628211ull;};
-        for(unsigned n:{unsigned(w),unsigned(h)}) for(int i=0;i<4;++i) add(n>>(i*8));
-        for(auto p:pixels) for(int i=0;i<4;++i) add(p>>(i*8));
+        // Use the native decoder's existing texture fingerprint to avoid
+        // rehashing every source pixel on each presented field. This is only a
+        // bucket hint: dimensions and every original pixel are still compared.
+        uint64_t value=0;
+        hd_fingerprint(value,uint64_t(unsigned(w))<<32|unsigned(h));
+        for(auto p:pixels)hd_fingerprint(value,p);
         return value;
     }
     static bool read_rgba(const std::filesystem::path& path,int w,int h,std::vector<uint32_t>& pixels) {
@@ -53,7 +55,7 @@ class HdAssets {
         return true;
     }
     const Asset* match(const HdTexture& t,unsigned command=2) const {
-        auto bucket=buckets_.find(key(t.w,t.h,t.rgba));
+        auto bucket=buckets_.find(t.fingerprint?t.fingerprint:key(t.w,t.h,t.rgba));
         if(bucket!=buckets_.end()) for(auto i:bucket->second) {
             const auto& a=assets_[i];
             if(a.w!=t.w || a.h!=t.h || a.original!=t.rgba

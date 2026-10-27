@@ -9,6 +9,8 @@ class GpuRenderer {
     SDL_GPUDevice* device_=nullptr;
     SDL_Renderer* renderer_=nullptr;
     SDL_GPUBuffer *scene_=nullptr,*textures_=nullptr;
+    SDL_GPUTransferBuffer* transfer_=nullptr;
+    uint32_t transfer_capacity_=0;
     SDL_GPUShader* shader_=nullptr;
     SDL_GPURenderState* state_=nullptr;
     SDL_Texture *white_=nullptr,*output_=nullptr,*filtered_=nullptr;
@@ -16,7 +18,7 @@ class GpuRenderer {
     int width_=0,height_=0;
     std::vector<uint32_t> last_scene_,last_textures_;
     uint64_t submissions_=0,cache_hits_=0;
-    bool upload(SDL_GPUBuffer*,const std::vector<uint32_t>&);
+    bool upload(const std::vector<uint32_t>&,const std::vector<uint32_t>&);
 public:
     SDL_Renderer* create_renderer(SDL_Window*);
     bool initialize(SDL_Renderer*,const std::string& shader_dir);

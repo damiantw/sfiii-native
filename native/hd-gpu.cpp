@@ -1,5 +1,6 @@
 #include "hd-gpu.h"
 #include "gpu-shader.h"
+#include "gpu-residency.h"
 #include <cstring>
 #include <array>
 
@@ -51,9 +52,16 @@ bool HdGpu::upload(SDL_GPUBuffer* buffer,const std::vector<uint32_t>& words) {
     return ok;
 }
 bool HdGpu::prepare_art(const HdAssets& assets,const std::vector<size_t>& needed) {
-    if(resident_valid_ && resident_==needed) return true;
+    const bool reuse=std::getenv("SF3_AI_GPU_CACHE_DISABLE")==nullptr;
+    if(resident_valid_ && (reuse?std::includes(resident_.begin(),resident_.end(),needed.begin(),needed.end()):resident_==needed)) return true;
+    // Animation changes the visible set frequently. Retain available recent
+    // materials within a bounded working set instead of replacing the entire
+    // GPU pack whenever a sprite appears or disappears.
+    constexpr size_t retained_limit=64*1024*1024/4;
+    auto working=retain_gpu_materials(needed,resident_valid_ && reuse?resident_:std::vector<size_t>{},retained_limit,
+        [&](size_t index){return index<assets.assets_.size()?assets.assets_[index].replacement.px.size():size_t(0);});
     size_t words=0;
-    for(auto index:needed) {
+    for(auto index:working) {
         if(index>=assets.assets_.size()) return SDL_SetError("Invalid visible HD material");
         const auto& replacement=assets.assets_[index].replacement;
         size_t size=replacement.px.size();
@@ -64,12 +72,14 @@ bool HdGpu::prepare_art(const HdAssets& assets,const std::vector<size_t>& needed
     }
     std::vector<uint32_t> offsets(assets.assets_.size(),UINT32_MAX),art;
     art.reserve(std::max(size_t(1),words));
-    for(auto index:needed) {
+    for(auto index:working) {
         offsets[index]=uint32_t(art.size());
         const auto& pixels=assets.assets_[index].replacement.px;
         art.insert(art.end(),pixels.begin(),pixels.end());
     }
     if(art.empty()) art.push_back(0); // Keep a valid storage binding for empty scenes.
+    if(art_ && !SDL_FlushRenderer(renderer_))return false;
+    last_scene_.clear();
     uint32_t required=uint32_t(art.size()*4);
     if(required>art_capacity_) {
         // Grow without discarding the previous working binding on allocation failure.
@@ -93,7 +103,7 @@ bool HdGpu::prepare_art(const HdAssets& assets,const std::vector<size_t>& needed
         resident_valid_=false;
         if(!upload(art_,art)) return false;
     }
-    offsets_=std::move(offsets);resident_=needed;resident_valid_=true;
+    offsets_=std::move(offsets);resident_=std::move(working);resident_valid_=true;++art_uploads_;
     return true;
 }
 bool HdGpu::initialize(SDL_Renderer* renderer,const HdAssets& assets,const std::string& dir) {
@@ -124,7 +134,9 @@ SDL_Texture* HdGpu::render(const Frame& frame,const HdAssets& assets) {
         SDL_SetError("HD asset pack changed; GPU initialization required");return nullptr;
     }
     auto* old_target=SDL_GetRenderTarget(renderer_);
-    if(!SDL_FlushRenderer(renderer_)) return nullptr;
+    // Submit the preceding geometry draw before CPU matching work, preserving
+    // GPU/CPU overlap even when the AI overlay itself is a repeated frame.
+    if(!SDL_FlushRenderer(renderer_))return nullptr;
     assets.begin_frame();
     if(frame.w<1 || frame.h<1) {SDL_SetError("Invalid HD frame dimensions");return nullptr;}
     size_t pixels=size_t(frame.w)*frame.h;
@@ -167,12 +179,15 @@ SDL_Texture* HdGpu::render(const Frame& frame,const HdAssets& assets) {
     std::sort(needed.begin(),needed.end());needed.erase(std::unique(needed.begin(),needed.end()),needed.end());
     if(!prepare_art(assets,needed)) return nullptr;
     for(size_t i=0;i<count;++i) if(materials[i]!=SIZE_MAX) data[quad_offset+i*32+22]=offsets_[materials[i]];
+    if(std::getenv("SF3_AI_GPU_CACHE_DISABLE")==nullptr && data==last_scene_){++cache_hits_;return output_;}
+    if(!SDL_FlushRenderer(renderer_))return nullptr;
     if(!upload(scene_,data)) return nullptr;
     if(!SDL_SetRenderTarget(renderer_,output_)) return nullptr;
     SDL_SetRenderDrawColor(renderer_,0,0,0,0);SDL_RenderClear(renderer_);
     SDL_SetGPURenderState(renderer_,state_);
     bool ok=SDL_RenderTexture(renderer_,white_,nullptr,nullptr);
     SDL_SetGPURenderState(renderer_,nullptr);SDL_SetRenderTarget(renderer_,old_target);
+    if(ok)last_scene_=std::move(data);
     return ok?output_:nullptr;
 }
 void HdGpu::release() {
@@ -183,6 +198,7 @@ void HdGpu::release() {
     if(device_) {if(scene_) SDL_ReleaseGPUBuffer(device_,scene_);if(art_) SDL_ReleaseGPUBuffer(device_,art_);if(shader_) SDL_ReleaseGPUShader(device_,shader_);}
     state_=nullptr;white_=output_=nullptr;scene_=art_=nullptr;shader_=nullptr;offsets_.clear();
     resident_.clear();resident_valid_=false;pack_=nullptr;art_capacity_=0;
+    last_scene_.clear();
 }
 void HdGpu::destroy_device() {if(device_ && owns_device_) SDL_DestroyGPUDevice(device_);device_=nullptr;owns_device_=false;}
 }
