@@ -51,6 +51,7 @@ class Policy:
         self.explore = 0.0
         self.heal, self.heal_at, self.heal_fail, self.heal_check, self.sigs = (), 0.6, {}, None, {}
         self.heal_item = ()
+        self.leader_attack, self.hit = None, {}
 
     def town(self):
         r = self.rng.random()
@@ -133,7 +134,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None, escort=None, heal_item=None):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None, escort=None, heal_item=None, leader_attack=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -161,7 +162,10 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     of (x, y) (Sc2 Ch6 Garvin fight: a scripted blast at ~525.6k (1.003) / ~495.5k (2.000) zeroes every
     unit, both sides, around 33-41,33-45, and Medion started at 36,45 and stayed there).
     `focus` (round 19, opt-in): enemy slots the other units path to first while alive (Sc3 Ch7 dock fight:
-    the Masked Monk, enemy 1, was never attacked and poisoned Julian, then Synbios)."""
+    the Masked Monk, enemy 1, was never attacked and poisoned Julian, then Synbios).
+    `leader_attack` (round 27, opt-in, with pathing): a share S; on its turn the leader walks to and
+    attacks an enemy it can finish (HP at most its best hit) or one under S of max HP, within
+    LEADER_REACH steps and never through the `avoid` zone, instead of only striking what is in reach."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     pol.pathing = pathing
@@ -174,6 +178,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     pol.focus = tuple(focus or ())
     pol.heal, pol.heal_at, pol.heal_fail, pol.heal_check = tuple(heal or ()), heal_at or LEADER_SAFE, {}, None
     pol.heal_item = tuple(heal_item or ())
+    pol.leader_attack = leader_attack
     pol.escort = escort
     presses, events = [], []
     fell, watch_base = [], (mm.get('units') or {}).get('force') if watch else None
@@ -623,6 +628,26 @@ def retreat_path(p, live, allies, blocked, reach=5, size=64):
     return best
 
 
+LEADER_REACH = 4                      # --leader-attack: steps the leader walks to a target
+
+
+def leader_target(p, targets, occupied, avoid=None, reach=LEADER_REACH):
+    """--leader-attack: of `targets` [(x, y)], the one with a free tile next to it (not in `occupied`,
+    not within the avoid zone (x, y, r)) nearest the leader at `p`, at most `reach` steps; None if none."""
+    best = None
+    for tx, ty in targets:
+        for dx, dy in STEP.values():
+            q = (tx + dx, ty + dy)
+            d = abs(q[0] - p[0]) + abs(q[1] - p[1])
+            if d > reach or (q in occupied and q != p):
+                continue
+            if avoid and abs(q[0] - avoid[0]) + abs(q[1] - avoid[1]) <= avoid[2]:
+                continue
+            if best is None or d < best[0]:
+                best = (d, (tx, ty))
+    return best and best[1]
+
+
 def unit_hp_of(read, table, slot):
     e = read(table + slot * memory_map.UNIT_STRIDE + memory_map.UNIT_HP, 2)
     return int.from_bytes(e, 'big')
@@ -682,9 +707,12 @@ def aimed_turn(side, units, pol, press):
         # force units; Attack on one finds no target and the turn never ends, so every candidate
         # replayed the same loop. An attack that leaves the adjacent records' HP unchanged MISS_PHANTOM
         # times marks them as phantoms for this battle
-        keys, hp0 = la
+        keys, hp0 = la[:2]
         pol.last_attack = None
-        if sum(hp_of.get(k, 0) for k in keys) == hp0:
+        hp1 = sum(hp_of.get(k, 0) for k in keys)
+        if len(la) > 2 and hp1 < hp0:              # --leader-attack: the most one hit by that unit took
+            pol.hit[la[2]] = max(pol.hit.get(la[2], 0), hp0 - hp1)
+        if hp1 == hp0:
             pol.att_miss[keys] = pol.att_miss.get(keys, 0) + 1
             if pol.att_miss[keys] >= MISS_PHANTOM:
                 pol.phantoms = phantoms = phantoms | set(keys)
@@ -846,7 +874,7 @@ def aimed_turn(side, units, pol, press):
     # fell 30k VBlanks later. So the leader never advances: B returns the probe step and it only
     # attacks what is already in reach; below LEADER_SAFE of max HP it walks away from the
     # enemies (through teammates, to a free tile)
-    cautious = False
+    cautious = lead_attack = False
     lead = pol.leader if getattr(pol, 'leader', None) in before else min(before)
     if me == lead or me in (getattr(pol, 'protect', None) or ()):
         press(('B',), 6)
@@ -874,7 +902,21 @@ def aimed_turn(side, units, pol, press):
                            min(abs(now[me][0] - e[0]) + abs(now[me][1] - e[1]) for e in threats) <= ka)
         av = getattr(pol, 'avoid', None)
         in_zone = bool(av and me in now and abs(now[me][0] - av[0]) + abs(now[me][1] - av[1]) <= av[2])
-        if me in now and (in_zone or near_threat or is_hurt(rd, units['force'], me, LEADER_SAFE)):
+        las = getattr(pol, "leader_attack", None)
+        if las and pol.pathing and me == lead and me in now and not in_zone:
+            # v90 (Sc2 Ch6 Garvin fight, probe ap90 at 458k): Medion, cautious, stood among four Giga
+            # Breakers (two at 37-60 of 170 HP), only struck what was in reach and fell at ~486k in
+            # every candidate. --leader-attack S: the leader walks to and attacks an enemy it can
+            # finish (HP at most its best hit so far) or one under S of max HP, within LEADER_REACH
+            # steps, never onto or through the --avoid zone; otherwise it plays cautious as before
+            fin = pol.hit.get(me, 0)
+            weak = [(x, y) for k, x, y, f, hp in enemies if hp > 1 and k not in phantoms
+                    and (hp <= fin or is_hurt(rd, units["enemies"], k, las))]
+            tgt = weak and leader_target(now[me], weak, {v for k, v in now.items() if k != me} | set(live), av)
+            if tgt:
+                goal, hold_back, lead_attack = [tgt], False, True
+                pol.leader_attacks = getattr(pol, "leader_attacks", 0) + 1
+        if me in now and not lead_attack and (in_zone or near_threat or is_hurt(rd, units['force'], me, LEADER_SAFE)):
             # round 27 (Sc2 V1.003 war machine): the leader gets one turn before the blast and the
             # first planned step hit an unseen wall, so the turn ended in the zone. A step that fails
             # in the first two marks the edge and plans again from where the unit stands (8 plans)
@@ -902,6 +944,8 @@ def aimed_turn(side, units, pol, press):
                     pol.retreats = getattr(pol, 'retreats', 0) + 1
                 if not replan:
                     break
+    if lead_attack:
+        cautious = False
     if hold_back and not cautious:
         press(('B',), 6)
         press((), 20)
@@ -917,7 +961,11 @@ def aimed_turn(side, units, pol, press):
             allies = {v for k, v in now.items() if k != me}
             # allies are walked through (round 2: a force packed on the Battle 22 bridge or in the
             # Sc3 final room had no path with allies as walls, so every unit held for 120k VBlanks)
-            d = plan_step(p, goal, allies | set(live), pol.blocked, passable=allies)
+            shut = set()
+            if lead_attack and getattr(pol, "avoid", None):  # --leader-attack: never path through the zone
+                zx, zy, zr = pol.avoid
+                shut = {(zx + i, zy + j) for i in range(-zr, zr + 1) for j in range(-zr, zr + 1) if abs(i) + abs(j) <= zr}
+            d = plan_step(p, goal, allies | set(live) | shut, pol.blocked, passable=allies - shut)
             if d is None:
                 break
             press((pad_for(d, turn),), 8)
@@ -989,7 +1037,7 @@ def aimed_turn(side, units, pol, press):
     # round 19 (Sc3 Ch7 dock fight, search v55): the leader and protected units never cast. Julian's
     # first spell is Egress, and a random cast took the force out of the fight to the church, which
     # the battle-over check took for a win (the battle byte went to the field and a story bit was set)
-    cast_now = cast_now and not cautious
+    cast_now = cast_now and not cautious and not lead_attack
     if near and pol.cast:
         pol.tried[me] = pol.tried.get(me, 0) + 1
     if cast_now:
@@ -1007,7 +1055,7 @@ def aimed_turn(side, units, pol, press):
         keys = tuple(sorted(k for k, x, y, f, hp in enemies if hp > 0 and k not in getattr(pol, 'phantoms', set()) and mp
                             and abs(x - mp[0]) + abs(y - mp[1]) <= 1))
         if keys:
-            pol.last_attack = (keys, sum(hp_of.get(k, 0) for k in keys))
+            pol.last_attack = (keys, sum(hp_of.get(k, 0) for k in keys), me)
         press((RING['attack'],), 6)
         press((), 14)
         press(('C',), 6)

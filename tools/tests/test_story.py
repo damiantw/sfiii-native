@@ -358,6 +358,56 @@ class StoryTest(unittest.TestCase):
         self.assertGreater(abs(x - 5) + abs(y - 7), 5)
         self.assertGreater(pol.retreats, 2)
 
+    def leader_turn(self, share, avoid=None):
+        # invented roster: the leader (slot 1) at 5,5; enemy 0 at 5,9 is under a third of its max HP
+        # (is_hurt mocked), enemy 1 far off at full HP
+        from unittest import mock
+        from sf3test import autoplay
+        force = {1: (5, 5), 4: (12, 2)}
+
+        def read_units(rd, base, live=None):
+            if base == "E":
+                return [(0, 5, 9, 0, 10), (1, 14, 14, 0, 90)]
+            return [(k, x, y, 0, 10) for k, (x, y) in force.items()]
+
+        ring = []
+
+        def press(btn, n):                          # the D-pad moves the leader until C opens the ring
+            if btn and btn[0] == 'C':
+                ring.append(force[1])
+            elif btn and btn[0] in autoplay.DIRS and not ring:
+                force[1] = autoplay.step_of(force[1], btn[0])
+
+        class Side:
+            read = None
+            def frame(self):
+                return None
+        pol = autoplay.Policy(1)
+        pol.pathing, pol.leader_attack, pol.avoid = True, share, avoid
+        with mock.patch.object(autoplay.memory_map, "read_units", read_units), \
+                mock.patch.object(autoplay, "panel_share", lambda f: 0.0), \
+                mock.patch.object(autoplay, "is_hurt", lambda rd, b, k, s: b == "E" and k == 0):
+            autoplay.aimed_turn(Side(), {"force": "F", "enemies": "E"}, pol, press)
+        x, y = force[1]
+        return abs(x - 5) + abs(y - 9), getattr(pol, "leader_attacks", 0)
+
+    def test_leader_attack_walks_to_weak_enemy(self):
+        d, n = self.leader_turn(0.35)
+        self.assertEqual((d, n), (1, 1))
+        d, n = self.leader_turn(None)               # off by default: cautious, it stays back
+        self.assertGreater(d, 2)
+        self.assertEqual(n, 0)
+
+    def test_leader_attack_never_enters_avoid_zone(self):
+        d, n = self.leader_turn(0.35, avoid=(5, 9, 2))  # every tile next to the target is in the zone
+        self.assertEqual(n, 0)
+        self.assertGreater(d, 2)
+        from sf3test import autoplay
+        self.assertEqual(autoplay.leader_target((5, 5), [(5, 9)], set(), (5, 10, 1)), (5, 9))
+        self.assertIsNone(autoplay.leader_target((5, 5), [(5, 9)], set(), (5, 9, 1)))
+        self.assertIsNone(autoplay.leader_target((5, 5), [(5, 12)], set()))  # out of reach
+        self.assertIsNone(autoplay.leader_target((5, 5), [(5, 9)], {(5, 8), (4, 9), (6, 9), (5, 10)}))
+
     def test_retreat_path_goes_through_allies(self):
         from sf3test import autoplay
         # a column of teammates north of the leader, the enemy south: the path crosses them and

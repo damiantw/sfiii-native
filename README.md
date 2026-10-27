@@ -345,6 +345,7 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
   - `--keep-away`: stay clear of enemies
   - `--focus`: preferred targets
   - `--heal` and `--heal-item`: heal with a spell, or with an item on a hurt neighbour
+  - `--leader-attack S`: let the leader walk to and attack an enemy it can finish or one under S of max HP (never through the `--avoid` zone)
   - `--max-deaths` and `--max-levels`: search limits
 - **Differential testing against Beetle Saturn:** `tools/sf3-diff.py` and `tools/sf3test` run the same inputs on
   the native port and on a libretro core that you build separately and run with your own BIOS. They compare RAM,
