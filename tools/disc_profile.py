@@ -44,7 +44,7 @@ def identify(disc, manifest, profiles=ROOT/'profiles'):
             return path, profile
     raise ValueError('Unsupported disc contents (unregistered revision): '+disc.ip.product+' '+disc.ip.version+
                      ' (content ID '+identity+'). This build supports Scenario 1 USA V1.001, the Translation Project V25.1 '
-                     'default patch of the Redump Scenario 1 USA, Scenario 2 (V1.003 or V2.000) and Scenario 3 discs, and the '
+                     'default patch of the Redump Scenario 1 USA, Scenario 2 (V1.003 or V2.000) and Scenario 3 discs (alone or with the default V25+ add-on selection), and the '
                      'registered Scenario 2 v24 / v25.1-upgrade / supplied V1.003 and Scenario 3 v25.1 dumps. File names and '
                      'patch labels are not sufficient to choose native load addresses; patch with tools/sf3patch or the official '
                      'wizard and its default selection. Existing saves and builds were not replaced.')
