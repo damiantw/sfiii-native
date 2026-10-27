@@ -481,6 +481,7 @@ def main():
     q.add_argument('--casters', type=int, nargs='+', help='force slots that cast their first attack spell (Blaze, Freeze, Bolt; first level) on an enemy within 2 tiles while they have MP')
     q.add_argument('--item-attack', type=int, nargs='+', help='force slots that use their first item (an attack item) on an enemy within 2 tiles')
     q.add_argument('--healers', type=int, nargs='+', help='force slots that cast Heal (first spell) on the most hurt ally next to them, or walk to one within 6 tiles, before attacking (Sc3 dock: nobody healed Gracia)')
+    q.add_argument('--zone-fatal', action='store_true', help='a window that ends with the leader or a --protect slot inside the --avoid zone loses (backtracks), instead of costing 3 (Sc2 Ch6: the blast)')
     q.add_argument('--avoid-all', action='store_true', help='every unit, not only the leader and --protect slots, walks out of the --avoid zone when its turn starts there (Sc2 Ch6: the blast kills all units left in it)')
     q.add_argument('--passive', type=int, nargs='+', help='--protect slots that never attack (they only retreat and hold), the behaviour before --protect could attack (Sc3 dock: the guest Julian, 7)')
     q.add_argument('--slim', action='store_true', help='keep only the saves on the search path (one per level); an untried alternative is replayed from its parent with its seed when the search backtracks to it')

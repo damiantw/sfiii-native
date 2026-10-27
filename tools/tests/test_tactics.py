@@ -172,6 +172,12 @@ class TacticsTest(unittest.TestCase):
         turn(force, foe, leader=9, avoid=(10, 10, 3))
         self.assertEqual(tactics.md(force[2], (10, 13)), 1, force)
 
+    def test_zone_fatal_scores_a_loss(self):
+        from sf3test import search
+        m = dict(leader_down=False, won=False, enemy_left=0.5, kills=1, force_left=0.5, deaths=0, leader=1.0, in_zone=1)
+        self.assertGreater(search.score(m), -10)
+        self.assertEqual(search.score(dict(m, zone_fatal=True)), -1e6)
+
     def test_tactics_of_search_args(self):
         import argparse
         from sf3test import search
