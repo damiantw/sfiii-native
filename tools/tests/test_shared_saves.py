@@ -165,7 +165,7 @@ class SharedSavesTests(unittest.TestCase):
             code = ('import sys; sys.path.insert(0, %r); import shared_saves\n'
                     'try:\n    shared_saves.lock(%r).__enter__()\nexcept shared_saves.Busy:\n    sys.exit(3)\n'
                     % (str(Path(shared_saves.__file__).parent), str(self.shared)))
-            self.assertEqual(subprocess.run([sys.executable, '-c', code]).returncode, 3)
+            self.assertEqual(subprocess.run([sys.executable, '-B', '-c', code]).returncode, 3)
         with shared_saves.lock(self.shared):
             pass
 
@@ -209,7 +209,7 @@ class SharedSavesTests(unittest.TestCase):
     def test_cli_prepare_reports_merge(self):
         sc1 = game(self.root, 'sc1', 1, record('SFORCE31_01', 50, 1))
         sc3 = game(self.root, 'sc3', 3)
-        out = subprocess.run([sys.executable, shared_saves.__file__, 'prepare', '--work', str(sc3), '--shared', str(self.shared),
+        out = subprocess.run([sys.executable, '-B', shared_saves.__file__, 'prepare', '--work', str(sc3), '--shared', str(self.shared),
                               '--migrate-from', str(sc1), '--lock'], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
         result = json.loads(out.stdout)
