@@ -208,7 +208,7 @@ def tactics_of(a):
 def _play(s, job, frames, seed, explore):
     return autoplay.play(s, job['profile'], frames, seed, walker=True, rearm=20, idle_over_turns=60,
                          pathing=True, explore=explore,
-                         leader=job.get('leader'), protect=job.get('protect'), keep_away=job.get('keep_away', 0), avoid=job.get('avoid'), focus=job.get('focus'), heal=job.get('heal'), escort=job.get('escort'), heal_item=job.get('heal_item'), leader_attack=job.get('leader_attack'), tactics=job.get('tactics'), root_epos=job.get('root_epos'), heal_at=job.get('guard_hp') and min(0.9, job['guard_hp'] + 0.3),
+                         leader=job.get('leader'), protect=job.get('protect'), keep_away=job.get('keep_away', 0), avoid=job.get('avoid'), focus=job.get('focus'), heal=job.get('heal'), escort=job.get('escort'), heal_item=job.get('heal_item'), leader_attack=job.get('leader_attack'), tactics=job.get('tactics'), root_epos=job.get('root_epos'), boost_floor=job.get('boost_floor'), heal_at=job.get('guard_hp') and min(0.9, job['guard_hp'] + 0.3),
                          watch=tuple([job['leader']] + list(job.get('protect') or ())) if job.get('watch_fall') else None)
 
 
@@ -384,6 +384,11 @@ def search(a):
             rs.write(addr, data)
         for _ in range(2):
             rs.step()
+    # the game re-derives in-battle attack/defence (max HP stays): hold the boosted values every turn
+    floor = memory_map.boost_floor(rs.read, units, [(int(x[2], 16), bytes.fromhex(x[3])) for x in rs.actions if x[1] == 'poke']) \
+        if boost_tag(a, h).startswith('boost') else {}
+    if floor:
+        print(f'boost floor: {len(floor)} force slots keep their boosted attack/defence', flush=True)
     root = unit_hp(rs.read, units)
     root_pos = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rs.read, units['force'], units.get('live'))}
     root_epos = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rs.read, units['enemies'], units.get('live'))}
@@ -401,7 +406,7 @@ def search(a):
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
-                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), focus=getattr(a, 'focus', None), max_deaths=getattr(a, 'max_deaths', None), zone_fatal=getattr(a, 'zone_fatal', None), target=getattr(a, 'target', None), advance=parse_advance(getattr(a, 'advance', None)), guard_hp=getattr(a, 'guard_hp', None), heal=getattr(a, 'heal', None), escort=getattr(a, 'escort', None), heal_item=getattr(a, 'heal_item', None), leader_attack=getattr(a, 'leader_attack', None), tactics=tactics_of(a), root_epos=root_epos, state_id=state_id, W=a.window, L=a.look,
+                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), focus=getattr(a, 'focus', None), max_deaths=getattr(a, 'max_deaths', None), zone_fatal=getattr(a, 'zone_fatal', None), target=getattr(a, 'target', None), advance=parse_advance(getattr(a, 'advance', None)), guard_hp=getattr(a, 'guard_hp', None), heal=getattr(a, 'heal', None), escort=getattr(a, 'escort', None), heal_item=getattr(a, 'heal_item', None), leader_attack=getattr(a, 'leader_attack', None), tactics=tactics_of(a), root_epos=root_epos, boost_floor=floor, state_id=state_id, W=a.window, L=a.look,
                   progress=getattr(a, 'progress', False), root_pos=root_pos,
                   root_active=root_active, root_flag_bits=common_fb)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)

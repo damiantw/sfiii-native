@@ -338,6 +338,29 @@ class BattleTurns(unittest.TestCase):
         self.assertNotIn(0x9000 + mm.UNIT_HP, w)
         self.assertEqual(sorted(dict(mm.boost_writes(rd, dict(force=0, enemies=0x9000), None, 3, 2, 2))), sorted([r + mm.UNIT_MAX_HP, r + mm.UNIT_ATK, r + mm.UNIT_HP]))
 
+    def test_boost_floor_hold(self):
+        mm = memory_map
+        raw = bytearray(mm.UNIT_STRIDE * mm.UNIT_COUNT)          # invented: force records 1 and 2
+        for k, nm in ((1, b'Hero'), (2, b'Mage')):
+            r = k * mm.UNIT_STRIDE
+            raw[r:r + 4] = nm
+            raw[r + mm.UNIT_FLAGS] = 0xC0
+            raw[r + mm.UNIT_ATK:r + mm.UNIT_ATK + 2] = bytes([60, 50])
+        rd = lambda a, n: bytes(raw[:n])
+        u = dict(force=0, enemies=0x9000)
+        pokes = [(mm.UNIT_STRIDE + mm.UNIT_ATK, bytes([200, 150])), (mm.UNIT_STRIDE + mm.UNIT_ATK, bytes([250, 250])),
+                 (2 * mm.UNIT_STRIDE + mm.UNIT_ATK, bytes([99, 99, 99])),       # an --assist poke: not a floor
+                 (mm.UNIT_STRIDE + mm.UNIT_HP, bytes([1, 0])), (0x9000 + mm.UNIT_ATK, bytes([9, 9]))]
+        fl = mm.boost_floor(rd, u, pokes)
+        self.assertEqual(fl, {1: (b'Hero', 250, 250)})
+        self.assertEqual(mm.boost_hold_writes(rd, u, fl), [(mm.UNIT_STRIDE + mm.UNIT_ATK, bytes([250, 250]))])
+        raw[mm.UNIT_STRIDE + mm.UNIT_ATK:mm.UNIT_STRIDE + mm.UNIT_ATK + 2] = bytes([250, 251])
+        self.assertEqual(mm.boost_hold_writes(rd, u, fl), [])                  # at or above the floor
+        raw[mm.UNIT_STRIDE + mm.UNIT_ATK] = 70
+        self.assertEqual(mm.boost_hold_writes(rd, u, fl), [(mm.UNIT_STRIDE + mm.UNIT_ATK, bytes([250, 251]))])
+        raw[mm.UNIT_STRIDE:mm.UNIT_STRIDE + 4] = b'Imp\0'                          # another unit in the slot
+        self.assertEqual(mm.boost_hold_writes(rd, u, fl), [])
+
     def test_push_terms(self):
         from sf3test import search
         from unittest import mock

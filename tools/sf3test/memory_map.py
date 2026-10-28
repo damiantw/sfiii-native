@@ -333,6 +333,39 @@ def boost_writes(read, units, state_base=None, hp=3.0, atk=2.0, dfn=2.0, size=0x
     return out
 
 
+def boost_floor(read, units, pokes):
+    """The --boost attack/defence floor, {force slot: (name, attack, defence)}, from the 2-byte
+    attack/defence pokes in `pokes` [(addr, bytes)] (the last one per slot) that land on a force record,
+    named as that record reads now. The game re-derives the in-battle attack and defence (Sc2 Ch6 on
+    2.000: poked to 250 at the root, read 61-93 again 140k VBlanks later) while max HP stays, so
+    boost_hold_writes puts them back during play."""
+    out = {}
+    raw = read(units['force'], UNIT_STRIDE * UNIT_COUNT)
+    for addr, data in pokes:
+        k, o = divmod(addr - units['force'], UNIT_STRIDE)
+        if len(data) != 2 or o != UNIT_ATK or not 0 <= k < UNIT_COUNT:
+            continue
+        name = raw[k * UNIT_STRIDE:k * UNIT_STRIDE + 12].split(b'\0')[0]
+        if name:
+            out[k] = (name, data[0], data[1])
+    return out
+
+
+def boost_hold_writes(read, units, floor):
+    """[(addr, bytes)] that lift each floor slot's in-battle attack and defence back to its
+    boost_floor values, for records that are still that unit (same name), on the field and a force
+    record; values above the floor are kept and nothing is written for a slot already at it."""
+    out = []
+    raw = read(units['force'], UNIT_STRIDE * UNIT_COUNT)
+    for k, (name, atk, dfn) in sorted(floor.items()):
+        e = raw[k * UNIT_STRIDE:(k + 1) * UNIT_STRIDE]
+        if e[:12].split(b'\0')[0] != name or not on_field(e, units.get('live')) or not looks_like_force(e, units.get('live')):
+            continue
+        if e[UNIT_ATK] < atk or e[UNIT_DEF] < dfn:
+            out.append((units['force'] + k * UNIT_STRIDE + UNIT_ATK, bytes([max(e[UNIT_ATK], atk), max(e[UNIT_DEF], dfn)])))
+    return out
+
+
 def fix_checksum(payload):
     p = bytearray(payload)
     p[0:4] = (len(p) - 8).to_bytes(4, 'big')

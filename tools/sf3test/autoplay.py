@@ -136,7 +136,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None, escort=None, heal_item=None, leader_attack=None, tactics=None, root_epos=None):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None, escort=None, heal_item=None, leader_attack=None, tactics=None, root_epos=None, boost_floor=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -170,7 +170,9 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     LEADER_REACH steps and never through the `avoid` zone, instead of only striking what is in reach.
     `tactics` (round 29, opt-in): dict(hold_until=N, ranged, casters, healers, item_attack slots), see
     aimed_turn and tactics.py; `root_epos` {enemy slot: (x, y)} at the search root marks enemies that
-    have not moved since as stationary (the --hold-until threats, the --protect heavy hitters)."""
+    have not moved since as stationary (the --hold-until threats, the --protect heavy hitters).
+    `boost_floor` (round 34, search --boost): memory_map.boost_floor slots whose in-battle attack and
+    defence are put back up each battle turn (the game re-derives them; Sc2 Ch6 lost the boost)."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     pol.pathing = pathing
@@ -269,6 +271,10 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
         if b and mm.get('units') and assist:
             for addr, data in memory_map.assist_writes(side.read, mm['units'],
                                                        enemy_hp=1 if assist == 'party+enemy1' else None):
+                side.write(addr, data)
+                pokes += 1
+        if b and mm.get('units') and boost_floor:
+            for addr, data in memory_map.boost_hold_writes(side.read, mm['units'], boost_floor):
                 side.write(addr, data)
                 pokes += 1
         if b and mm.get('units') and not idle_over:
