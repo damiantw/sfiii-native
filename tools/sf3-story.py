@@ -290,7 +290,7 @@ def drive(a):
         status = 'crash'
     reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
     header = dict(profile=a.profile, save=Path(start_save(a.saves, start)).name, record=start['id'],
-                  seed=a.seed if not a.cont else f"{h.get('seed')}+{a.seed}", assist=a.assist or 'none',
+                  seed=a.seed if not a.cont else f"{h.get('seed')}+{a.seed}", assist=a.assist or ((h.get('assist') or 'none') if a.cont else 'none'),
                   clock=a.clock, record_sha1=hashlib.sha1(start['record']['data']).hexdigest()[:16],
                   load=load, binary=sha_bin(a.saturn), end_vblank=end and end['vblank'],
                   end_ram_sha1=end and end['ram_sha1'], end_flags_sha1=end and end['flags_sha1'],
