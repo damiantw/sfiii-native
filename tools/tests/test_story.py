@@ -567,5 +567,34 @@ class StoryTest(unittest.TestCase):
         self.assertFalse(autoplay.is_hurt(read, 0x1000, 1, 0.2))
         self.assertFalse(autoplay.is_hurt(read, 0x1000, 0, 0.6))     # empty record
 
+
+class EndingGuardTest(unittest.TestCase):
+    """Round 33: a scenario clear save is never a drive start nor a goal to drive past (Sc3 Ch7:13
+    loads into the next playthrough; r8-r32 searched that new game by mistake)."""
+    def mod(self):
+        spec = importlib.util.spec_from_file_location('sf3_story_t', TOOLS / 'sf3-story.py')
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    def rec(self, rid, minutes, flags, m=1):
+        data = bytes(16) + (60 * 60 * minutes).to_bytes(4, 'big') + bytes(0x400)
+        return {'id': rid, 'record': {'data': data}, 'flags': bytes(flags), 'map': m, 'battle': 0, 'pt': minutes}
+
+    def test_ending_records(self):
+        m = self.mod()
+        self.assertTrue(m.is_ending('save:Sc3-Ch7:13'))
+        self.assertTrue(m.is_ending('save:3-Battle-22-to-End:27'))
+        self.assertFalse(m.is_ending('save:Sc3-Ch7:12'))
+        self.assertFalse(m.is_ending('save:Sc3-Ch7:3'))
+
+    def test_goal_list_stops_at_the_clear_save(self):
+        m = self.mod()
+        ts = [self.rec('save:Sc3-Ch7:12', 10, [1]), self.rec('save:Sc3-Ch7:13', 20, [3], 2),
+              self.rec('save:Sc3-Complete:01', 30, [7], 3)]
+        self.assertEqual([g['id'] for g in m.goal_list(ts, ts[0])], ['save:Sc3-Ch7:13'])
+        with self.assertRaises(SystemExit):
+            m.goal_list(ts, ts[1])
+
 if __name__ == '__main__':
     unittest.main()

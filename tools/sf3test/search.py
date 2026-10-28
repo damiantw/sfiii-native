@@ -239,6 +239,20 @@ def restore_alt(c, prev, common, run):
     return r, r.get("v") == c.get("v") and round(r["score"], 3) == round(c["score"], 3)
 
 
+NEW_GAME_DROP = 16
+
+
+def new_game(s, job):
+    """Round 33: the story-flag bits fell well below the root's (the opening movie or a new game
+    after a quit to the title, or the next playthrough after a clear save): a reset, never progress."""
+    fb = job.get('root_flag_bits')
+    if not fb:
+        return False
+    S = st()
+    have = S.story.bits(s.read(S.story.flag_addr(job['profile']), S.story.FLAG_HI - S.story.FLAG_LO))
+    return have < fb - NEW_GAME_DROP
+
+
 def candidate(job):
     """One branch: restore job['state'], play W (+ lookahead L). Runs in a worker process."""
     from saturnrecomp import agent
@@ -266,7 +280,7 @@ def candidate(job):
             s.step()
         reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
         m1 = metrics(unit_hp(s.read, units), job['root'], job['leader'], job.get('protect'))
-        m1.update(goal=bool(reached), reset=bool(p['resets']), left=left_battle(s.read, job, reached))
+        m1.update(goal=bool(reached), reset=bool(p['resets']) or new_game(s, job), left=left_battle(s.read, job, reached))
         if p.get('fell'):  # --watch-fall: a fall inside the window loses, even if revived by the end
             m1.update(leader_down=True, fell=p['fell'])
         if job.get('max_deaths') is not None and m1['deaths'] > job['max_deaths']:
@@ -304,7 +318,7 @@ def candidate(job):
             p2 = _play(s, job, job['L'], job['seed'] + 7919, 0.0)
             m2 = metrics(unit_hp(s.read, units), job['root'], job['leader'], job.get('protect'))
             r2 = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
-            m2.update(goal=bool(r2), reset=bool(p2['resets']), left=left_battle(s.read, job, r2))
+            m2.update(goal=bool(r2), reset=bool(p2['resets']) or new_game(s, job), left=left_battle(s.read, job, r2))
             if p2.get('fell'):
                 m2.update(leader_down=True, fell=p2['fell'])
             if battle_over(s.read, job, m2, S.end_hashes(s, job['profile']).get('flag_bits', 0)):

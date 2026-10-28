@@ -210,8 +210,20 @@ def fatal_lines(work):
     return out
 
 
+# round 33: each scenario ends at its clear save. Loading one starts the next playthrough (Sc3
+# Ch7:13 -> NG+ Flagship battle), so it is never a start or a goal to drive past: the story
+# line for acceptance stops there (Sc3 r8-r32 searched a new game from :13 by mistake).
+ENDINGS = ("3-Battle-22-to-End:27", "Sc1-COMPLETE:01", "Sc2-Ch6:14", "Sc3-Ch7:13")
+
+
+def is_ending(rid):
+    return any(rid == e or rid.endswith(":" + e) for e in ENDINGS)
+
+
 def goal_list(ts, start):
     i0 = ts.index(start)
+    if is_ending(start["id"]):
+        raise SystemExit(f"record {start['id']} is the scenario clear save: loading it starts a new game, not story progress")
     goals = [dict(t) for t in ts[i0 + 1:] if story.playtime(t['record']['data']) > story.playtime(start['record']['data'])]
     # only records that add story-flag bits are flag goals (end-of-battle and suspend saves often
     # carry the same flags as the start: those are proven by the battle outcome and map events)
@@ -228,11 +240,25 @@ def goal_list(ts, start):
         elif t['battle'] == 0 and t['map'] != last_map:
             kept.append(dict(t, map_goal=True))
         last_map = t['map']
-    return kept
+    end = next((i for i, g in enumerate(kept) if is_ending(g["id"])), None)
+    return kept if end is None else kept[:end + 1]
 
 
 def _stop_reset(sd):
     raise Done('reset')
+
+
+def _reload_same_line(sd, profile, start):
+    """Back at the title (game over, a quit): load the save again, but a quit that ends in the
+    opening movie or a NEW GAME is not the story line. When the loaded state has fewer story-flag
+    bits than the start record, the drive stops with status new-game (a failure, never progress)."""
+    ok = autoplay.reload_menu(sd, profile, 6500)
+    have = end_hashes(sd, profile).get('flag_bits')
+    want = sum(bin(x).count('1') for x in start['flags'])
+    if not ok or have is None or have < want - 16:
+        print(f'reload: flag bits {have} < start {want} (title, opening movie or new game)', flush=True)
+        raise Done('new-game')
+    return ok
 
 
 def drive(a):
@@ -268,7 +294,7 @@ def drive(a):
                 raise Done('no-load')
             s.loaded = load
         res = autoplay.play(s, a.profile, a.frames, a.seed, assist=a.assist, walker=True, rearm=20, idle_over_turns=60, pathing=a.pathing,
-                            reload=_stop_reset if a.no_reload else lambda sd: autoplay.reload_menu(sd, a.profile, 6500))
+                            reload=_stop_reset if a.no_reload else lambda sd: _reload_same_line(sd, a.profile, start))
     except Done as e:
         status = 'ok' if str(e) in ('frames', 'goal') else str(e)
     except (agent.RunEnded, agent.AgentError, BrokenPipeError, ConnectionResetError) as e:
