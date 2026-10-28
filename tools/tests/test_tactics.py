@@ -172,6 +172,20 @@ class TacticsTest(unittest.TestCase):
         turn(force, foe, leader=9, avoid=(10, 10, 3))
         self.assertEqual(tactics.md(force[2], (10, 13)), 1, force)
 
+    def test_retreat_never_ends_in_the_avoid_zone(self):
+        from sf3test import autoplay
+        free = autoplay.retreat_path((10, 10), [(10, 9)], set(), {}, reach=3)
+        end = (10, 10)
+        for d in free:
+            end = autoplay.step_of(end, d)
+        zone = (end[0], end[1], 1)
+        path = autoplay.retreat_path((10, 10), [(10, 9)], set(), {}, reach=3, avoid=zone)
+        q = (10, 10)
+        for d in path:
+            q = autoplay.step_of(q, d)
+        self.assertTrue(path)
+        self.assertGreater(abs(q[0] - zone[0]) + abs(q[1] - zone[1]), 1)
+
     def test_zone_fatal_scores_a_loss(self):
         from sf3test import search
         m = dict(leader_down=False, won=False, enemy_left=0.5, kills=1, force_left=0.5, deaths=0, leader=1.0, in_zone=1)

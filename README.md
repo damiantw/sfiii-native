@@ -380,7 +380,7 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
   - `--guard-hp`: the HP floor for those units
   - `--escort`: keep units next to a guest
   - `--avoid X,Y,R`: leave a trap zone
-  - `--avoid-all`: every unit, not only the leader and protected units, walks out of the `--avoid` zone
+  - `--avoid-all`: every unit, not only the leader and protected units, walks out of the `--avoid` zone, and a hurt unit backing away from enemies never ends its retreat inside it
   - `--zone-fatal [V]`: from VBlank V on (default 0), a window that ends with the leader or a protected unit in the `--avoid` zone loses instead of costing 3
   - `--keep-away`: stay clear of enemies
   - `--focus`: preferred targets

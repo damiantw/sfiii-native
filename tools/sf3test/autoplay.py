@@ -611,10 +611,11 @@ def plan_step(p, live, occupied, blocked, size=64, limit=6000, passable=frozense
 LEADER_SAFE = 0.6
 
 
-def retreat_path(p, live, allies, blocked, reach=5, size=64):
+def retreat_path(p, live, allies, blocked, reach=5, size=64, avoid=None):
     """Directions from `p` to the free tile within `reach` steps farthest from every live enemy
     (allies are walked through but not ended on, enemies and known-blocked edges are not
-    crossed); [] when no tile is farther than `p` itself."""
+    crossed); [] when no tile is farther than `p` itself. With `avoid` (x, y, r) it never ends in that zone
+    (v123, Sc2 Ch6: a hurt Medion backed away from the enemies into the blast tiles and stayed there)."""
     def dist(q):
         return min(abs(q[0] - e[0]) + abs(q[1] - e[1]) for e in live) if live else 0
     enemies = set(live)
@@ -630,6 +631,8 @@ def retreat_path(p, live, allies, blocked, reach=5, size=64):
                     continue
                 seen[r] = seen[q] + [d]
                 nxt.append(r)
+                if avoid and abs(r[0] - avoid[0]) + abs(r[1] - avoid[1]) <= avoid[2]:
+                    continue
                 if r not in allies and (dist(r), -depth) > best_key:
                     best, best_key = seen[r], (dist(r), -depth)
         frontier = nxt
@@ -987,7 +990,7 @@ def aimed_turn(side, units, pol, press):
                     break
                 path = retreat_path(here, [av[:2]] if in_zone else live,
                                     {v for k, v in pos().items() if k != me}, pol.blocked,
-                                    reach=max(1, (8 if in_zone else 5) - walked))
+                                    reach=max(1, (8 if in_zone else 5) - walked), avoid=av if tac.get("avoid_all") and not in_zone else None)
                 replan = False
                 for i, d in enumerate(path):
                     q = pos().get(me)
