@@ -631,7 +631,7 @@ def retreat_path(p, live, allies, blocked, reach=5, size=64, avoid=None):
                     continue
                 seen[r] = seen[q] + [d]
                 nxt.append(r)
-                if avoid and abs(r[0] - avoid[0]) + abs(r[1] - avoid[1]) <= avoid[2]:
+                if tactics.in_avoid(r, avoid):
                     continue
                 if r not in allies and (dist(r), -depth) > best_key:
                     best, best_key = seen[r], (dist(r), -depth)
@@ -652,7 +652,7 @@ def leader_target(p, targets, occupied, avoid=None, reach=LEADER_REACH):
             d = abs(q[0] - p[0]) + abs(q[1] - p[1])
             if d > reach or (q in occupied and q != p):
                 continue
-            if avoid and abs(q[0] - avoid[0]) + abs(q[1] - avoid[1]) <= avoid[2]:
+            if tactics.in_avoid(q, avoid):
                 continue
             if best is None or d < best[0]:
                 best = (d, (tx, ty))
@@ -923,7 +923,7 @@ def aimed_turn(side, units, pol, press):
     # left in it, not only the leader. --avoid-all: any unit that starts its turn in the --avoid
     # zone plays the cautious turn (walks out, strikes only what is in reach)
     av0 = getattr(pol, "avoid", None) if tac.get("avoid_all") else None
-    zone_all = bool(av0 and me in before and abs(before[me][0] - av0[0]) + abs(before[me][1] - av0[1]) <= av0[2])
+    zone_all = bool(av0 and me in before and tactics.in_avoid(before[me], av0))
     if me == lead or me in (getattr(pol, 'protect', None) or ()) or zone_all:
         press(('B',), 6)
         press((), 20)
@@ -949,7 +949,7 @@ def aimed_turn(side, units, pol, press):
         near_threat = bool(ka and me in now and threats and
                            min(abs(now[me][0] - e[0]) + abs(now[me][1] - e[1]) for e in threats) <= ka)
         av = getattr(pol, 'avoid', None)
-        in_zone = bool(av and me in now and abs(now[me][0] - av[0]) + abs(now[me][1] - av[1]) <= av[2])
+        in_zone = bool(av and me in now and tactics.in_avoid(now[me], av))
         las = getattr(pol, "leader_attack", None)
         if las and pol.pathing and me == lead and me in now and not in_zone:
             # v90 (Sc2 Ch6 Garvin fight, probe ap90 at 458k): Medion, cautious, stood among four Giga
@@ -988,9 +988,9 @@ def aimed_turn(side, units, pol, press):
                 here = pos().get(me)
                 if here is None:
                     break
-                path = retreat_path(here, [av[:2]] if in_zone else live,
+                path = retreat_path(here, [tactics.avoid_centre(av)] if in_zone else live,
                                     {v for k, v in pos().items() if k != me}, pol.blocked,
-                                    reach=max(1, (8 if in_zone else 5) - walked), avoid=av if tac.get("avoid_all") and not in_zone else None)
+                                    reach=max(1, (8 if in_zone else 5) - walked), avoid=av if (tac.get("avoid_all") and not in_zone) or (av and len(av) == 4) else None)
                 replan = False
                 for i, d in enumerate(path):
                     q = pos().get(me)
@@ -1051,8 +1051,7 @@ def aimed_turn(side, units, pol, press):
             # Sc3 final room had no path with allies as walls, so every unit held for 120k VBlanks)
             shut = set()
             if lead_attack and getattr(pol, "avoid", None):  # --leader-attack: never path through the zone
-                zx, zy, zr = pol.avoid
-                shut = {(zx + i, zy + j) for i in range(-zr, zr + 1) for j in range(-zr, zr + 1) if abs(i) + abs(j) <= zr}
+                shut = {(i, j) for i in range(64) for j in range(64) if tactics.in_avoid((i, j), pol.avoid)}
             d = plan_step(p, goal, allies | set(live) | shut, pol.blocked, passable=allies - shut, goals=goal_tiles)
             if d is None:
                 break

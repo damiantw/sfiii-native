@@ -186,6 +186,15 @@ class TacticsTest(unittest.TestCase):
         self.assertTrue(path)
         self.assertGreater(abs(q[0] - zone[0]) + abs(q[1] - zone[1]), 1)
 
+    def test_avoid_zone_circle_and_rectangle(self):
+        from sf3test import tactics
+        self.assertTrue(tactics.in_avoid((34, 37), (36, 41, 7)))
+        self.assertFalse(tactics.in_avoid((35, 34), (36, 41, 7)))
+        self.assertTrue(tactics.in_avoid((33, 10), (33, 0, 40, 63)))
+        self.assertFalse(tactics.in_avoid((32, 38), (33, 0, 40, 63)))
+        self.assertFalse(tactics.in_avoid((1, 1), None))
+        self.assertEqual(tactics.avoid_centre((33, 0, 40, 63)), (36, 31))
+
     def test_zone_fatal_scores_a_loss(self):
         from sf3test import search
         m = dict(leader_down=False, won=False, enemy_left=0.5, kills=1, force_left=0.5, deaths=0, leader=1.0, in_zone=1)

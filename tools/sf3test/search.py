@@ -81,9 +81,8 @@ def threat(read, units, guarded, reach):
 
 def in_zone(read, units, guarded, zone):
     """--avoid X,Y,R: how many guarded force slots end the window within R tiles of (X, Y); each costs 3."""
-    x0, y0, r = zone
     fo = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(read, units['force'], units.get('live'))}
-    return sum(1 for g in guarded if g in fo and abs(fo[g][0] - x0) + abs(fo[g][1] - y0) <= r)
+    return sum(1 for g in guarded if g in fo and autoplay.tactics.in_avoid(fo[g], zone))
 
 
 def low_hp(units_now, root, guarded, share):

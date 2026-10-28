@@ -18,6 +18,21 @@ def md(a, b):
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
 
+def in_avoid(q, av):
+    """--avoid zone membership: (x, y, r) is the tiles within r steps of x,y; (x0, y0, x1, y1) is that
+    rectangle (v126, Sc2 Ch6: the force rides the war machine, its deck shifts 4 tiles down the map,
+    and every unit on it at x33-40 dies at ~504.7k, so the zone is a column, not a circle)."""
+    if not av:
+        return False
+    if len(av) == 4:
+        return av[0] <= q[0] <= av[2] and av[1] <= q[1] <= av[3]
+    return md(q, av[:2]) <= av[2]
+
+
+def avoid_centre(av):
+    return tuple(av[:2]) if len(av) == 3 else ((av[0] + av[2]) // 2, (av[1] + av[3]) // 2)
+
+
 def track_still(still, enemies, root_pos=None):
     """Update `still` {slot: ((x, y), turns seen there)} from `enemies` [(slot, x, y, flags, hp)] and
     return the live (HP above 1) slots seen STILL_TURNS turns on one tile. An enemy first seen on its
@@ -97,7 +112,7 @@ def safe_target(p, targets, occupied, heavy, avoid=None, reach=HOLD_MOVE):
     for t in targets:
         ok = {q for q in ring_tiles(t, 1, set(occupied) - {p}) if md(p, q) <= reach
               and not any(md(q, h) <= 1 for h in heavy)
-              and not (avoid and md(q, avoid[:2]) <= avoid[2])}
+              and not in_avoid(q, avoid)}
         if ok:
             d = min(md(p, q) for q in ok)
             if best is None or d < best[0]:

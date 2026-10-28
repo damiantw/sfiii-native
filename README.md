@@ -379,7 +379,7 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
   - `--leader` and `--protect`: units whose fall loses the battle. Protected units avoid danger (they retreat when hurt, in the `--avoid` zone or within `--keep-away`) but still attack a target they can hit without ending next to a stationary enemy; `--passive` slots never attack
   - `--guard-hp`: the HP floor for those units
   - `--escort`: keep units next to a guest
-  - `--avoid X,Y,R`: leave a trap zone
+  - `--avoid X,Y,R` or `--avoid X0,Y0,X1,Y1`: leave a trap zone (the tiles within R of X,Y, or that rectangle)
   - `--avoid-all`: every unit, not only the leader and protected units, walks out of the `--avoid` zone, and a hurt unit backing away from enemies never ends its retreat inside it
   - `--zone-fatal [V]`: from VBlank V on (default 0), a window that ends with the leader or a protected unit in the `--avoid` zone loses instead of costing 3
   - `--keep-away`: stay clear of enemies
