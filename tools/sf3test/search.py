@@ -339,6 +339,14 @@ def search(a):
     rs.pad(())
     for _ in range(30):
         rs.step()
+    boost = getattr(a, 'boost', None)
+    if boost and not str(h.get('assist', 'none')).startswith('boost'):
+        # test-only cheat (--boost H A D): scale the on-field force's max HP, attack and defence once
+        # here (battle table and party records); logged as pokes, so the segment says assisted
+        for addr, data in memory_map.boost_writes(rs.read, units, mm['state_base'], *boost):
+            rs.write(addr, data)
+        for _ in range(2):
+            rs.step()
     root = unit_hp(rs.read, units)
     root_pos = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rs.read, units['force'], units.get('live'))}
     root_epos = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rs.read, units['enemies'], units.get('live'))}
@@ -521,13 +529,23 @@ def finalize(a, out):
     return True
 
 
+def boost_tag(a, h):
+    """The segment header's assist value: 'boost-H-A-D' for a --boost run (or one continued from
+    a boosted segment), else 'none'."""
+    prev = str((h or {}).get('assist', 'none'))
+    if prev.startswith('boost'):
+        return prev
+    b = getattr(a, 'boost', None)
+    return 'boost-' + '-'.join(f'{x:g}' for x in b) if b else 'none'
+
+
 def write_segment(a, out, start, load, h, lv, S):
     from . import story
     seed = f"search-k{a.k}-w{a.window}-l{a.look}-s{a.seed}"
     if a.cont:
         seed = f"{h.get('seed')}+{seed}"
     header = dict(profile=a.profile, save=Path(S.start_save(a.saves, start)).name, record=start['id'], seed=seed,
-                  assist='none', clock=a.clock, record_sha1=hashlib.sha1(start['record']['data']).hexdigest()[:16],
+                  assist=boost_tag(a, h), clock=a.clock, record_sha1=hashlib.sha1(start['record']['data']).hexdigest()[:16],
                   load=load, binary=S.sha_bin(a.saturn), end_vblank=lv['v'], end_ram_sha1=lv['end']['ram_sha1'],
                   end_flags_sha1=lv['end']['flags_sha1'], reached=','.join(lv.get('reached') or []) or '-')
     (out / 'segment.txt').write_text(story.segment_text(header, lv['actions']))

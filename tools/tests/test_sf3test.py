@@ -312,6 +312,39 @@ class BattleTurns(unittest.TestCase):
         w = dict(memory_map.assist_writes(rd, dict(force=0, enemies=0x1000), enemy_hp=1))
         self.assertEqual(w[0x1000 + mm.UNIT_HP], b'\x00\x01')
 
+    def test_boost_writes(self):
+        mm = memory_map
+        raw = bytearray(mm.UNIT_STRIDE * mm.UNIT_COUNT)          # invented: force record 1 and its party copy
+        r = mm.UNIT_STRIDE
+        raw[r + mm.UNIT_FLAGS] = 0xC0
+        raw[r:r + 4] = b'Hero'
+        raw[r + mm.UNIT_MAX_HP:r + mm.UNIT_MAX_HP + 2] = (40).to_bytes(2, 'big')
+        raw[r + mm.UNIT_HP:r + mm.UNIT_HP + 2] = (30).to_bytes(2, 'big')
+        raw[r + mm.UNIT_ATK:r + mm.UNIT_ATK + 2] = bytes([50, 200])
+        blk = bytearray(0x400)
+        blk[0x100:0x104] = b'Hero'
+        blk[0x110:0x112] = (40).to_bytes(2, 'big')
+        blk[0x114:0x116] = bytes([20, 30])
+        blk[0x182:0x184] = (40).to_bytes(2, 'big')
+        blk[0x185:0x187] = bytes([50, 40])
+        rd = lambda a, n: bytes(raw[:n]) if a == 0 else bytes(blk[:n])
+        w = dict(mm.boost_writes(rd, dict(force=0, enemies=0x9000), 0x5000, 3, 2, 2, size=0x400))
+        self.assertEqual(w[r + mm.UNIT_MAX_HP], (120).to_bytes(2, 'big'))
+        self.assertEqual(w[r + mm.UNIT_HP], (120).to_bytes(2, 'big'))
+        self.assertEqual(w[r + mm.UNIT_ATK], bytes([100, 250]))           # capped at 250
+        self.assertEqual(w[0x5100 + 0x14], bytes([40, 60]))                 # party base attack/defence
+        self.assertEqual(w[0x5100 + mm.UNIT_ATK], bytes([70, 70]))          # equipment bonus kept
+        self.assertEqual(w[0x5100 + mm.UNIT_HP], (120).to_bytes(2, 'big'))
+        self.assertNotIn(0x9000 + mm.UNIT_HP, w)
+        self.assertEqual(sorted(dict(mm.boost_writes(rd, dict(force=0, enemies=0x9000), None, 3, 2, 2))), sorted([r + mm.UNIT_MAX_HP, r + mm.UNIT_ATK, r + mm.UNIT_HP]))
+
+    def test_boost_tag(self):
+        from sf3test import search
+        import types
+        self.assertEqual(search.boost_tag(types.SimpleNamespace(boost=None), {}), 'none')
+        self.assertEqual(search.boost_tag(types.SimpleNamespace(boost=[3.0, 2.0, 2.5]), {}), 'boost-3-2-2.5')
+        self.assertEqual(search.boost_tag(types.SimpleNamespace(boost=None), dict(assist='boost-3-2-2')), 'boost-3-2-2')
+
     def test_player_tile(self):
         mm = memory_map
         self.assertEqual(mm.player_tile(0x04900000, 0x01B00000), (36, 13))

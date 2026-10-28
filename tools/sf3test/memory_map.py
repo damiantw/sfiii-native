@@ -294,6 +294,45 @@ def assist_writes(read, units, enemy_hp=None, hp=999, stat=99, move=12):
     return out
 
 
+def boost_writes(read, units, state_base=None, hp=3.0, atk=2.0, dfn=2.0, size=0x6000):
+    """Test-only cheat (never on by default; sf3-story.py search --boost): [(addr, bytes)] that scale
+    every on-field force unit's max HP (to at most 999, current HP refilled unless 0) by `hp` and its
+    attack and defence by `atk` / `dfn` (at most 250), in the battle table and, when `state_base`
+    is given, in the party record with the same name and max HP in the save block there (base
+    attack/defence at +0x14/+0x15), so the change also outlasts the battle."""
+    out = []
+    raw = read(units['force'], UNIT_STRIDE * UNIT_COUNT)
+    blk = read(state_base, size) if state_base is not None else b''
+    for k in range(UNIT_COUNT):
+        e = raw[k * UNIT_STRIDE:(k + 1) * UNIT_STRIDE]
+        if not on_field(e, units.get('live')) or not looks_like_force(e, units.get('live')):
+            continue
+        mh = int.from_bytes(e[UNIT_MAX_HP:UNIT_MAX_HP + 2], 'big')
+        mh2 = min(999, int(mh * hp))
+        cur = int.from_bytes(e[UNIT_HP:UNIT_HP + 2], 'big')
+        a = units['force'] + k * UNIT_STRIDE
+        ad = [min(250, int(e[UNIT_ATK] * atk)), min(250, int(e[UNIT_DEF] * dfn))]
+        out += [(a + UNIT_MAX_HP, mh2.to_bytes(2, 'big')), (a + UNIT_ATK, bytes(ad))]
+        if cur:
+            out.append((a + UNIT_HP, mh2.to_bytes(2, 'big')))
+        name = e[:12].split(b'\0')[0]
+        if not name or not blk:
+            continue
+        i = blk.find(name + b'\0')
+        while i >= 0:
+            p = blk[i:i + UNIT_STRIDE]
+            if len(p) == UNIT_STRIDE and int.from_bytes(p[UNIT_MAX_HP:UNIT_MAX_HP + 2], 'big') == mh:
+                b = state_base + i
+                base = [min(250, int(p[0x14] * atk)), min(250, int(p[0x15] * dfn))]
+                cur2 = [min(250, p[UNIT_ATK] + base[0] - p[0x14]), min(250, p[UNIT_DEF] + base[1] - p[0x15])]
+                out += [(b + UNIT_MAX_HP, mh2.to_bytes(2, 'big')), (b + 0x14, bytes(base)), (b + UNIT_ATK, bytes(cur2))]
+                if int.from_bytes(p[UNIT_HP:UNIT_HP + 2], 'big'):
+                    out.append((b + UNIT_HP, mh2.to_bytes(2, 'big')))
+                break
+            i = blk.find(name + b'\0', i + 1)
+    return out
+
+
 def fix_checksum(payload):
     p = bytearray(payload)
     p[0:4] = (len(p) - 8).to_bytes(4, 'big')
