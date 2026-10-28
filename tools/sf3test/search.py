@@ -94,6 +94,27 @@ def low_hp(units_now, root, guarded, share):
                for g in guarded)
 
 
+def push_terms(read, units, job):
+    """--target E W: W times the share of enemy slot E's root HP taken (Sc2 Ch6: Garvin, enemy 4,
+    360 HP, never hit in any run). --advance X,Y SLOT...: minus 0.05 per tile between each live
+    listed force slot and (X, Y) (the inside team stood at y 9-17 while the guards waited near 15,20)."""
+    bonus = 0.0
+    if job.get('target'):
+        e, w = int(job['target'][0]), float(job['target'][1])
+        now = unit_hp(read, units)['enemies']
+        if e in now:                     # max HP from the table: a boss can join after the root
+            hp, mx = now[e]
+            top = max(mx, (job['root']['enemies'].get(e) or (0, 0))[1], 1)
+            bonus += w * (1 - max(0, min(hp, top)) / top)
+        elif e in job['root']['enemies']:  # gone from the field since the root: fallen
+            bonus += w
+    if job.get('advance'):
+        (x, y), slots = job['advance']
+        fo = {k: (a, b) for k, a, b, f, hp in memory_map.read_units(read, units['force'], units.get('live')) if hp > 0}
+        bonus -= 0.05 * sum(abs(fo[k][0] - x) + abs(fo[k][1] - y) for k in slots if k in fo)
+    return bonus
+
+
 def score(m):
     if m.get('goal'):
         return 1e6
@@ -291,6 +312,8 @@ def candidate(job):
         else:
             m2 = m1
         res.update(m_look=m2, score=score(m1) if m1.get('goal') or score(m1) <= -1e6 else score(m2))
+        if (job.get('target') or job.get('advance')) and -1e6 < res['score'] < 1e5:
+            res['score'] += push_terms(s.read, units, job)
         if job.get('progress') and res['score'] > -1e6:
             res['score'] += 1000 * m1['new_maps'] + 10 * m1['flag_bits'] + 2 * m1['spread']
     except Exception as e:
@@ -364,7 +387,7 @@ def search(a):
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
-                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), focus=getattr(a, 'focus', None), max_deaths=getattr(a, 'max_deaths', None), zone_fatal=getattr(a, 'zone_fatal', None), guard_hp=getattr(a, 'guard_hp', None), heal=getattr(a, 'heal', None), escort=getattr(a, 'escort', None), heal_item=getattr(a, 'heal_item', None), leader_attack=getattr(a, 'leader_attack', None), tactics=tactics_of(a), root_epos=root_epos, state_id=state_id, W=a.window, L=a.look,
+                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), focus=getattr(a, 'focus', None), max_deaths=getattr(a, 'max_deaths', None), zone_fatal=getattr(a, 'zone_fatal', None), target=getattr(a, 'target', None), advance=parse_advance(getattr(a, 'advance', None)), guard_hp=getattr(a, 'guard_hp', None), heal=getattr(a, 'heal', None), escort=getattr(a, 'escort', None), heal_item=getattr(a, 'heal_item', None), leader_attack=getattr(a, 'leader_attack', None), tactics=tactics_of(a), root_epos=root_epos, state_id=state_id, W=a.window, L=a.look,
                   progress=getattr(a, 'progress', False), root_pos=root_pos,
                   root_active=root_active, root_flag_bits=common_fb)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
@@ -527,6 +550,14 @@ def finalize(a, out):
     seg.write_text(story.segment_text(h, actions))
     print(f"search: end hashes from the straight replay (ram {ram.group(1)}, search had {h_old})", flush=True)
     return True
+
+
+def parse_advance(v):
+    """--advance X,Y SLOT... -> ((X, Y), [SLOT...]), or None."""
+    if not v:
+        return None
+    x, y = (int(t) for t in v[0].split(','))
+    return (x, y), [int(t) for t in v[1:]]
 
 
 def boost_tag(a, h):

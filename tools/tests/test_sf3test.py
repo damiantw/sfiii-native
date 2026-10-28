@@ -338,6 +338,21 @@ class BattleTurns(unittest.TestCase):
         self.assertNotIn(0x9000 + mm.UNIT_HP, w)
         self.assertEqual(sorted(dict(mm.boost_writes(rd, dict(force=0, enemies=0x9000), None, 3, 2, 2))), sorted([r + mm.UNIT_MAX_HP, r + mm.UNIT_ATK, r + mm.UNIT_HP]))
 
+    def test_push_terms(self):
+        from sf3test import search
+        from unittest import mock
+        self.assertEqual(search.parse_advance(['15,20', '22', '28']), ((15, 20), [22, 28]))
+        self.assertIsNone(search.parse_advance(None))
+        job = dict(root=dict(force={}, enemies={4: (360, 360)}), target=['4', '6'], advance=((15, 20), [22, 28]))
+        hp = dict(force={}, enemies={4: (90, 360)})
+        fo = [(22, 15, 17, 0, 40), (28, 12, 20, 0, 0), (30, 0, 0, 0, 50)]   # 28 fallen: not counted
+        with mock.patch.object(search, 'unit_hp', return_value=hp), mock.patch.object(search.memory_map, 'read_units', return_value=fo):
+            self.assertAlmostEqual(search.push_terms(None, dict(force=0), job), 6 * 0.75 - 0.05 * 3)
+            hp['enemies'] = {}
+            self.assertAlmostEqual(search.push_terms(None, dict(force=0), dict(job, advance=None)), 6)
+            job['root']['enemies'] = {}
+            self.assertEqual(search.push_terms(None, dict(force=0), dict(job, advance=None)), 0)
+
     def test_boost_tag(self):
         from sf3test import search
         import types

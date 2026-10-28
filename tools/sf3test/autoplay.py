@@ -1036,6 +1036,10 @@ def aimed_turn(side, units, pol, press):
         press((), 20)
     if pol.pathing and not cautious and not hold_back:
         fails = 0
+        # a failed step late in the move is usually the end of the move range, not a wall: close it
+        # for this turn only (round 33, Sc2 Ch6 probe/p132a: such range ends at y 16-17 piled up in
+        # pol.blocked into a closed line, and the inside team stood still south of the gate)
+        turn_edges = {}
         for _ in range(16):
             now = pos()
             if me not in now:                      # the mover left the roster mid-turn (fell, withdrew)
@@ -1052,7 +1056,7 @@ def aimed_turn(side, units, pol, press):
             shut = set()
             if lead_attack and getattr(pol, "avoid", None):  # --leader-attack: never path through the zone
                 shut = {(i, j) for i in range(64) for j in range(64) if tactics.in_avoid((i, j), pol.avoid)}
-            d = plan_step(p, goal, allies | set(live) | shut, pol.blocked, passable=allies - shut, goals=goal_tiles)
+            d = plan_step(p, goal, allies | set(live) | shut, {**pol.blocked, **turn_edges}, passable=allies - shut, goals=goal_tiles)
             if d is None:
                 break
             press((pad_for(d, turn),), 8)
@@ -1062,7 +1066,10 @@ def aimed_turn(side, units, pol, press):
                 pol.blocked.pop((p, step_of(p, d)), None)
             else:                                  # wall, cliff or the end of the move range
                 q = step_of(p, d)                  # early in the move it is not the range's end
-                pol.blocked[(p, q)] = pol.blocked.get((p, q), 0) + (2 if steps <= 2 else 1)
+                if steps <= 2:
+                    pol.blocked[(p, q)] = pol.blocked.get((p, q), 0) + 2
+                else:
+                    turn_edges[(p, q)] = 2
                 fails += 1
     for _ in range(0 if pol.pathing or cautious or hold_back else 10):
         p = pos().get(me)
