@@ -131,7 +131,7 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser(__doc__)
     p.add_argument('--cue',type=Path,required=True)
     p.add_argument('--work',type=Path,required=True)
-    p.add_argument('--scenario',type=int,choices=[1,2,3],required=True)
+    p.add_argument('--scenario',type=int,choices=[1,2,3,4],required=True)
     a = p.parse_args()
     try:
         prepare(a.cue,a.work,a.scenario)

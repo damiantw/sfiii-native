@@ -37,11 +37,12 @@ class PortableTests(unittest.TestCase):
                 for profile in list(profiles)+[old for old,new in LEGACY_PROFILE_IDS.items() if new in profiles]:
                     ready={'build_id':'synthetic-package','profile_id':profile,'executable_sha256':worker.common.sha(build/'saturn')}
                     (data/'desktop-ready.json').write_text(json.dumps(ready))
-                    for selected in range(3):
+                    for selected in range(len(launcher.PROFILES)):
                         form.active=selected
                         with self.subTest(prepared=profile,selected=selected),patch.object(launcher,'PAYLOAD',payload):
                             self.assertEqual(form.ready(),selected==index)
-            self.assertEqual(len(set(launcher.DATA_FOLDERS)),3)
+            self.assertEqual(len(set(launcher.DATA_FOLDERS)),len(launcher.PROFILES))
+            self.assertEqual(len(launcher.PROFILES),4)
 
     def test_every_registered_profile_has_exactly_one_launcher_slot(self):
         import launcher_posix as launcher

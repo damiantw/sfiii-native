@@ -134,7 +134,7 @@ def prepare(cue, work, scenario=None):
         cue = checked_disc(cue)
         profile = disc_revision(cue,work)
         if scenario is not None and profile['scenario'] != scenario:
-            raise ValueError('The selected image belongs to Scenario '+str(profile['scenario'])+'. Choose that game in the launcher first.')
+            raise ValueError('The selected image belongs to '+('the Premium Disc' if profile['scenario'] == 4 else 'Scenario '+str(profile['scenario']))+'. Choose that game in the launcher first.')
         if (work/'game.json').exists():
             previous = json.loads((work/'game.json').read_text())
             old_profile = disc_revision(previous['cue'])
@@ -201,7 +201,7 @@ def prepare(cue, work, scenario=None):
 def main():
     p = argparse.ArgumentParser(__doc__)
     p.add_argument('--cue',type=Path,required=True);p.add_argument('--work',type=Path,required=True)
-    p.add_argument('--scenario',type=int,choices=[1,2,3])
+    p.add_argument('--scenario',type=int,choices=[1,2,3,4])
     a = p.parse_args()
     try:prepare(a.cue,a.work,a.scenario);return 0
     except Exception as error:

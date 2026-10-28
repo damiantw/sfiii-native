@@ -224,11 +224,7 @@ Results on Linux x86-64 (Debian 13, clang 19, `tools/windows.cmake` host, headle
 
 There were no crashes, hangs, or fatal or unresolved-call messages in the run logs. The audit's remaining "undefined" discovery findings in configured modules (X021/X022/X032, and X019 `060A0000` on Sc3) are the same as on the upstream baseline. This is a **boot check only**. Battles, saves, scene coverage and the routes in [testing-plan.md](testing-plan.md) are not validated yet.
 
-**Premium Disc (6106979 V1.000).** Not done. The patched content id is `a5976aa8…0ac2`. It needs:
-- a fourth launcher slot and data folder, in both launchers and in `prepare*.py --scenario`;
-- a base profile from scratch: its load bases, `model_bases`, BOOT seeds and stack-return sites (there is no existing profile to copy);
-- a full module audit with `--require-complete`;
-- save-format handling, if it uses one.
+**Premium Disc (6106979 V1.000).** Registered later as an experimental profile; see [Premium Disc V25.1](#premium-disc-v251-experimental).
 
 ## Add-on profiles (V25.1 + V25+)
 
@@ -266,20 +262,48 @@ Gameplay, each route run on the add-on disc and, as a twin, on the V25.1 disc wi
 
 Not validated yet: full playthroughs, endings and saves written on add-on discs being read by V25.1 builds (or the reverse).
 
+## Premium Disc V25.1 (experimental)
+
+Profile `premium-disc-translation-v25_1` (`profiles/premium-disc-v25_1.json`): the Redump Premium Disc (6106979 V1.000, redump.org/disc/28747) patched by `tools/sf3patch` with the **default V25.1 selection**. Content id `a5976aa8…0ac2`. The V25+ add-on selection gives a different id and is not registered. The launchers have a fourth slot (data folder `Premium-Disc-v25_1`, Windows `Game-Premium-Disc-v25_1`) and `prepare*.py --scenario 4`.
+
+**What is on the disc.** 817 files: `1ST.BIN` (BOOT, loaded at 06004000), program modules `X001`–`X049` (all differ from Sc1–3 except `X004`), 28 `X1*` scene programs (premium battles `X1BTLP01`–`10` and `X1BTLPRE`, gallery `X1ILLUST`, model viewer `X1MOVSEL`, menus, ending/epilogue), `X5*` battle modules, `X2ST*` stages, about 410 `X8PC*` pictures, CPK movies and `EFFECT.BIN` (72 effect chunks of 0x8000). It is a Scenario 3-era engine: the BOOT loader, wait and stack-return sites are at the Sc3 addresses.
+
+**How the profile was made** (no disc bytes in the repository):
+
+- BOOT: 38 seeds mapped from the Sc3/Sc2 V25.1 seeds by unique byte matches (seven relocated by -0x2C); stack-return sites unchanged.
+- `scene_base` 0605E000: every `X1*` export veneer lands inside its image at that base.
+- Module bases: a static scan of loader calls (file id in r4, destination in r5; the file id is the ISO root-directory index + 3) gives the destination of every listed module. `X046` comes from the `X001` load table at 060F63C0. Whole-image CRC matches in native runs confirm `X002`, `X003`, `X005`, `X013`, `X015`, `X019`, `X021`, `X022`, `X032` and `X039`. Each module carries its own evidence string.
+- `EFFECT.BIN`: the `X014` effect loader matches the Sc3 one (index × 0x8000 into 06048D00).
+- `X025` is not loaded as code on this disc (its id is passed to an `X003` data routine) and is left out. The audit lists it, with `X004`, as an entry-review item.
+
+Results on Linux x86-64 (Debian 13, clang 19, headless, software rendering), 2026-10-28, `SF3_DISPATCH_AUDIT=1`:
+
+| Modules | Functions | Emission check | Unresolved indirect sites | Review items |
+|---|---|---|---|---|
+| 134 | 67134 | 11825 entries, 0 missing | 1147 | X004, X025 |
+
+- Boot: intro movie, then the PREMIUM DISC title (Translation V25.1), then the attract movie. START opens the main menu.
+- Models (3D viewer), Images (gallery and full pictures), Videos (trailer movie), Sounds (sound test) and Records all work.
+- Battles needs a Scenario 3 COMPLETE record. With one it loads the record, then member selection, then a temple battle with combat and the status, magic and item menus.
+- Records runs Gabriel and Fey through questions and naming every character, then saves. With a Scenario 3 record on the internal memory the game reports "Insufficient memory" there (one 24344-byte record fills it) and saves to the cartridge. The record is a Scenario 3 record, `SFORCE33_01`. `desktop/shared_saves.py` therefore treats Scenario 3 records as the Premium Disc's own after a native state load.
+- Random-input fuzz: three menu runs and three battle runs of about 30000 vblanks each, and a 24000-vblank run from power-on. None logged a fatal error, an unresolved call or a dispatch-audit mismatch.
+
+This is a smoke test, not a validation. There is no coverage measurement and not every battle has been run.
+
 ## Prioritized roadmap
 
-1. **Profiles for the latest-translation-patched Sc1, Sc2, Sc3, then the Premium Disc.** Sc1/Sc2/Sc3 default V25.1 profiles are in (boot-checked on Linux); the Premium Disc and gameplay routes remain.
+1. **Profiles for the latest-translation-patched Sc1, Sc2, Sc3, then the Premium Disc.** Sc1/Sc2/Sc3 default V25.1 profiles are in (boot-checked on Linux), and the Premium Disc is in as experimental; gameplay routes remain.
    - Sc1 USA (MK-81383) plus SF3TRANS latest, alongside the existing unpatched V1.001.
    - Sc2 latest on **both** bases (V1.003 and V2.000), replacing v24 as the default.
    - Sc3 V25.1 plus post-release updates. Recheck BOOT `stack_return_calls` because of the 1ST.BIN music-resume fix.
-   - Premium Disc (6106979) last; it has no profile at all yet.
+   - Premium Disc (6106979): experimental profile in, smoke-tested only (see [Premium Disc V25.1](#premium-disc-v251-experimental)).
    - Each needs: the audit with `--require-complete`, seeds reviewed for changed code files, a headless boot check, the scene sweep and differential layers from [testing-plan.md](testing-plan.md), and the launcher/allowlist changes listed above.
 2. **Scenario 1 real-disc playability on Linux** (the best-covered scenario upstream): run the existing local transition routes and native-state validators on Linux and compare frame/video hashes with Windows results where available.
 3. **Linux usability blockers**:
    - an SDL-window (or launcher-embedded) controller-setup UI, POSIX skip/cancel, and platform-neutral messages
    - verify Wayland, PipeWire, a hardware Vulkan GPU, and physical pads
 4. **Sc2/Sc3 with the patches**: move from "boot only" to the scene sweep, then full-route coverage (X025/X048/X049, X3 effects, X3ELEM5 review).
-5. **Premium Disc** profile and module audit.
+5. **Premium Disc**: a browse script for every menu and viewer, all premium battles, and coverage.
 6. Packaging: a release artifact for the fork, a `.desktop` entry, an AppImage or Flatpak, and a Steam Deck check.
 7. Developer ergonomics: POSIX equivalents of the PowerShell helpers.
 
