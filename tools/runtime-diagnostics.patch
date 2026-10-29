@@ -2607,7 +2607,7 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..6b834f3 100644
+index a17d926..6d8164b 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
 @@ -1,11 +1,11 @@
@@ -3047,7 +3047,7 @@ index a17d926..6b834f3 100644
      }
      sat_fatal("sleep at %08X: nothing woke it", pc);
  }
-@@ -584,9 +824,17 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
+@@ -584,9 +824,23 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
  
  void sh2_bad_return(SH2Context& c, uint32_t expected) {
      if (tasks_pending()) { tasks_route(c, expected); return; }
@@ -3062,10 +3062,16 @@ index a17d926..6b834f3 100644
 +static bool (*g_unknown_call_hook)(SH2Context&, uint32_t);
 +void sat_set_unknown_call_hook(bool (*hook)(SH2Context&, uint32_t)) { g_unknown_call_hook = hook; }
 +
++void sat_run_entry(SH2Context& c, uint32_t addr, const char* what) {
++    if (SH2Func f = sh2_lookup(addr)) { f(c); return; }
++    if (g_unknown_call_hook && g_unknown_call_hook(c, addr)) return;
++    sat_fatal("%s at %08X: no function there", what, addr);
++}
++
  void sh2_call_unknown(SH2Context& c, uint32_t addr) {
      if (bios_call(c, addr)) return;
      // Code called inside an image no program start activated, such as IP.BIN's
-@@ -599,6 +847,7 @@ void sh2_call_unknown(SH2Context& c, uint32_t addr) {
+@@ -599,6 +853,7 @@ void sh2_call_unknown(SH2Context& c, uint32_t addr) {
              return;
          }
      }
@@ -3073,7 +3079,16 @@ index a17d926..6b834f3 100644
      mmio_log_call(addr, c.pr);
      sat_fatal("call to %08X, not an entry of an active module (from pr %08X)", addr, c.pr);
  }
-@@ -616,6 +865,7 @@ void sh2_program_start(SH2Context& c, uint32_t addr) {
+@@ -607,7 +862,7 @@ void sh2_program_start(SH2Context& c, uint32_t addr) {
+     if (c.cpu != 0) sat_fatal("the slave started a program at %08X", addr);
+     const SH2Module* m = sh2_identify(addr);
+     if (m) sh2_activate(m);
+-    else if (!sh2_lookup(addr)) sat_fatal("program start at %08X: no module matches the image there", addr);
++    else if (!sh2_lookup(addr) && !g_unknown_call_hook) sat_fatal("program start at %08X: no module matches the image there", addr);
+     ++g_starts;
+     sat_note("program start %d: %s at %08X (r4 %08X, r5 %08X)", g_starts, m ? m->name : "(same module)",
+              addr, c.r[4], c.r[5]);
+@@ -616,6 +871,7 @@ void sh2_program_start(SH2Context& c, uint32_t addr) {
  
  int saturn_main(const SaturnConfig& cfg) {
      g_cfg = cfg;
@@ -3081,7 +3096,7 @@ index a17d926..6b834f3 100644
      g_t0 = std::chrono::steady_clock::now();
      mmio_watch(cfg.watch_lo, cfg.watch_hi);
      if (cfg.watch_lo <= cfg.watch_hi && (SH2_IS_WRAM_H(cfg.watch_lo) || SH2_IS_WRAM_L(cfg.watch_lo))) {
-@@ -644,6 +894,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -644,6 +900,7 @@ int saturn_main(const SaturnConfig& cfg) {
      }
      g_master = SH2Context{};
      g_master.budget = kBudget;
@@ -3089,7 +3104,7 @@ index a17d926..6b834f3 100644
      video_init();
      sound_init();
      cd_init();
-@@ -658,7 +909,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -658,7 +915,7 @@ int saturn_main(const SaturnConfig& cfg) {
      else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
      for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
      bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
@@ -3098,7 +3113,15 @@ index a17d926..6b834f3 100644
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
-@@ -677,6 +928,15 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -670,13 +927,20 @@ int saturn_main(const SaturnConfig& cfg) {
+     for (;;) {
+         try {
+             if (tasks) tasks_run(entry);
+-            SH2Func f = sh2_lookup(entry);
+-            if (!f) sat_fatal("no function at %08X", entry);
+-            f(g_master);
++            sat_run_entry(g_master, entry, "the program");
+             if (!tasks_pending()) sat_fatal("the program at %08X returned", entry);
              tasks_route(g_master, ~0u);
          } catch (TaskUnwind& u) {
              entry = u.pc;
@@ -3114,7 +3137,7 @@ index a17d926..6b834f3 100644
          } catch (ProgramStart& s) {
              tasks_reset();
              entry = s.addr;
-@@ -702,5 +962,15 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -702,5 +966,15 @@ int saturn_main(const SaturnConfig& cfg) {
      state_finish();
      std::fflush(stderr);
      std::fflush(stdout);
@@ -3540,7 +3563,7 @@ index 33a2cdd..46829ad 100644
      else if (off >= 0x19C && off < 0x1A0) dma(o, 1);
      else if (off >= 0x1B0 && off < 0x1B4) { dma(o, 0); dma(o, 1); }
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..020aa0e 100644
+index 6cbd98f..817b2bc 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -3551,7 +3574,7 @@ index 6cbd98f..020aa0e 100644
      std::string settings;           // the player's settings file (host.cpp); "-": none, the defaults; empty: settings.ini
                                      // in saturn-recomp's directory in the user's data directory
      std::string wav;                // the run's sound to this file (16-bit stereo, 44 100 Hz)
-@@ -87,7 +88,21 @@ extern SH2Context g_master, g_slave;
+@@ -87,7 +88,24 @@ extern SH2Context g_master, g_slave;
  extern SH2Context* g_cpu;           // the CPU running now
  
  int  saturn_main(const SaturnConfig& cfg);
@@ -3564,6 +3587,9 @@ index 6cbd98f..020aa0e 100644
 +// this hook runs it: it returns true when it has run the call to its return (as f_<addr>(c)
 +// would), false to leave it fatal. The game build points it at an SH-2 interpreter.
 +void sat_set_unknown_call_hook(bool (*hook)(SH2Context& c, uint32_t addr));
++// Runs the entry at addr: its recompiled function, else the unknown-call hook, else fatal (what
++// names the caller in the message). Program starts and tasks go through it.
++void sat_run_entry(SH2Context& c, uint32_t addr, const char* what);
  uint64_t sat_now();                 // ns since power-on (virtual or host)
 +// sat_now() plus the master's time spent since its last poll: the time of the access it is making
 +// (devices that must meet the CPU between polls). The slave, and host time, get sat_now().
@@ -3573,7 +3599,7 @@ index 6cbd98f..020aa0e 100644
  uint64_t sat_vblanks();
  inline bool sat_resuming() { return g_cfg.resume && sat_vblanks() < g_cfg.resume; }   // --resume's script still plays
  void sat_trace(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
-@@ -103,7 +118,13 @@ void slave_off();                   // SSHOFF: held in reset
+@@ -103,7 +121,13 @@ void slave_off();                   // SSHOFF: held in reset
  void slave_idle_check(uint32_t ftcsr);   // the slave read its FTCSR: yield if nothing is there
  void slave_kick();                  // SINIT: the slave's input capture, and the CPU to it
  void master_poll_devices();
@@ -3587,7 +3613,7 @@ index 6cbd98f..020aa0e 100644
  
  // ---- dumps of the machine (state.cpp; state.h for the parts) ----------------------------------
  void state_enable();                // the run has safe moments: a game's task switch
-@@ -112,10 +133,27 @@ void state_poll();                  // from the master's polls: dumps due, a sto
+@@ -112,10 +136,27 @@ void state_poll();                  // from the master's polls: dumps due, a sto
  void state_point(SH2Context& c);    // a safe moment: c's registers and PC are all the run needs to go on
  void state_stop(const char* why);   // the run stops at the next dump, or soon without one
  void state_finish();                // the last dump written
@@ -3615,7 +3641,7 @@ index 6cbd98f..020aa0e 100644
  
  // ---- the BIOS (bios.cpp) -----------------------------------------------------------
  void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
-@@ -205,7 +243,10 @@ uint32_t onchip_read(SH2Context& c, uint32_t a, int size);
+@@ -205,7 +246,10 @@ uint32_t onchip_read(SH2Context& c, uint32_t a, int size);
  void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size);
  void onchip_input_capture(int cpu);   // SINIT/MINIT: the FRT's input-capture flag
  void onchip_reset(int cpu);
@@ -3626,7 +3652,7 @@ index 6cbd98f..020aa0e 100644
  uint64_t onchip_phi_clocks(uint64_t ns);   // φ's clocks in `ns`: the FRT's and the watchdog's time base
  bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if due and above c's mask; taken?
  
-@@ -213,11 +254,18 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
+@@ -213,11 +257,18 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
  void video_init();
  void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
  void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
@@ -4249,7 +4275,7 @@ index 91d606c..f467d54 100644
  void scsp_state(State& s);
  void tasks_state(State& s);
 diff --git a/runtime/src/machine/tasks.cpp b/runtime/src/machine/tasks.cpp
-index c37141d..6517551 100644
+index c37141d..348aa46 100644
 --- a/runtime/src/machine/tasks.cpp
 +++ b/runtime/src/machine/tasks.cpp
 @@ -25,6 +25,7 @@
@@ -4287,7 +4313,18 @@ index c37141d..6517551 100644
      if (g_exc) {
          std::exception_ptr e = g_exc;
          g_exc = nullptr;
-@@ -129,6 +134,7 @@ void fiber_main(mco_coro*) {
+@@ -111,9 +116,7 @@ void fiber_main(mco_coro*) {
+     try {
+         for (;;) {
+             try {
+-                SH2Func f = sh2_lookup(pc);
+-                if (!f) sat_fatal("task at %08X: no function there", pc);
+-                f(g_master);
++                sat_run_entry(g_master, pc, "task");
+                 if (g_pending) tasks_route(g_master, ~0u);
+                 pc = g_master.pc;
+             } catch (TaskUnwind& u) {
+@@ -129,6 +132,7 @@ void fiber_main(mco_coro*) {
  // Starts `t` over at `pc`, dropping whatever its stack held.
  void restart(Fiber* t, uint32_t pc) {
      t->start = pc;
