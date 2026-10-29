@@ -205,7 +205,7 @@ No full-game Shining Force III TAS, movie or input file exists publicly. TASVide
 ### Caveats
 
 - Separate recordings are needed per revision (Sc2 V1.003 vs V2.000), per Translation Project patch level, and for NTSC vs PAL.
-- The Premium Disc has no story to play through. Use a boot-and-browse script that walks every menu and viewer instead. Its Battles mode needs a Scenario 3 COMPLETE record (the community Sc3 complete save works), and Records writes its own record.
+- The Premium Disc has no story to play through. Use a boot-and-browse script that walks every menu and viewer instead. Its Battles mode needs a COMPLETE record from Scenario 1, 2 or 3 (the community complete saves work), and Records writes its own record.
 
 ### Per-profile status
 
@@ -216,7 +216,7 @@ No full-game Shining Force III TAS, movie or input file exists publicly. TASVide
 | Sc2 V1.003 + latest TP | own BizHawk segments (to record) | TP FTP Sc2 chapter ×6 + complete; hardware saves | TBD | sweep + differential running (see Status) |
 | Sc2 V2.000 + latest TP | own BizHawk segments (to record) | TP FTP Sc2 chapter ×6 + complete; hardware saves | TBD | sweep + differential running (see Status) |
 | Sc3 + latest TP (V25.1 + V25+ updates) | own BizHawk segments (to record) | TP FTP Sc3 chapter ×7 + complete; bucanero pre/post final battle | TBD | sweep + differential running (see Status) |
-| Premium Disc + TP V25.1 | boot-and-browse script and random-pad menu/battle fuzz (`SF3_DISPATCH_AUDIT=1`) | TP FTP Sc3 complete (for Battles) | TBD | headless smoke tests clean (see [linux-bringup.md](linux-bringup.md#premium-disc-v251-experimental)) |
+| Premium Disc + TP V25.1 | boot-and-browse script and random-pad menu/battle fuzz (`SF3_DISPATCH_AUDIT=1`) | TP FTP Sc1, Sc2 or Sc3 complete (for Battles) | TBD | headless smoke tests clean (see [linux-bringup.md](linux-bringup.md#premium-disc-v251-experimental)) |
 
 ## Status (2026-10-24): layers 2 and 3 for the latest-translation profiles
 
