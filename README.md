@@ -51,6 +51,7 @@ by its file name or patch label. Each supported disc has a profile in [`profiles
 | Scenario 3 | JP GS-9203 V1.001 | Translation Project **V25.1** (upstream's registered disc) | `scenario3-v25_1.json` |
 | Scenario 3 | JP GS-9203 V1.001 (Redump dump) | Translation Project **V25.1** | `scenario3-v25_1-redump.json` |
 | Premium Disc | JP 6106979 V1.000 (Redump dump) | Translation Project **V25.1** (experimental) | `premium-disc-v25_1.json` |
+| Premium Disc | JP 6106979 V1.000 (Redump dump) | Translation Project **V25.1 + V25+ add-ons** (`--addons`, default add-on selection; experimental, boot smoke test only) | `premium-disc-v25_1-addons.json` |
 
 The launcher has **four game entries**: one per scenario, and the Premium Disc. Each entry accepts every registered
 revision of its scenario, and the first one listed above for it is the recommended disc. The Scenario 1 V25.1 profile is upstream's
@@ -70,7 +71,7 @@ same scenario needs its own data folder.
 
 **Not supported yet:**
 
-- The **Premium Disc** with the V25+ add-ons, or with any selection other than the default V25.1 one.
+- The **Premium Disc** with any selection other than the default V25.1 one or the default V25+ add-on selection.
 - Other **add-on selections**: `--addons` combined with `--mod`, `--enable`, `--disable` or `--no-supersede`, or
   only some of the V25+ zips. Each selection gives different disc contents, so identity checks reject them.
 - Other revisions and regions (for example the European Scenario 1), other patch versions or selections,
@@ -359,6 +360,9 @@ passes the synthetic tests in CI.
   as a Scenario 3 record (`SFORCE33_NN`, 24344 bytes, possibly the same name as a Scenario 3 record on the other
   device); internal memory holds only one such record, so save it to
   the cartridge when a Scenario 3 save is already there.
+  `premium-disc-v25_1-addons.json` (default V25+ add-on selection) is newer still: the add-ons change four of its
+  modules (BOOT, X007, X013, X017) without touching the code at any of the V25.1 profile's entry points, so it keeps
+  that profile's mapping. So far it has only been booted to the main menu (generated x86-64 build, headless).
 - **V25+ add-on discs** are supported with the default add-on selection only. Other selections and revisions are
   not supported (see [Supported discs](#supported-discs)).
 - **Platforms.** The V25.1 profiles and the fork's changes have been tested on **Linux only**, mostly headless.
