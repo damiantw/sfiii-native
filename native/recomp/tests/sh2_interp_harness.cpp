@@ -38,6 +38,9 @@ static uint32_t crc32(const uint8_t* p, size_t n) {
     return ~c;
 }
 
+// the patched runtime (tools/runtime-diagnostics.patch) declares this; the harness has no bus model
+__attribute__((weak)) void sh2_bus_access(uint32_t, int, bool) {}
+
 int main() {
     SH2Context c{};
     c.imask = 15; c.budget = 1000;
