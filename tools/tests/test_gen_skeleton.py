@@ -7,12 +7,12 @@ ROOT = Path(__file__).resolve().parents[2]
 RECOMP = Path(os.environ.get('SF3_RECOMP_SRC', ROOT / '.local' / 'saturn-recomp'))
 
 
-@unittest.skipUnless(shutil.which('clang++') and platform.machine() in ('x86_64', 'AMD64') and platform.system() == 'Linux'
-                     and (RECOMP / 'runtime' / 'include').exists(), 'needs clang++, x86-64 Linux and saturn-recomp')
 # the units the skeleton test links (the gen tools' mains and the runtime-bound loaders are not)
 SKELETON = ('backend_x64_thunk.cpp', 'code_cache.cpp', 'discover.cpp', 'loader_posix.cpp')
 
 
+@unittest.skipUnless(shutil.which('clang++') and platform.machine() in ('x86_64', 'AMD64') and platform.system() == 'Linux'
+                     and (RECOMP / 'runtime' / 'include').exists(), 'needs clang++, x86-64 Linux and saturn-recomp')
 class GenSkeletonTest(unittest.TestCase):
     def test_skeleton(self):
         n = ROOT / 'native/recomp'
