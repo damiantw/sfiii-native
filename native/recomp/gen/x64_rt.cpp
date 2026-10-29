@@ -76,8 +76,9 @@ void* const g_table[kSvcSlots] = {
     (void*)&sh2_call, (void*)&sh2_poll, (void*)&x_ld8, (void*)&x_ld16, (void*)&x_ld32, (void*)&x_st8, (void*)&x_st16,
     (void*)&x_st32, (void*)&x_cyc, (void*)&state_native_point, (void*)&g_state_requested, (void*)&sh2_bad_return,
     (void*)&sh2_hook, (void*)&x_set_sr, (void*)&x_get_sr, (void*)&x_rare,
+    (void*)g_wram_h, (void*)&g_sh2_bus, (void*)&g_sh2_mem_q, (void*)&g_sh2_watch_len,
 };
-static_assert(sRare / 8 == 15 && kSvcSlots == 16, "table order is x64_abi.h's");
+static_assert(sRare / 8 == 15 && sWatchLen / 8 == 19 && kSvcSlots == 20, "table order is x64_abi.h's");
 
 // One CIE + one FDE over all of the code: at every call site CFA = rsp+64, ra at CFA-8,
 // rbx at CFA-16, r12 at CFA-24 (x64_abi.h). __register_frame takes the section (libgcc).

@@ -16,7 +16,7 @@ namespace sf3::gen {
 
 constexpr uint32_t kCacheMagic = 0x43334653;   // "SF3C"
 constexpr uint32_t kCacheVersion = 1;
-constexpr uint32_t kAbi = 2;                   // runtime services' ABI; see Service, x64_abi.h
+constexpr uint32_t kAbi = 3;                   // runtime services' ABI; see Service, x64_abi.h
 
 enum class Service : uint32_t {                // targets a reloc can name
     InterpCall = 0,                            // sf3::sh2_interp_call(SH2Context&, uint32_t)

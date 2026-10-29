@@ -1,6 +1,7 @@
 // SF3 recomp, on-console generator: the x86-64 backend (MIT). See emit_x64.h, x64_abi.h.
 #include "emit_x64.h"
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 
@@ -66,14 +67,20 @@ struct Asm {
     void imul_rm(Reg r, int8_t d) { b(0x0F); b(0xAF); ctx(r, d); }
     void imul_rr(Reg dst, Reg src) { b(0x0F); b(0xAF); rr(dst, src); }
     void neg(Reg r) { b(0xF7); rr(3, r); }
+    void shr(Reg r, int count) { if (count == 1) { b(0xD1); rr(5, r); } else { b(0xC1); rr(5, r); b(uint8_t(count)); } }
     void not_(Reg r) { b(0xF7); rr(2, r); }
     // scratch [rsp+d]
     void sp_st(int8_t d, Reg r) { b(0x89); b(uint8_t(0x44 | (r & 7) << 3)); b(0x24); b(uint8_t(d)); }
     void sp_ld(Reg r, int8_t d) { b(0x8B); b(uint8_t(0x44 | (r & 7) << 3)); b(0x24); b(uint8_t(d)); }
     void sp_cmpi(int8_t d, uint32_t v) { b(0x81); b(0x7C); b(0x24); b(uint8_t(d)); d32(v); }
     // service table
-    void svc(int8_t slot) { b(0x41); b(0xFF); b(0x54); b(0x24); b(uint8_t(slot)); }        // call [r12+slot]
-    void svc_ptr(int8_t slot) { b(0x49); b(0x8B); b(0x44); b(0x24); b(uint8_t(slot)); }    // mov rax, [r12+slot]
+    void svc(int slot) { b(0x41); b(0xFF); b(0x54); b(0x24); b(uint8_t(slot)); }        // call [r12+slot]
+    void tbl(Reg r, int slot) {                                                           // mov r64, [r12+slot]
+        b(0x49); b(0x8B);
+        if (slot < 128) { b(uint8_t(0x44 | r << 3)); b(0x24); b(uint8_t(slot)); }
+        else { b(uint8_t(0x84 | r << 3)); b(0x24); d32(uint32_t(slot)); }
+    }
+    void svc_ptr(int slot) { tbl(EAX, slot); }                                            // mov rax, [r12+slot]
     void arg_c() { b(0x48); b(0x89); b(0xDF); }                                            // mov rdi, rbx
     void prologue() {
         b(0x53); b(0x41); b(0x54); b(0x48); b(0x83); b(0xEC); b(40); b(0x48); b(0x89); b(0xFB);
@@ -121,7 +128,16 @@ struct Lower {
     }
     void cyc(int n, int m, int k) {                                   // SH2_CYC / SH2_CYC2
         if (!m && !k) { a.alu_mi(5, kBudget, uint32_t(n * 4)); return; }
+        // without the bus model: budget -= n*4 + m*g_sh2_mem_q (k counts only with it)
+        a.tbl(EAX, sBus); a.b(0x80); a.b(0x38); a.b(0x00);           // cmp byte [rax], 0
+        size_t slow = a.jcc8(cNE);
+        a.tbl(EAX, sMemQ); a.b(0x69); a.b(0x00); a.d32(uint32_t(m));  // imul eax, [rax], m
+        a.b(0x05); a.d32(uint32_t(n * 4));                            // add eax, n*4
+        a.alu_mr(5, kBudget, EAX);                                    // sub [budget], eax
+        a.b(0xEB); a.b(0); size_t done = a.pos() - 1;                // jmp rel8
+        a.here8(slow);
         a.arg_c(); a.movi(ESI, uint32_t(n)); a.movi(EDX, uint32_t(m)); a.movi(ECX, uint32_t(k)); a.svc(sCyc);
+        a.here8(done);
     }
     void state_point(uint32_t pc) {                                    // SH2_STATE_POINT(c, pc)
         a.svc_ptr(sStateReq);
@@ -206,8 +222,40 @@ struct Lower {
     }
 
     // ---- one non-branch instruction: emit.py's stmt -------------------------------------------
-    void ldm(int size) { a.svc(size == 1 ? sLd8 : size == 2 ? sLd16 : sLd32); }     // eax = ld(edi)
-    void stm(int size) { a.svc(size == 1 ? sSt8 : size == 2 ? sSt16 : sSt32); }     // st(edi, esi)
+    // ldN/stN: high work RAM inline (no bus model, no --watch), everything else through the service.
+    void wram_h_check(bool store) {                                   // jumps (rel32) to the slow path
+        a.b(0x89); a.b(0xF8);                                         // mov eax, edi
+        a.b(0x25); a.d32(0xDFF00000u);                                // and eax, 0xDFF00000
+        a.b(0x3D); a.d32(0x06000000u);                                // cmp eax, 0x06000000
+        size_t j1 = a.jcc8(cNE);
+        a.tbl(EAX, sBus); a.b(0x80); a.b(0x38); a.b(0x00);           // cmp byte [rax], 0
+        size_t j2 = a.jcc8(cNE), j3 = 0;
+        if (store) { a.tbl(EAX, sWatchLen); a.b(0x83); a.b(0x38); a.b(0x00); j3 = a.jcc8(cNE); }   // cmp dword [rax], 0
+        a.b(0x89); a.b(0xF8); a.b(0x25); a.d32(0xFFFFFu);             // eax = edi & 0xFFFFF
+        a.tbl(ECX, sWramH);                                           // rcx = g_wram_h
+        fast_slow = {j1, j2, j3};
+    }
+    std::array<size_t, 3> fast_slow{};
+    void fast_end(int slot) {
+        a.b(0xEB); a.b(0); size_t done = a.pos() - 1;
+        for (size_t j : fast_slow) if (j) a.here8(j);
+        a.svc(slot);
+        a.here8(done);
+    }
+    void ldm(int size) {                                              // eax = ld(edi)
+        wram_h_check(false);
+        if (size == 4) { a.b(0x8B); a.b(0x04); a.b(0x01); a.b(0x0F); a.b(0xC8); }                    // mov eax,[rcx+rax]; bswap
+        else if (size == 2) { a.b(0x0F); a.b(0xB7); a.b(0x04); a.b(0x01); a.b(0x66); a.b(0xC1); a.b(0xC0); a.b(8); }  // movzx; rol ax,8
+        else { a.b(0x0F); a.b(0xB6); a.b(0x04); a.b(0x01); }                                          // movzx eax, byte
+        fast_end(size == 1 ? sLd8 : size == 2 ? sLd16 : sLd32);
+    }
+    void stm(int size) {                                              // st(edi, esi)
+        wram_h_check(true);
+        if (size == 4) { a.b(0x89); a.b(0xF2); a.b(0x0F); a.b(0xCA); a.b(0x89); a.b(0x14); a.b(0x01); }  // edx=bswap esi; mov [rcx+rax],edx
+        else if (size == 2) { a.b(0x89); a.b(0xF2); a.b(0x66); a.b(0xC1); a.b(0xC2); a.b(8); a.b(0x66); a.b(0x89); a.b(0x14); a.b(0x01); }
+        else { a.b(0x40); a.b(0x88); a.b(0x34); a.b(0x01); }                                          // mov [rcx+rax], sil
+        fast_end(size == 1 ? sSt8 : size == 2 ? sSt16 : sSt32);
+    }
     void ext(int size) { if (size == 1) a.movsx8(EAX); else if (size == 2) a.movsx16(EAX); }
     void addr(int8_t base, int d) { a.ld(EDI, base); if (d) a.alu_ri(0, EDI, uint32_t(d)); }
     void rare(Rare k, uint32_t n, uint32_t m, uint32_t imm) {
@@ -271,11 +319,14 @@ struct Lower {
             else { a.ld(EAX, RO(m)); a.alu_mr(0, RO(n), EAX); }
             return;
         }
-        if (is("addc")) return rare(rAddc, un, um, 0);
+        if (is("addc") || is("subc")) {      // CF = t; rn = rn +/- rm +/- CF; t = carry/borrow
+            a.ld(ECX, kT); a.shr(ECX, 1); a.ld(EAX, RO(n)); a.alu_rm(is("addc") ? 2 : 3, EAX, RO(m)); a.st(RO(n), EAX);
+            a.setcc_t(cB);
+            return;
+        }
         if (is("addv")) return rare(rAddv, un, um, 0);
         if (is("subv")) return rare(rSubv, un, um, 0);
         if (is("sub")) { a.ld(EAX, RO(m)); a.alu_mr(5, RO(n), EAX); return; }
-        if (is("subc")) return rare(rSubc, un, um, 0);
         if (is("neg")) { a.ld(EAX, RO(m)); a.neg(EAX); a.st(RO(n), EAX); return; }
         if (is("negc")) return rare(rNegc, un, um, 0);
         if (is("dt")) { a.alu_mi(5, RO(n), 1); a.setcc_t(cE); return; }
@@ -326,19 +377,44 @@ struct Lower {
         if (is("shlr2") || is("shlr8") || is("shlr16")) { a.sh_m(5, RO(n), atoi(op + 4)); return; }
         if (is("rotl")) { a.sh_m(0, RO(n), 1); a.setcc_t(cB); return; }
         if (is("rotr")) { a.sh_m(1, RO(n), 1); a.setcc_t(cB); return; }
-        if (is("rotcl")) return rare(rRotcl, un, 0, 0);
-        if (is("rotcr")) return rare(rRotcr, un, 0, 0);
+        if (is("rotcl") || is("rotcr")) {    // CF = t; rcl/rcr rn, 1; t = CF
+            a.ld(ECX, kT); a.shr(ECX, 1); a.b(0xD1); a.ctx(is("rotcl") ? 2 : 3, RO(n)); a.setcc_t(cB);
+            return;
+        }
         if (is("mul.l")) { a.ld(EAX, RO(n)); a.imul_rm(EAX, RO(m)); a.st(kMacl, EAX); return; }
         if (is("muls.w")) { a.movsx16m(EAX, RO(n)); a.movsx16m(ECX, RO(m)); a.imul_rr(EAX, ECX); a.st(kMacl, EAX); return; }
         if (is("mulu.w")) { a.movzx16m(EAX, RO(n)); a.movzx16m(ECX, RO(m)); a.imul_rr(EAX, ECX); a.st(kMacl, EAX); return; }
-        if (is("dmuls.l")) return rare(rDmuls, un, um, 0);
-        if (is("dmulu.l")) return rare(rDmulu, un, um, 0);
+        if (is("dmuls.l") || is("dmulu.l")) {   // edx:eax = rn * [rm]
+            a.ld(EAX, RO(n)); a.b(0xF7); a.ctx(is("dmuls.l") ? 5 : 4, RO(m)); a.st(kMacl, EAX); a.st(kMach, EDX);
+            return;
+        }
         if (is("mac.w")) return rare(rMacW, un, um, 0);
         if (is("mac.l")) return rare(rMacL, un, um, 0);
         if (is("clrmac")) { a.sti(kMach, 0); a.sti(kMacl, 0); return; }
         if (is("div0u")) { a.sti(kM, 0); a.sti(kQ, 0); a.sti(kT, 0); return; }
-        if (is("div0s")) return rare(rDiv0s, un, um, 0);
-        if (is("div1")) return rare(rDiv1, un, um, 0);
+        if (is("div0s")) {                   // q = rn>>31; m = rm>>31; t = q != m
+            a.ld(EAX, RO(n)); a.shr(EAX, 31); a.st(kQ, EAX); a.ld(ECX, RO(m)); a.shr(ECX, 31); a.st(kM, ECX);
+            a.alu_rr(7, EAX, ECX); a.setcc_t(cNE);
+            return;
+        }
+        if (is("div1")) {                    // sh2_div1: q' = q ^ tmp1 ^ m, t = !(q ^ tmp1)
+            a.ld(EDX, kQ);                                            // old q
+            a.ld(EAX, RO(n)); a.mov(ECX, EAX); a.shr(ECX, 31); a.st(kQ, ECX);
+            a.alu_rr(0, EAX, EAX); a.alu_rm(1, EAX, kT); a.st(RO(n), EAX);
+            a.ld(ESI, RO(m));                                         // after the write: n == m reads the new rn
+            a.alu_rm(7, EDX, kM);
+            size_t j = a.jcc8(cNE);
+            a.alu_rr(5, EAX, ESI);                                    // sub: CF = borrow
+            a.b(0xEB); a.b(0); size_t k = a.pos() - 1;
+            a.here8(j);
+            a.alu_rr(0, EAX, ESI);                                    // add: CF = carry
+            a.here8(k);
+            a.b(0x0F); a.b(0x92); a.rr(0, EDX); a.movzx8(EDX);        // edx = tmp1
+            a.st(RO(n), EAX);
+            a.alu_rm(6, EDX, kQ); a.mov(EAX, EDX); a.alu_rm(6, EAX, kM); a.st(kQ, EAX);
+            a.alu_ri(6, EDX, 1); a.st(kT, EDX);
+            return;
+        }
         if (is("clrt")) { a.sti(kT, 0); return; }
         if (is("sett")) { a.sti(kT, 1); return; }
         if (is("ldc") || is("ldc.l") || is("lds") || is("lds.l")) {

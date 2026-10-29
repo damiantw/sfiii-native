@@ -17,7 +17,7 @@ enum Ctx : int8_t {
 };
 
 // Slots of the service table, in bytes from its start (8 each).
-enum Svc : int8_t {
+enum Svc : int {
     sCall = 0,        // void sh2_call(SH2Context&, uint32_t)
     sPoll = 8,        // void sh2_poll(SH2Context&)
     sLd8 = 16, sLd16 = 24, sLd32 = 32,      // uint32_t ldN(uint32_t a)
@@ -30,7 +30,12 @@ enum Svc : int8_t {
     sSetSr = 104,     // void set_sr(SH2Context&, uint32_t v)
     sGetSr = 112,     // uint32_t get_sr(SH2Context&)
     sRare = 120,      // void rare(SH2Context&, uint32_t kind, uint32_t n, uint32_t m, uint32_t imm)
-    kSvcSlots = 16,
+    // data for the inline fast paths (emit_x64: ldm/stm/cyc)
+    sWramH = 128,     // uint8_t* g_wram_h
+    sBus = 136,      // const bool* &g_sh2_bus
+    sMemQ = 144,     // const int32_t* &g_sh2_mem_q
+    sWatchLen = 152, // const uint32_t* &g_sh2_watch_len
+    kSvcSlots = 20,
 };
 
 // Instructions run by the rare service, with emit.py's C++ for each (x64_rt.cpp).
