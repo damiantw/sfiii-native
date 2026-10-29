@@ -81,7 +81,9 @@ void* const g_table[kSvcSlots] = {
 static_assert(sRare / 8 == 15 && sWatchLen / 8 == 19 && kSvcSlots == 20, "table order is x64_abi.h's");
 
 // One CIE + one FDE over all of the code: at every call site CFA = rsp+64, ra at CFA-8,
-// rbx at CFA-16, r12 at CFA-24 (x64_abi.h). __register_frame takes the section (libgcc).
+// rbx at CFA-16, r12 at CFA-24 (x64_abi.h). __register_frame gets the FDE: LLVM libunwind (the PS5 SDK's)
+// takes one FDE and rejects a CIE ("bad fde: FDE is really a CIE"), and libgcc reads records from the
+// pointer to the terminator, finding the CIE through the FDE's relative pointer, so both register it.
 extern "C" void __register_frame(void*);
 void put32(std::vector<uint8_t>& o, uint32_t v) { for (int i = 0; i < 4; ++i) o.push_back(uint8_t(v >> (8 * i))); }
 void put64(std::vector<uint8_t>& o, uint64_t v) { for (int i = 0; i < 8; ++i) o.push_back(uint8_t(v >> (8 * i))); }
@@ -102,7 +104,7 @@ void register_unwind(void* base, size_t size) {
     put32(*o, uint32_t(f.size()));
     o->insert(o->end(), f.begin(), f.end());
     put32(*o, 0);                                // terminator
-    __register_frame(o->data());
+    __register_frame(o->data() + fde);
 }
 
 [[noreturn]] void fail(const char* name, const std::string& why) {
