@@ -343,7 +343,8 @@ passes the synthetic tests in CI.
 **Still in progress and known issues:**
 
 - **Full playthroughs.** Playthroughs of each scenario, from start to ending, are still running. The automated
-  Scenario 2 V2.000 playthrough is currently blocked; this is under investigation.
+  Scenario 2 V2.000 Chapter 6 Garvin battle has only been won with the test-only `--boost` assist (party stats only, see
+  Testing), so that segment is kept out of the committed, pad-only replays.
 - **Coverage.** Measured coverage of real game code blocks is about 44–49% for Sc1, about 44% for Sc3 and 40–42%
   for Sc2. Code that has not run yet is not known to work.
 - **Premium Disc:** not supported (no profile). Its features cannot be reached from Scenario 3.
@@ -382,7 +383,8 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
   - `--avoid X,Y,R` or `--avoid X0,Y0,X1,Y1`: leave a trap zone (the tiles within R of X,Y, or that rectangle)
   - `--avoid-all`: every unit, not only the leader and protected units, walks out of the `--avoid` zone, and a hurt unit backing away from enemies never ends its retreat inside it
   - `--target E W`: add W times the share of enemy slot E's HP taken to the score (a boss nobody hits); `--advance X,Y SLOT...`: subtract 0.05 per tile between each listed live force slot and X,Y (moves a split team toward its goal)
-  - `--boost HP ATK DEF` (test only, a cheat): once at the root, scale the on-field force max HP, attack and defence by these factors in the battle table and the party records; the segment header then says `assist boost-H-A-D`, so such a segment is never an acceptance replay
+  - `--boost HP ATK DEF` (test only, a cheat that pokes RAM): once at the root, scale the on-field force max HP (at most 999), attack and defence (at most 250) by these factors in the battle table and the party records. The game re-derives in-battle attack and defence, so every battle turn puts the boosted values back for the same units, also when a search continues a boosted segment. The segment header then says `assist boost-H-A-D` and records every poke, so such a segment replays exactly but is never committed to `tools/story-replays/`
+  - Story-line guards: a scenario clear save ends the story line (no goals past it), and a reload or candidate whose story flags fall well below the root (the title, the opening movie or a new game after a quit) counts as a failure, never as progress
   - `--zone-fatal [V]`: from VBlank V on (default 0), a window that ends with the leader or a protected unit in the `--avoid` zone loses instead of costing 3
   - `--keep-away`: stay clear of enemies
   - `--focus`: preferred targets
