@@ -14,13 +14,14 @@ class Launcher : Form {
     static readonly string[][] Profiles = {
         new[]{"scenario1-translation-v25_1-addons", "scenario1-usa-v1_001", "scenario1-translation-v25_1"},
         new[]{"scenario2-translation-v25_1-addons-v2_000", "scenario2-translation-v25_1-addons-v1_003", "scenario2-translation-v25_1-v2_000", "scenario2-translation-v25_1-v1_003", "scenario2-translation-v25_1-upgrade", "scenario2-supplied-v1003", "scenario2-translation-v24"},
-        new[]{"scenario3-translation-v25_1-addons-redump", "scenario3-translation-v25_1-redump", "scenario3-translation-v25_1"}};
+        new[]{"scenario3-translation-v25_1-addons-redump", "scenario3-translation-v25_1-redump", "scenario3-translation-v25_1"},
+        new[]{"premium-disc-translation-v25_1"}};
     // Retired ids that earlier builds stored in game.json / desktop-ready.json, mapped to the registered id of
     // the same revision (same content_sha256; keep in sync with tools/disc_profile.py LEGACY_PROFILE_IDS).
     static readonly Dictionary<string,string> LegacyProfiles = new Dictionary<string,string> {{"scenario1-usa-translation-v25_1", "scenario1-translation-v25_1"}};
     static string CanonicalProfile(string profile) {string current;return profile!=null && LegacyProfiles.TryGetValue(profile,out current) ? current : profile;}
     static int SlotOf(string profile) {profile=CanonicalProfile(profile);for(int i=0;i<Profiles.Length;i++)if(Array.IndexOf(Profiles[i],profile)>=0)return i;return -1;}
-    static readonly string[] DataSuffixes = {"", "-Scenario2-v24", "-Scenario3-v25_1"};
+    static readonly string[] DataSuffixes = {"", "-Scenario2-v24", "-Scenario3-v25_1", "-Premium-Disc-v25_1"};
     readonly string root = AppDomain.CurrentDomain.BaseDirectory;
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
     readonly TextBox cue = new TextBox(), work = new TextBox();
@@ -70,7 +71,7 @@ class Launcher : Form {
         TextAt("Shining Force III Native",24,20,800,35).Font=new Font("Segoe UI",20,FontStyle.Bold);
         TextAt("Game",25,65,120,25);
         gameChoice.DropDownStyle=ComboBoxStyle.DropDownList;gameChoice.SetBounds(155,62,667,28);
-        gameChoice.Items.AddRange(new object[]{"Scenario 1 USA (V1.001 or Translation V25.1)","Scenario 2 Translation V25.1 / V25 / v24 (experimental)","Scenario 3 Translation V25.1 (experimental)"});
+        gameChoice.Items.AddRange(new object[]{"Scenario 1 USA (V1.001 or Translation V25.1)","Scenario 2 Translation V25.1 / V25 / v24 (experimental)","Scenario 3 Translation V25.1 (experimental)","Premium Disc Translation V25.1 (experimental)"});
         gameChoice.SelectedIndex=0;Controls.Add(gameChoice);
         gameChoice.DrawMode=DrawMode.OwnerDrawFixed;
         gameChoice.DrawItem+=delegate(object sender,DrawItemEventArgs e) {
@@ -282,7 +283,7 @@ class Launcher : Form {
                 form.activeGame=wanted;
                 form.RefreshReady();
                 if(!form.Ready() || !form.play.Enabled || !form.controller.Enabled || !form.import.Enabled || !form.graphics.Enabled || form.originalGraphics.Enabled!=File.Exists(Path.Combine(testRoot,"ai-packs.json"))) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared controls are not ready");Environment.ExitCode=1;form.Close();return;}
-                if(form.gameChoice.SelectedIndex!=form.activeGame || !form.gameChoice.Text.Contains("Scenario "+(form.activeGame+1))) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared game selection is incorrect");Environment.ExitCode=1;form.Close();return;}
+                if(form.gameChoice.SelectedIndex!=form.activeGame || !form.gameChoice.Text.Contains(form.activeGame<3 ? "Scenario "+(form.activeGame+1) : "Premium Disc")) {File.WriteAllText(Path.Combine(testRoot,"play-failed.txt"),"Prepared game selection is incorrect");Environment.ExitCode=1;form.Close();return;}
                 form.Refresh();form.gameChoice.Refresh();Application.DoEvents();
                 using(var image=new Bitmap(form.Width,form.Height)) {form.DrawToBitmap(image,new Rectangle(Point.Empty,form.Size));image.Save(Path.Combine(testRoot,"ready-launcher.png"));}
                 form.Play(null,EventArgs.Empty);

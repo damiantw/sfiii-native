@@ -35,7 +35,9 @@ SAVE_NAME = 'backup.bin'
 WORK_SAVE = 'experimental-backup.bin'
 DEVICES = (('internal', '', 32768, 64), ('cartridge', '.cartridge', 524288, 512))
 # Full-size save records the scenarios write (bytes); used for the capacity check only.
-SAVE_SIZES = {1: 12904, 2: 16248, 3: 24344}
+SAVE_SIZES = {1: 12904, 2: 16248, 3: 24344, 4: 24344}
+# Record names each game writes. The Premium Disc (4) writes its record as a Scenario 3 record (SFORCE33_NN).
+OWN_PREFIX = {1: 'SFORCE31_', 2: 'SFORCE32_', 3: 'SFORCE33_', 4: 'SFORCE33_'}
 NAME = re.compile(r'^(SFORCE3[123])_([0-9]{2})$')
 
 
@@ -52,8 +54,8 @@ def default_dir():
 def default_folders():
     """The launchers' default game-data folders (they keep their historical names)."""
     root = default_dir().parent
-    names = ('Game', 'Game-Scenario2-v24', 'Game-Scenario3-v25_1') if os.name == 'nt' else (
-        'Scenario1-USA', 'Scenario2-v24', 'Scenario3-v25_1')
+    names = ('Game', 'Game-Scenario2-v24', 'Game-Scenario3-v25_1', 'Game-Premium-Disc-v25_1') if os.name == 'nt' else (
+        'Scenario1-USA', 'Scenario2-v24', 'Scenario3-v25_1', 'Premium-Disc-v25_1')
     return [root/name for name in names]
 
 
@@ -63,7 +65,10 @@ def default_settings():
 
 
 def scenario_of(profile_id):
-    """Scenario number (1-3) of a registered profile id such as scenario2-translation-v25_1-v2_000."""
+    """Scenario number (1-3) of a registered profile id such as scenario2-translation-v25_1-v2_000,
+    or 4 for the Premium Disc (premium-disc-...)."""
+    if str(profile_id or '').startswith('premium-disc-'):
+        return 4
     match = re.match(r'^scenario([123])-', str(profile_id or ''))
     if not match:
         raise ValueError('Unknown disc profile: '+str(profile_id))
@@ -346,6 +351,7 @@ def capacity(shared, scenario):
     shared = Path(shared)
     need = SAVE_SIZES.get(scenario)
     devices, warnings = {}, []
+    game = 'Premium Disc' if scenario == 4 else f'Scenario {scenario}'
     for device in DEVICES:
         records = read_device(shared/(SAVE_NAME+device[1]))
         used = used_blocks(records, device)
@@ -357,15 +363,15 @@ def capacity(shared, scenario):
     if need:
         internal, cartridge = devices['internal'], devices['cartridge']
         if not internal['new_saves_that_fit'] and not cartridge['new_saves_that_fit']:
-            warnings.append(f'Shared backup memory is full: no room for a new Scenario {scenario} save on the internal memory '
+            warnings.append(f'Shared backup memory is full: no room for a new {game} save on the internal memory '
                             f'({internal["free_blocks"]} blocks free, {internal["blocks_per_save"]} needed) or the cartridge '
                             f'({cartridge["free_blocks"]} free, {cartridge["blocks_per_save"]} needed). You can still save over an '
-                            f'existing Scenario {scenario} record; delete old records in the game to make room. Existing saves are never overwritten by a failed save.')
+                            f'existing {game} record; delete old records in the game to make room. Existing saves are never overwritten by a failed save.')
         elif cartridge['new_saves_that_fit'] is not None and internal['new_saves_that_fit'] + cartridge['new_saves_that_fit'] <= 1:
-            warnings.append(f'Shared backup memory is almost full: room for only one more new Scenario {scenario} save '
+            warnings.append(f'Shared backup memory is almost full: room for only one more new {game} save '
                             f'(internal {internal["free_blocks"]} blocks free, cartridge {cartridge["free_blocks"]} free).')
         elif not internal['new_saves_that_fit']:
-            warnings.append(f'Internal memory has {internal["free_blocks"]} free blocks; a new Scenario {scenario} save needs '
+            warnings.append(f'Internal memory has {internal["free_blocks"]} free blocks; a new {game} save needs '
                             f'{internal["blocks_per_save"]}. Save to the cartridge ({cartridge["new_saves_that_fit"]} more fit there).')
     return dict(devices=devices, warnings=warnings)
 
@@ -379,10 +385,10 @@ def guard_foreign(shared, scenario, before, reason='native state load'):
     that moment), put the other scenarios' saves back as they were before the session. This
     scenario's own saves are kept as the session left them. Returns a report dict."""
     shared = Path(shared)
-    own = f'SFORCE3{scenario}_'
+    own = OWN_PREFIX.get(scenario)
     after = snapshot(shared)
     report = dict(reason=reason, restored=[], removed=[], not_restored=[])
-    if scenario not in (1, 2, 3):
+    if own is None:
         report['skipped'] = 'unknown scenario'
         return report
     result = {}
@@ -428,8 +434,9 @@ def publish_own(shared, scenario, source):
             records, problem = parse(path.read_bytes())
             if problem:
                 raise ValueError(f'{path} is damaged ({problem}); the shared backup memory was not changed')
-            own = {n: r for n, r in records.items() if n.startswith(f'SFORCE3{scenario}_')}
-            before[device[0]] = dict({n: r for n, r in before[device[0]].items() if not n.startswith(f'SFORCE3{scenario}_')}, **own)
+            prefix = OWN_PREFIX[scenario]
+            own = {n: r for n, r in records.items() if n.startswith(prefix)}
+            before[device[0]] = dict({n: r for n, r in before[device[0]].items() if not n.startswith(prefix)}, **own)
             if used_blocks(before[device[0]], device) > usable(device):
                 raise ValueError('The replay save does not fit beside the other scenarios\' saves; it remains in '+str(path))
     for device in DEVICES:

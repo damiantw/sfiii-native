@@ -44,6 +44,7 @@
 !/profiles/scenario2-v25_1-addons-v2_000.json
 !/profiles/scenario2-v25_1-addons-v1_003.json
 !/profiles/scenario1-v25_1-addons.json
+!/profiles/premium-disc-v25_1.json
 !/tools/
 /tools/*
 !/tools/audit-modules.py

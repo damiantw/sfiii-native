@@ -69,8 +69,11 @@ class SharedSavesTests(unittest.TestCase):
         self.assertEqual(shared_saves.scenario_of('scenario1-usa'), 1)
         self.assertEqual(shared_saves.scenario_of('scenario2-v25_1-v1_003'), 2)
         self.assertEqual(shared_saves.scenario_of('scenario3-v25_1-redump'), 3)
+        self.assertEqual(shared_saves.scenario_of('premium-disc-translation-v25_1'), 4)
         with self.assertRaises(ValueError):
             shared_saves.scenario_of('premium-disc')
+        with self.assertRaises(ValueError):
+            shared_saves.scenario_of('scenario4-x')
 
     def test_migration_merges_every_save_and_keeps_originals(self):
         sc1 = game(self.root, 'sc1', 1, record('SFORCE31_01', S1, 1) + record('SFORCE31_02', S1, 11))
@@ -186,6 +189,19 @@ class SharedSavesTests(unittest.TestCase):
         self.assertEqual(len(report['removed']), 2)
         self.assertTrue(list(Path(report['backup']).glob('backup.bin*')))
         self.assertEqual(shared_saves.guard_foreign(self.shared, 2, shared_saves.snapshot(self.shared))['restored'], [])
+
+    def test_premium_disc_owns_scenario3_records_after_a_state_load(self):
+        # The Premium Disc reads a Scenario 3 record and writes its own record as SFORCE33_NN (24344 bytes).
+        self.shared.mkdir()
+        (self.shared/'backup.bin').write_bytes(record('SFORCE31_01', 50, 1) + record('SFORCE32_01', 60, 2))
+        before = shared_saves.snapshot(self.shared)
+        (self.shared/'backup.bin').write_bytes(record('SFORCE33_01', 10, 3))
+        report = shared_saves.guard_foreign(self.shared, 4, before)
+        self.assertNotIn('skipped', report)
+        self.assertEqual(names(self.shared/'backup.bin'), ['SFORCE31_01', 'SFORCE32_01', 'SFORCE33_01'])
+        self.assertEqual(shared_saves.SAVE_SIZES[4], S3)
+        (self.shared/'backup.bin').write_bytes(record('SFORCE32_01', S2, 2))
+        self.assertIn('Premium Disc save', shared_saves.capacity(self.shared, 4)['warnings'][0])
 
     def test_replay_publish_takes_only_its_own_scenario(self):
         self.shared.mkdir()

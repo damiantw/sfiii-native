@@ -12,7 +12,8 @@ is Windows-first. The fork adds a Linux build (also packaged for macOS), a Linux
 large automated test harness. Upstream's Windows releases, artwork tools and documentation are kept below.
 
 > **Status: work in progress.** All three scenarios boot, play and save, and save transfer between scenarios works.
-> End-to-end playthroughs of every scenario are still being tested. The Premium Disc is **not supported** yet.
+> End-to-end playthroughs of every scenario are still being tested. The Premium Disc (Translation V25.1) is
+> **experimental**: it boots and its menus work in headless smoke tests.
 > See [Status and known issues](#status-and-known-issues).
 
 ## Contents
@@ -49,9 +50,10 @@ by its file name or patch label. Each supported disc has a profile in [`profiles
 | Scenario 3 | JP GS-9203 V1.001 (Redump dump) | Translation Project **V25.1 + V25+ add-ons** (`--addons`, default add-on selection) | `scenario3-v25_1-addons-redump.json` |
 | Scenario 3 | JP GS-9203 V1.001 | Translation Project **V25.1** (upstream's registered disc) | `scenario3-v25_1.json` |
 | Scenario 3 | JP GS-9203 V1.001 (Redump dump) | Translation Project **V25.1** | `scenario3-v25_1-redump.json` |
+| Premium Disc | JP 6106979 V1.000 (Redump dump) | Translation Project **V25.1** (experimental) | `premium-disc-v25_1.json` |
 
-The launcher has **three game entries, one per scenario**. Each entry accepts every registered revision of its
-scenario, and the first one listed above for it is the recommended disc. The Scenario 1 V25.1 profile is upstream's
+The launcher has **four game entries**: one per scenario, and the Premium Disc. Each entry accepts every registered
+revision of its scenario, and the first one listed above for it is the recommended disc. The Scenario 1 V25.1 profile is upstream's
 (`scenario1-translation-v25_1`). This fork first registered the same disc as `scenario1-usa-translation-v25_1`
 (`scenario1-usa-v25_1.json`). Data folders prepared under that id keep working. The next **Prepare game** records
 the new id. The two newer Scenario 2 profiles come from upstream, and the fork has not soak-tested them yet.
@@ -68,7 +70,7 @@ same scenario needs its own data folder.
 
 **Not supported yet:**
 
-- The **Premium Disc**. `sf3patch` can patch it, but there is no native profile.
+- The **Premium Disc** with the V25+ add-ons, or with any selection other than the default V25.1 one.
 - Other **add-on selections**: `--addons` combined with `--mod`, `--enable`, `--disable` or `--no-supersede`, or
   only some of the V25+ zips. Each selection gives different disc contents, so identity checks reject them.
 - Other revisions and regions (for example the European Scenario 1), other patch versions or selections,
@@ -219,7 +221,7 @@ WORK="$HOME/.local/share/SFIII Native/Scenario1-USA"
 "$PKG/python/bin/python3" -B "$PKG/app/desktop/run_posix.py" --work "$WORK"
 ```
 
-`--scenario` is `1`, `2` or `3`. `run_posix.py` also takes:
+`--scenario` is `1`, `2`, `3`, or `4` for the Premium Disc. `run_posix.py` also takes:
 
 - `--state FILE` to start from a native save state
 - `--separate-saves` to turn off the shared backup memory
@@ -347,7 +349,13 @@ passes the synthetic tests in CI.
   Testing), so that segment is kept out of the committed, pad-only replays.
 - **Coverage.** Measured coverage of real game code blocks is about 44–49% for Sc1, about 44% for Sc3 and 40–42%
   for Sc2. Code that has not run yet is not known to work.
-- **Premium Disc:** not supported (no profile). Its features cannot be reached from Scenario 3.
+- **Premium Disc (experimental):** `premium-disc-v25_1.json`, default V25.1 selection only. Headless smoke tests
+  reach the title, the main menu and all six menus (Models, Images, Battles, Records, Videos, Sounds), including a
+  temple battle, with no errors in random-input menu and battle runs. There is no playthrough or coverage claim.
+  Battles needs a Scenario 3 COMPLETE record in the shared backup memory. Records writes the Premium Disc record
+  as a Scenario 3 record (`SFORCE33_NN`, 24344 bytes, possibly the same name as a Scenario 3 record on the other
+  device); internal memory holds only one such record, so save it to
+  the cartridge when a Scenario 3 save is already there.
 - **V25+ add-on discs** are supported with the default add-on selection only. Other selections and revisions are
   not supported (see [Supported discs](#supported-discs)).
 - **Platforms.** The V25.1 profiles and the fork's changes have been tested on **Linux only**, mostly headless.
@@ -503,7 +511,7 @@ Planned directions, with no release dates or compatibility guarantees. Faithful 
 - **Broader gameplay validation:** exercise more towns, battles, menus and transitions, fixing crashes and rendering/audio defects as coverage grows.
 - **More complete widescreen:** improve game-side object and terrain culling so additional scenery remains visible as the camera moves and rotates.
 - **More supported editions:** register additional disc revisions while keeping each installation’s progress separate.
-- **Scenario 2/3 coverage, Premium Disc and more translations:** expand gameplay validation and add revision-specific compilation profiles, identifying supported patch versions explicitly.
+- **Scenario 2/3 coverage, Premium Disc validation and more translations:** expand gameplay validation and add revision-specific compilation profiles, identifying supported patch versions explicitly.
 - **Save portability and campaign transfers:** expand verified emulator/Saroo import and export formats, and validate backed-up progress transfers between compatible scenarios and editions.
 - **Broader optional artwork coverage:** improve unsupported formats, large images, background planes, texture seams and animation consistency, while retaining original artwork and expanding gameplay validation.
 - **Broader native save-state validation:** extend snapshot tests across battles, transitions and additional scenarios, beyond the limited Scenario 2/3 routes tested so far.

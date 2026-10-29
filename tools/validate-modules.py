@@ -215,7 +215,7 @@ def main():
     report = dict(mapped_module_builds_passed=passed, complete_static_validation=complete,
                   validation_tool_sha256=tool_hash, manifest_sha256=sha(args.manifest),
                   missing_registered_profiles=missing, complete_game_validated=False,
-                  unsupported='Premium Disc and unregistered disc/translation revisions have no validation claim.',
+                  unsupported='Unregistered disc/translation revisions have no validation claim; the Premium Disc profile is experimental (smoke-tested only).',
                   caveat='Successful compilation and boot do not validate unvisited module behavior or indirect targets.', revisions=results)
     (out/'report.json').write_text(json.dumps(report, indent=2)+'\n')
     lines = ['# Local module validation', '', '| Revision | Compiled candidates | Executed in tested routes | Unmapped / entry review | Discovery findings | Indirect sites |', '|---|---:|---:|---:|---:|---:|']
