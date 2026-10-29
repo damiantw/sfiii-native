@@ -1,0 +1,294 @@
+{
+  "id": "premium-disc-translation-v25_1-addons",
+  "title": "Premium Disc (Translation Project V25.1 + V25+ add-ons, experimental)",
+  "scenario": 4,
+  "product": "SF3TRANS",
+  "version": "V25.1+V25+",
+  "content_sha256": "59d93cf9cb42648e77cb7960751d96398c558c987cddebfa5bf64eeb9b4596f3",
+  "scene_base": "0605E000",
+  "scene_base_evidence": "All 28 X1*.BIN scene programs start with the SH-2 export veneer and their first veneer target lies 0x100-0x2BD0 bytes into the image when loaded at 0605E000.",
+  "effect_base": null,
+  "module_containers": [
+    {
+      "file": "EFFECT.BIN",
+      "prefix": "EFFECT_",
+      "base": "06048D00",
+      "chunk_bytes": "8000",
+      "count": 72,
+      "entry_offsets": [
+        0,
+        12,
+        24
+      ],
+      "evidence": "PD X014 at 060897C4 matches 32 bytes of the verified Scenario 3 V25.1 effect loader (060896BC; index*0x8000 into 06048D00). The PD EFFECT.BIN is exactly 72 chunks of 0x8000 and all three header veneers in every chunk point inside the chunk loaded at 06048D00. Static loader mapping; individual effects unvalidated."
+    }
+  ],
+  "model_bases": {
+    "X011": "06068000",
+    "X012": "06070000",
+    "X013": "06080000",
+    "X014": "06088000",
+    "X016": "06088000",
+    "X017": "06088000",
+    "X018": "06088000",
+    "X023": "06078000",
+    "X026": "06078000",
+    "X027": "06078000",
+    "X032": "06088000",
+    "X033": "06078000",
+    "X035": "06088000",
+    "X044": "06078000",
+    "X002": "0602A000",
+    "X005": "0603C900",
+    "X031": "0604C800",
+    "X024": "0028C000",
+    "X021": "06068000"
+  },
+  "modules": [
+    {
+      "name": "BOOT",
+      "file": "1ST.BIN",
+      "base": "06004000",
+      "seeds": [
+        "06004000",
+        "06009906",
+        "06009A64",
+        "06009ADC",
+        "06009BCC",
+        "06009CC8",
+        "06009CF8",
+        "0600A234",
+        "0600A274",
+        "0600A294",
+        "0600A6F0",
+        "0600C7D4",
+        "0600C8FC",
+        "0600C90C",
+        "0600C91C",
+        "0600CB1C",
+        "0600CC60",
+        "0600CD5C",
+        "0600CF84",
+        "0600D04C",
+        "0600D108",
+        "0600D114",
+        "0600D1A8",
+        "0600D1C8",
+        "0600D1E8",
+        "0600E160",
+        "0600E6F2",
+        "0601032C",
+        "06010370",
+        "06012FCC",
+        "06014328",
+        "060146C8",
+        "0601565E",
+        "06015FB8",
+        "06016CC8",
+        "060170C4",
+        "060170D8",
+        "06020C40"
+      ],
+      "evidence": "IP first-read address 06004000. Other seeds are static candidates: each uniquely matches 64 bytes (24 for 060146C8, 06015FB8, 06016CC8; 16 for 0601032C) of a registered Scenario 2 or 3 V25.1 BOOT seed. Not executed coverage. Add-ons: 2079 bytes of the image differ from premium-disc-v25_1; the 32 bytes at every seed (and 16 around each stack-return site) are unchanged, so the seeds are inherited.",
+      "stack_return_calls": [
+        "06005548",
+        "06005610",
+        "0600570C"
+      ],
+      "stack_return_evidence": "The three drawing-command wrappers and the shared queue guard match the registered Scenario 3 V25.1 BOOT byte-for-byte at the same addresses (64-byte unique matches at 06005548, 06005610, 0600570C); same exact one-word stack pop rule."
+    },
+    {
+      "name": "X048",
+      "file": "X048.BIN",
+      "base": "06048D00",
+      "seeds": [
+        "06048D00"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06048D00 from X013 at 06080BC4, X013 at 06080BEA. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X049",
+      "file": "X049.BIN",
+      "base": "06048D00",
+      "seeds": [
+        "06048D00"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06048D00 from X1ENDING at 0605F2A4. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X046",
+      "file": "X046.BIN",
+      "base": "06040000",
+      "seeds": [
+        "06040000"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: the X001 load table at 060F63C0 pairs destination 06040000 with file id 0x1A7 (X046.BIN). Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X003",
+      "file": "X003.BIN",
+      "base": "06036800",
+      "seeds": [
+        "06036800"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06036800 from 1ST at 0601023A, X1MOVSEL at 0605E4EC, X1OPMOV at 0605E1C0, X1OPPREM at 0605E2BE; native runs log a whole-image CRC match at this base on calls to 06036974 and 0603680C. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X001",
+      "file": "X001.BIN",
+      "base": "060F6000",
+      "seeds": [
+        "060F6000"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 060F6000 from 1ST at 0601026A. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X032",
+      "file": "X032.BIN",
+      "base": "06088000",
+      "seeds": [
+        "06088000"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06088000 from X002 at 0602C7EE, X002 at 0602CA9E, X003 at 0603AE76, X003 at 0603AEB0; native runs log a whole-image CRC match at this base on calls to 06088084. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited.",
+      "bytes": "8200"
+    },
+    {
+      "name": "X006",
+      "file": "X006.BIN",
+      "base": "06043D00",
+      "seeds": [
+        "06043D00"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06043D00 from 1ST at 0601024A, X1MOVSEL at 0605E4FC, X1OPMOV at 0605E1D0, X1OPPREM at 0605E2CE. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X008",
+      "file": "X008.BIN",
+      "base": "06054500",
+      "seeds": [
+        "06054500"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06054500 from X002 at 0602CC42, X1MOVSEL at 0605E504, X1OPMOV at 0605E1D8, X1OPPREM at 0605E2D6. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X009",
+      "file": "X009.BIN",
+      "base": "06037000",
+      "seeds": [
+        "06037000"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06037000 from X002 at 0602D15A. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X013",
+      "file": "X013.BIN",
+      "base": "06080000",
+      "seeds": [
+        "06080000"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06080000 from X002 at 0602CC4A, X002 at 0602CCA6, X007 at 0605AABE, X026 at 0607A03A; native runs log a whole-image CRC match at this base on calls to 06080024. Add-ons: 19 bytes of the image differ from premium-disc-v25_1; the 32 bytes at every seed (and 16 around each stack-return site) are unchanged, so the seeds are inherited."
+    },
+    {
+      "name": "X017",
+      "file": "X017.BIN",
+      "base": "06088000",
+      "seeds": [
+        "06088000"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06088000 from X002 at 0602CC52, X007 at 0605939E, X007 at 06059494, X008 at 0605576C. Add-ons: 405 bytes of the image differ from premium-disc-v25_1; the 32 bytes at every seed (and 16 around each stack-return site) are unchanged, so the seeds are inherited."
+    },
+    {
+      "name": "X021",
+      "file": "X021.BIN",
+      "base": "06068000",
+      "seeds": [
+        "06068000"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06068000 from X002 at 0602CC5A, X1MOVSEL at 0605E21C, X1OPMOV at 0605E1F0, X1OPPREM at 0605E2EE; native runs log a whole-image CRC match at this base on calls to 06068090 and 0606809C. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X022",
+      "file": "X022.BIN",
+      "base": "06070000",
+      "seeds": [
+        "06070000"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06070000 from X002 at 0602B9E0, X002 at 0602CC62, X1BTLP01 at 0605E4CA, X1BTLP02 at 0605E342; native runs log a whole-image CRC match at this base on calls to 06070150. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X033",
+      "file": "X033.BIN",
+      "base": "06078000",
+      "seeds": [
+        "06078000"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06078000 from 1ST at 06010252, X003 at 0603AE4C, X003 at 0603AEBA, X008 at 0605749A. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X039",
+      "file": "X039.BIN",
+      "base": "060C0100",
+      "seeds": [
+        "060C0100"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 060C0100 from X002 at 0602C7F6, X002 at 0602C808, X1ENDING at 0605F85A, X1SEWIN at 0605E1F6; native runs log a whole-image CRC match at this base on calls to 060C0118. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X007",
+      "file": "X007.BIN",
+      "base": "06054500",
+      "seeds": [
+        "06054500"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 06054500 from X002 at 0602CC8E. Add-ons: 8 bytes of the image differ from premium-disc-v25_1; the 32 bytes at every seed (and 16 around each stack-return site) are unchanged, so the seeds are inherited."
+    },
+    {
+      "name": "X019",
+      "file": "X019.BIN",
+      "base": "060A0000",
+      "seeds": [
+        "060A0000"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 060A0000 from X007 at 0605A21E; native runs log a whole-image CRC match at this base on calls to 060A000C. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X015",
+      "file": "X015.BIN",
+      "base": "0609D800",
+      "seeds": [
+        "0609D800"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 0609D800 from X002 at 0602CCB6, X007 at 0605907E; native runs log a whole-image CRC match at this base on calls to 0609D848. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    },
+    {
+      "name": "X045",
+      "file": "X045.BIN",
+      "base": "060A0000",
+      "seeds": [
+        "060A0000"
+      ],
+      "overlay": true,
+      "evidence": "Premium Disc V25.1: static loader calls (file id = ISO directory index + 3, consistent with the CRC-verified X003, X005, X019 and X021 loads) load it to 060A0000 from X014 at 0608A046, X046 at 06041E82, X046 at 060427C2, X046 at 060428B4. Add-ons: image byte-identical to premium-disc-v25_1; its mapping is inherited."
+    }
+  ],
+  "support": "experimental; Japanese Premium Disc (Redump) patched with tools/sf3patch --addons and the default add-on selection. Seeds and bases copied from premium-disc-v25_1 (see module evidence)",
+  "boot_check_vblanks": 3000
+}
