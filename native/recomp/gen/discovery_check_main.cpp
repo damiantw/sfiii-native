@@ -1,6 +1,7 @@
 // sf3-discovery-check DUMP [--emit OUT] [--only NAME]: runs the C++ discovery on each module of a
 // gen-dump-discovery.py dump (its Q records: the seeds) and compares what it decides with the
 // Python's (P, F and T records). --emit then generates the tree from the C++ discovery alone (MIT).
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
