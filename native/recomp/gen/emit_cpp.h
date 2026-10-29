@@ -42,6 +42,9 @@ struct EmitBuild {
     std::vector<EmitModule> modules;
 };
 
+// __main__.volatile_literals: literal slots the code writes (prog_code sorted).
+std::unordered_set<uint32_t> volatile_literals_of(const FlatImage&, const std::vector<uint32_t>& prog_code);
+
 // Reads gen-dump-discovery.py's dump.
 EmitBuild read_dump(const std::string& path);
 

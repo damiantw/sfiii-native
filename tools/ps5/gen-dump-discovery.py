@@ -13,6 +13,7 @@ Format, one record per line, hexadecimal addresses:
     P code...                                     (every discovered instruction, prog.code)
     F entry code...                               (one per function, in prog.funcs order)
     T entry site how candidate...                 (Body._resolve, how with spaces as '_')
+    Q name base seed...                           (generate()'s specs, before any M record: discovery input)
 """
 import os
 import runpy
@@ -55,6 +56,8 @@ def generate(specs, out_dir, **k):
     ts = list(k.get('task_switches', ()))
     out.write('G %d %s %s %d %s %s\n' % (bool(k.get('native_states')), h(tasks[0]), h(tasks[1]), len(ts),
                                        ' '.join(h(v) for s in ts for v in s), M.RUNTIME.replace('\\', '/')))
+    for name, _path, base, seeds in specs:
+        out.write('Q %s %s %s\n' % (name, h(base), ' '.join(map(h, seeds))))
     for key in ('hooks', 'unwind_returns', 'optest'):
         if k.get(key):
             raise SystemExit('gen-dump-discovery: %s is not covered by the C++ port yet' % key)

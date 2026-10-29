@@ -86,7 +86,7 @@ std::string sreg(const std::string& r) {
 
 std::string stmt(const Insn& ins, const std::optional<uint32_t>& lit) {
     const char* op = ins.op;
-    const std::string& f = ins.fmt;
+    std::string f(ins.fmt);
     int n = ins.n, m = ins.m;
     size_t sp = f.find(' ');
     std::string form = sp == std::string::npos ? "" : f.substr(sp + 1);
@@ -600,7 +600,7 @@ void put(const std::string& path, const std::string& text) {
 }
 
 bool writes_r0(const Insn& ins) {       // 0 in discover._writes(ins)
-    const std::string& f = ins.fmt;
+    std::string f(ins.fmt);
     auto ends = [&](const char* s) { size_t l = strlen(s); return f.size() >= l && f.compare(f.size() - l, l, s) == 0; };
     std::set<int> out;
     std::string first = f.substr(0, f.find(' '));
@@ -801,6 +801,10 @@ const char* CMAKE_TAIL = ")\ntarget_include_directories(recomp PUBLIC ${SATURN_R
     "if(DEFINED SATURN_EXTRA)\n  include(${SATURN_EXTRA})\nendif()\n";
 
 }  // namespace
+
+std::unordered_set<uint32_t> volatile_literals_of(const FlatImage& img, const std::vector<uint32_t>& prog_code) {
+    return volatile_literals(img, prog_code);
+}
 
 EmitBuild read_dump(const std::string& path) {
     std::ifstream in(path);

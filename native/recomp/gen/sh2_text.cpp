@@ -186,10 +186,28 @@ void build() {
     std::stable_sort(g_table.begin(), g_table.end(), [](const Entry& a, const Entry& b) { return a.bits > b.bits; });
 }
 
-bool has(const std::vector<std::string>& k, const char* w) { return std::find(k.begin(), k.end(), w) != k.end(); }
+enum : uint32_t { K_DELAY = 1, K_D4 = 2, K_D4W = 4, K_D4L = 8, K_D8 = 16, K_D8W = 32, K_D8L = 64, K_S8 = 128,
+                 K_U8 = 256, K_PCW = 512, K_PCL = 1024, K_B8 = 2048, K_B12 = 4096 };
 
-struct Lookup { const Entry* e; std::vector<std::string> kind; };
+uint32_t kind_bits(const std::string& k) {
+    static const std::pair<const char*, uint32_t> names[] = {
+        {"delay", K_DELAY}, {"d4", K_D4}, {"d4w", K_D4W}, {"d4l", K_D4L}, {"d8", K_D8}, {"d8w", K_D8W}, {"d8l", K_D8L},
+        {"s8", K_S8}, {"u8", K_U8}, {"pcw", K_PCW}, {"pcl", K_PCL}, {"b8", K_B8}, {"b12", K_B12}};
+    uint32_t out = 0;
+    size_t p = 0;
+    while (p < k.size()) {
+        size_t q = k.find(' ', p);
+        if (q == std::string::npos) q = k.size();
+        std::string w = k.substr(p, q - p);
+        for (auto& [n, b] : names) if (w == n) out |= b;
+        p = q + 1;
+    }
+    return out;
+}
+
+struct Lookup { const Entry* e; uint32_t kind; };
 Lookup g_cache[65536];
+std::string g_word_fmt[65536];
 
 const Lookup& lookup(uint16_t w) {
     static std::once_flag once;
@@ -199,17 +217,14 @@ const Lookup& lookup(uint16_t w) {
             g_cache[x].e = nullptr;
             for (auto& e : g_table)
                 if ((x & e.mask) == e.val) {
-                    g_cache[x].e = &e;
-                    std::string k = e.kind;
-                    size_t p = 0;
-                    while (p < k.size()) {
-                        size_t q = k.find(' ', p);
-                        if (q == std::string::npos) q = k.size();
-                        if (q > p) g_cache[x].kind.push_back(k.substr(p, q - p));
-                        p = q + 1;
-                    }
+                    g_cache[x] = {&e, kind_bits(e.kind)};
                     break;
                 }
+            if (!g_cache[x].e) {
+                char b[16];
+                snprintf(b, sizeof b, ".word 0x%04X", x);
+                g_word_fmt[x] = b;
+            }
         }
     });
     return g_cache[w];
@@ -238,7 +253,7 @@ void replace_all(std::string& s, const std::string& from, const std::string& to)
 bool Insn::is(const char* o) const { return strcmp(op, o) == 0; }
 
 std::string Insn::text() const {
-    std::string f = fmt;
+    std::string f(fmt);
     char b[32];
     replace_all(f, "Rn", n >= 0 ? (snprintf(b, sizeof b, "r%d", n), std::string(b)) : std::string());
     replace_all(f, "Rm", m >= 0 ? (snprintf(b, sizeof b, "r%d", m), std::string(b)) : std::string());
@@ -258,31 +273,29 @@ Insn decode(uint16_t word, uint32_t pc) {
     ins.pc = pc;
     ins.word = word;
     if (!l.e) {
-        char b[16];
-        snprintf(b, sizeof b, ".word 0x%04X", word);
-        ins.fmt = b;
+        ins.fmt = g_word_fmt[word];
         return ins;
     }
     const Entry& e = *l.e;
-    const auto& k = l.kind;
+    uint32_t k = l.kind;
     ins.op = e.op;
     ins.fmt = e.fmt;
-    ins.delay = has(k, "delay");
+    ins.delay = k & K_DELAY;
     if (e.nsh >= 0) ins.n = word >> e.nsh & 15;
     if (e.msh >= 0) ins.m = word >> e.msh & 15;
     int d4 = word & 15, d8 = word & 0xFF;
-    if (has(k, "d4")) ins.disp = d4;
-    if (has(k, "d4w")) ins.disp = d4 * 2;
-    if (has(k, "d4l")) ins.disp = d4 * 4;
-    if (has(k, "d8")) ins.disp = d8;
-    if (has(k, "d8w")) ins.disp = d8 * 2;
-    if (has(k, "d8l")) ins.disp = d8 * 4;
-    if (has(k, "s8")) ins.imm = s8(d8);
-    if (has(k, "u8")) ins.imm = d8;
-    if (has(k, "pcw")) { ins.target = pc + 4 + d8 * 2; ins.size = 2; }
-    if (has(k, "pcl")) { ins.target = (pc & ~3u) + 4 + d8 * 4; ins.size = 4; }
-    if (has(k, "b8")) ins.target = uint32_t(int64_t(pc) + 4 + s8(d8) * 2);
-    if (has(k, "b12")) ins.target = uint32_t(int64_t(pc) + 4 + s12(word & 0xFFF) * 2);
+    if (k & K_D4) ins.disp = d4;
+    if (k & K_D4W) ins.disp = d4 * 2;
+    if (k & K_D4L) ins.disp = d4 * 4;
+    if (k & K_D8) ins.disp = d8;
+    if (k & K_D8W) ins.disp = d8 * 2;
+    if (k & K_D8L) ins.disp = d8 * 4;
+    if (k & K_S8) ins.imm = s8(d8);
+    if (k & K_U8) ins.imm = d8;
+    if (k & K_PCW) { ins.target = pc + 4 + d8 * 2; ins.size = 2; }
+    if (k & K_PCL) { ins.target = (pc & ~3u) + 4 + d8 * 4; ins.size = 4; }
+    if (k & K_B8) ins.target = uint32_t(int64_t(pc) + 4 + s8(d8) * 2);
+    if (k & K_B12) ins.target = uint32_t(int64_t(pc) + 4 + s12(word & 0xFFF) * 2);
     return ins;
 }
 
