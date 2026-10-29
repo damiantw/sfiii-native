@@ -352,7 +352,9 @@ passes the synthetic tests in CI.
 - **Premium Disc (experimental):** `premium-disc-v25_1.json`, default V25.1 selection only. Headless smoke tests
   reach the title, the main menu and all six menus (Models, Images, Battles, Records, Videos, Sounds), including a
   temple battle, with no errors in random-input menu and battle runs. There is no playthrough or coverage claim.
-  Battles needs a Scenario 3 COMPLETE record in the shared backup memory. Records writes the Premium Disc record
+  Every Videos entry plays to the end and the sound test plays music, effects, jingles and voices.
+  Battles needs a COMPLETE record from Scenario 1, 2 or 3 in the shared backup memory (internal memory or
+  cartridge). Records writes the Premium Disc record
   as a Scenario 3 record (`SFORCE33_NN`, 24344 bytes, possibly the same name as a Scenario 3 record on the other
   device); internal memory holds only one such record, so save it to
   the cartridge when a Scenario 3 save is already there.

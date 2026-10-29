@@ -283,8 +283,9 @@ Results on Linux x86-64 (Debian 13, clang 19, headless, software rendering), 202
 | 134 | 67134 | 11825 entries, 0 missing | 1147 | X004, X025 |
 
 - Boot: intro movie, then the PREMIUM DISC title (Translation V25.1), then the attract movie. START opens the main menu.
-- Models (3D viewer), Images (gallery and full pictures), Videos (trailer movie), Sounds (sound test) and Records all work.
-- Battles needs a Scenario 3 COMPLETE record. With one it loads the record, then member selection, then a temple battle with combat and the status, magic and item menus.
+- Models (3D viewer), Images (gallery and full pictures), Sounds and Records all work. Sounds: Music (play, stop, previous and next tracks), S.E., Jingle and Voice all produce audio in the `--wav` capture.
+- Videos: every entry was run from power-on (Trailer, Sc1/Sc2/Sc3 Intro, TV Ad 1-3, Interview, Play All, Exit). Each movie plays to the end with sound and returns to the Videos menu; Exit returns to the main menu. Play All plays the Trailer and the three intros in order.
+- Battles needs a COMPLETE record from any scenario: a Sc1 complete record (internal memory), a Sc2 complete record (on the cartridge, listed with the other Sc2 cartridge records) and a Sc3 complete record were each tested. With one it loads the record, then member selection, then a temple battle with combat and the status, magic and item menus.
 - Records runs Gabriel and Fey through questions and naming every character, then saves. With a Scenario 3 record on the internal memory the game reports "Insufficient memory" there (one 24344-byte record fills it) and saves to the cartridge. The record is a Scenario 3 record, `SFORCE33_01`. `desktop/shared_saves.py` therefore treats Scenario 3 records as the Premium Disc's own after a native state load.
 - Random-input fuzz: three menu runs and three battle runs of about 30000 vblanks each, and a 24000-vblank run from power-on. None logged a fatal error, an unresolved call or a dispatch-audit mismatch.
 
