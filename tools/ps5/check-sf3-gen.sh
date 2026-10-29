@@ -13,7 +13,8 @@ mkdir -p "$tmp"
 ${CXX:-g++} -std=c++20 -O2 -Wall -o "$tmp/sf3-discovery-check" \
     "$g/discovery_check_main.cpp" "$g/discovery.cpp" "$g/emit_cpp.cpp" "$g/sh2_text.cpp"
 ${CXX:-g++} -std=c++20 -O2 -Wall -o "$tmp/sf3-gen" \
-    "$g/gen_main.cpp" "$g/profile_gen.cpp" "$g/discovery.cpp" "$g/emit_cpp.cpp" "$g/sh2_text.cpp"
+    "$g/gen_main.cpp" "$g/profile_gen.cpp" "$g/discovery.cpp" "$g/emit_cpp.cpp" "$g/emit_x64.cpp" \
+    "$g/code_cache.cpp" "$g/sh2_text.cpp"
 "$tmp/sf3-discovery-check" "$dump"
 rm -rf "$tmp/out"
 "$tmp/sf3-gen" --work "$work" --profile "$profile" --out "$tmp/out" --runtime "$runtime" --specs "$tmp/q.txt" >/dev/null

@@ -1,5 +1,6 @@
 // SF3 recomp, on-console generator: tools/generate.py in C++ (MIT). See profile_gen.h.
 #include "profile_gen.h"
+#include "emit_x64.h"
 
 #include <algorithm>
 #include <cstdarg>
@@ -448,6 +449,7 @@ void generate_from_profile(const GenOptions& o) {
     }
     EmitBuild b = discover_build(specs, o);
     generate(b, o.out, o.per_file, o.comments);
+    if (o.x64) generate_x64(b, o.out);
 }
 
 }  // namespace sf3::gen

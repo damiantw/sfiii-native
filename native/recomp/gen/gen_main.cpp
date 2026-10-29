@@ -1,7 +1,7 @@
 // sf3-gen: the on-console generator (MIT). A revision profile and a verified extraction in, the
 // generated tree out, with no Python: tools/generate.py --framework saturn-recomp, in C++.
 //
-//     sf3-gen --work WORK --profile PROFILE.json --out OUT --runtime DIR [--block-coverage] [--specs FILE]
+//     sf3-gen --work WORK --profile PROFILE.json --out OUT --runtime DIR [--block-coverage] [--x64] [--specs FILE]
 //
 // --specs writes generate()'s specs (Q records: name base seed...), to compare with the Python's.
 #include <cstdio>
@@ -27,11 +27,12 @@ int main(int argc, char** argv) {
         else if (a == "--out") o.out = next();
         else if (a == "--runtime") o.runtime = next();
         else if (a == "--block-coverage") o.block_coverage = true;
+        else if (a == "--x64") o.x64 = true;
         else if (a == "--specs") specs_out = next();
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
     if (o.work.empty() || o.profile.empty() || (o.out.empty() && specs_out.empty())) {
-        fprintf(stderr, "usage: sf3-gen --work WORK --profile PROFILE.json --out OUT --runtime DIR [--block-coverage] [--specs FILE]\n");
+        fprintf(stderr, "usage: sf3-gen --work WORK --profile PROFILE.json --out OUT --runtime DIR [--block-coverage] [--x64] [--specs FILE]\n");
         return 2;
     }
     o.log = [](const std::string& s) { printf("%s\n", s.c_str()); fflush(stdout); };

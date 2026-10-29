@@ -21,6 +21,7 @@ struct GenOptions {
     std::string out;             // generated tree
     std::string runtime;         // saturn-recomp's runtime directory, as CMakeLists.txt names it
     bool block_coverage = false;
+    bool x64 = false;                   // also write the x86-64 backend's caches and binding stubs (emit_x64.h)
     int per_file = 8000;
     bool comments = true;
     std::function<void(const std::string&)> log;
