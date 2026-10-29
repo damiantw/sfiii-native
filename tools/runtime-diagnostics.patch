@@ -271,15 +271,19 @@ index 0000000..712a96c
 +    ~SH2CallFrame() { g_sh2_frames->pop(depth); }
 +};
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..90f64c9 100644
+index cb6af72..03bb32d 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
-@@ -3,8 +3,26 @@
+@@ -3,8 +3,30 @@
  // active modules (one per address range: the resident programs and the one
  // swapped in).
  #include "saturn/sh2.h"
 +#include "call_frames.h"
 +extern const bool g_sh2_native_states __attribute__((weak)) = false;
++// A core-only link (selftest, tools tests) may give only the module tables: no tasks, no switches.
++extern const uint32_t g_sh2_tasks[2] __attribute__((weak)) = {0, 0};
++extern const SH2TaskSwitch g_sh2_task_switches[1] __attribute__((weak)) = {};
++extern const int g_sh2_ntask_switches __attribute__((weak)) = 0;
 +// The generated tables stay strong references, so a static library's modules.cpp is still linked; a
 +// build that installs its set at run time links empty ones (gen/x64_set.cpp).
 +static const SH2ModuleSet* g_module_set_override;
@@ -301,7 +305,7 @@ index cb6af72..90f64c9 100644
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
  alignas(64) uint8_t g_wram_h[0x100000 + 8];
-@@ -13,19 +31,24 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
+@@ -13,19 +35,24 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
  // Areas by the top three bits: 0 cached, 1 cache-through (the same 27-bit
  // external bus), 2 associative purge (writes drop a cache line: nothing to
  // do), 3 the cache's address array, 6 its data array, 7 the on-chip
@@ -329,7 +333,7 @@ index cb6af72..90f64c9 100644
          return sh2_mmio_read(p, size);
      }
      if (area == 2) return 0;
-@@ -33,6 +56,7 @@ uint32_t sh2_io_read(uint32_t a, int size) {
+@@ -33,6 +60,7 @@ uint32_t sh2_io_read(uint32_t a, int size) {
  }
  
  void sh2_io_write(uint32_t a, uint32_t v, int size) {
@@ -337,7 +341,7 @@ index cb6af72..90f64c9 100644
      uint32_t area = a >> 29;
      if (area <= 1) {
          uint32_t p = a & 0x07FFFFFFu;
-@@ -40,6 +64,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -40,6 +68,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
              for (int i = size - 1; i >= 0; --i, v >>= 8) g_wram_h[(p + i) & 0xFFFFFu] = (uint8_t)v;
              return;
          }
@@ -348,7 +352,7 @@ index cb6af72..90f64c9 100644
          sh2_mmio_write(p, v, size);
          return;
      }
-@@ -50,7 +78,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -50,7 +82,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
  static uint8_t* host(uint32_t a) {
      a &= 0x1FFFFFFFu;
      if (a >= 0x06000000u && a < 0x08000000u) return g_wram_h + (a & 0xFFFFFu);
@@ -357,7 +361,7 @@ index cb6af72..90f64c9 100644
      return nullptr;
  }
  
-@@ -88,15 +116,19 @@ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc) {
+@@ -88,15 +120,19 @@ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc) {
      return ~crc;
  }
  
@@ -381,7 +385,7 @@ index cb6af72..90f64c9 100644
          uint8_t* p = host(base);
          if (m->base != base || !p || !host(base + m->size - 1)) continue;
          if (sh2_crc32(p, m->size) == m->crc) return m;
-@@ -113,42 +145,188 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+@@ -113,42 +149,188 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -585,7 +589,7 @@ index cb6af72..90f64c9 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -164,8 +342,8 @@ static bool is_base(uint32_t addr) {
+@@ -164,8 +346,8 @@ static bool is_base(uint32_t addr) {
      static int n = -1;
      if (n < 0) {
          n = 0;
@@ -596,7 +600,7 @@ index cb6af72..90f64c9 100644
              bool seen = false;
              for (int k = 0; k < n; ++k) seen |= bases[k] == b;
              if (!seen && n < kSlots * 2) bases[n++] = b;
-@@ -183,14 +361,59 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -183,14 +365,59 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  
