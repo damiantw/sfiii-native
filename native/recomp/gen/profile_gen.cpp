@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <regex>
 #include <stdexcept>
 
@@ -319,6 +320,254 @@ std::set<uint32_t> idiom_entries(const std::vector<uint8_t>& data, uint32_t base
     return out;
 }
 
+
+// ---- tools/audit-modules.py ------------------------------------------------------------------------
+namespace {
+
+json::Value jstr(const std::string& v) { json::Value x; x.kind = json::Value::String; x.s = v; return x; }
+json::Value jbool(bool v) { json::Value x; x.kind = json::Value::Bool; x.b = v; return x; }
+json::Value jseeds(const std::set<uint32_t>& v) {
+    json::Value x; x.kind = json::Value::Array;
+    for (uint32_t a : v) x.items.push_back(jstr(fmt("%08X", a)));
+    return x;
+}
+void jset(json::Value& o, const std::string& k, json::Value v) {
+    for (auto& [n, x] : o.fields) if (n == k) { x = std::move(v); return; }
+    o.fields.emplace_back(k, std::move(v));
+}
+
+// SF3Lib/Models/Files/<name>/<name>_File.cs, Scenario 1 RamAddress (audit-modules.py MODEL_BASES).
+const std::map<std::string, uint32_t>& scenario1_model_bases() {
+    static const std::map<std::string, uint32_t> m = {
+        {"X011", 0x06068000}, {"X012", 0x06070000}, {"X013", 0x06080000}, {"X014", 0x06088000}, {"X016", 0x06088000},
+        {"X017", 0x06088000}, {"X018", 0x06088000}, {"X019", 0x060A0000}, {"X021", 0x06068000}, {"X023", 0x06078000},
+        {"X024", 0x0607B000}, {"X026", 0x06078000}, {"X027", 0x06078000}, {"X031", 0x06053000}, {"X032", 0x06088000},
+        {"X033", 0x06078000}, {"X035", 0x06088000}, {"X044", 0x06078000}};
+    return m;
+}
+
+constexpr uint8_t kVeneer[8] = {0xd0, 0x01, 0x40, 0x2b, 0x00, 0x09, 0x00, 0x09};
+uint32_t be32(const std::vector<uint8_t>& d, size_t at) {
+    return uint32_t(d[at]) << 24 | uint32_t(d[at + 1]) << 16 | uint32_t(d[at + 2]) << 8 | d[at + 3];
+}
+std::vector<int64_t> raw_veneers(const std::vector<uint8_t>& d) {
+    std::vector<int64_t> out;
+    for (int64_t at = 0; at < int64_t(d.size()) - 11; at += 4)
+        if (std::equal(kVeneer, kVeneer + 8, d.begin() + at)) out.push_back(at);
+    return out;
+}
+std::set<uint32_t> veneers(const std::vector<uint8_t>& d, uint32_t base) {
+    std::set<uint32_t> out;
+    for (int64_t at : raw_veneers(d)) {
+        uint32_t t = be32(d, size_t(at) + 8);
+        if (base <= t && int64_t(t) < int64_t(base) + int64_t(d.size()) && !(t & 1)) out.insert(uint32_t(base + at));
+    }
+    return out;
+}
+
+struct Audited {
+    std::string file;
+    FlatImage img;
+    std::set<uint32_t> seeds;
+    std::unique_ptr<Program> prog;
+    bool inside(int64_t a) const { return prog->lo <= a && a < prog->hi && !(a & 1); }
+};
+
+std::unique_ptr<Program> discover(const FlatImage& img, const std::set<uint32_t>& seeds) {
+    std::vector<uint32_t> s{img.base};
+    s.insert(s.end(), seeds.begin(), seeds.end());
+    return std::make_unique<Program>(img, s);
+}
+
+}  // namespace
+
+std::string audit_profile(const std::string& work_dir, const std::string& profile_path,
+                          const std::function<void(const std::string&)>& log) {
+    fs::path work = fs::absolute(work_dir);
+    json::Value profile = json::parse(read_text(profile_path));
+    json::Value manifest = json::parse(read_text(work / "manifest.json"));
+    if (auto* c = profile.find("content_sha256"); c && c->truthy()) {
+        std::string canon;
+        json::dump_sorted(manifest, canon);
+        if (sha256_hex(reinterpret_cast<const uint8_t*>(canon.data()), canon.size()) != c->str())
+            throw std::runtime_error("Inventory contents do not match the selected revision profile");
+    } else {
+        throw std::runtime_error("the on-machine audit needs a profile with content_sha256");
+    }
+    std::vector<ModuleDef> modules = expand_modules(profile, manifest);
+    std::map<std::string, uint32_t> model_bases;
+    int64_t scenario = profile.has("scenario") ? profile.at("scenario").integer() : 1;
+    if (scenario != 1) {
+        if (auto* mb = profile.find("model_bases")) for (auto& [k, v] : mb->fields) model_bases[k] = uint32_t(hex(v.str()));
+    } else {
+        model_bases = scenario1_model_bases();
+    }
+    std::map<std::string, const ModuleDef*> known;
+    for (auto& m : modules) known[m.file] = &m;
+    std::set<std::string> containers;
+    if (auto* cs = profile.find("module_containers")) for (auto& c : cs->items) containers.insert(c.at("file").str());
+    auto verified = [&](const std::string& name) {
+        auto data = read_bytes(work / "extract" / name);
+        const json::Value& want = manifest_file(manifest, name);
+        if (int64_t(data.size()) != want.at("size").integer() || sha1_hex(data.data(), data.size()) != want.at("sha1").str())
+            throw std::runtime_error("Extracted file changed: " + name);
+        return data;
+    };
+    // the inputs: every top-level *.BIN but containers (sorted, as Path.glob then sorted), then the sliced modules
+    std::vector<std::pair<std::string, const ModuleDef*>> inputs;
+    {
+        std::vector<std::string> names;
+        for (auto& e : fs::directory_iterator(work / "extract")) {
+            std::string n = e.path().filename().string();
+            if (e.is_regular_file() && n.size() > 4 && n.compare(n.size() - 4, 4, ".BIN") == 0 && !containers.count(n))
+                names.push_back(n);
+        }
+        std::sort(names.begin(), names.end());
+        for (auto& n : names) inputs.emplace_back(n, nullptr);
+        for (auto& m : modules) if (!m.source_file.empty()) inputs.emplace_back(m.file, &m);
+    }
+    std::vector<std::unique_ptr<Audited>> programs;            // insertion order, as the Python's dict
+    json::Value additions; additions.kind = json::Value::Array;
+    const json::Value* mf = &manifest.at("files");
+    for (auto& [name, sliced] : inputs) {
+        std::vector<uint8_t> data;
+        if (sliced) {
+            data = image_bytes(*sliced, verified(sliced->source_file));
+        } else {
+            if (!mf->has("/" + name)) continue;                   // IP.BIN is boot metadata, not a module
+            data = verified(name);
+            if (known.count(name)) image_bytes(*known[name], data);
+        }
+        std::string stem = name.substr(0, name.size() - 4);
+        auto raw = raw_veneers(data);
+        if (raw.empty() && !known.count(name) && !model_bases.count(stem)) continue;
+        const ModuleDef* m = known.count(name) ? known[name] : nullptr;
+        std::optional<uint32_t> base;
+        std::string source;
+        if (m) base = uint32_t(hex(m->base)), source = "existing-profile";
+        if (!base && std::regex_match(stem, std::regex("X1[A-Z0-9_]+"))) {
+            base = stem == "X1BTL99" ? 0x06060000u
+                                     : uint32_t(hex(profile.has("scene_base") ? profile.at("scene_base").str() : "0605F000"));
+            source = "SF3Tools scenario-specific X1 model; static mapping, see profile scenario";
+        }
+        if (!base && model_bases.count(stem)) base = model_bases[stem], source = "SF3Tools scenario-specific file model";
+        std::string eb = profile.has("effect_base") ? (profile.at("effect_base").kind == json::Value::String ? profile.at("effect_base").str() : "") : "0604A800";
+        if (!base && stem.rfind("X3", 0) == 0 && !raw.empty() && !eb.empty()) {
+            uint32_t effect = uint32_t(hex(eb));
+            bool all = true;
+            for (int64_t at : raw) {
+                uint32_t t = be32(data, size_t(at) + 8);
+                if (!(effect <= t && int64_t(t) < int64_t(effect) + int64_t(data.size()) && !(t & 1))) all = false;
+            }
+            if (all) base = effect, source = "X014 effect-loader destination; all X3 exports inside image; family inference, gameplay unvalidated";
+        }
+        if (!base) continue;                                      // needs-load-address-review
+        std::vector<uint8_t> image = data;
+        if (m && m->bytes) image.resize(size_t(hex(*m->bytes)));
+        std::set<uint32_t> entries = idiom_entries(image, *base);
+        if (m)
+            for (auto& sd : m->seeds) {
+                int64_t e = hex(sd);
+                if (*base <= e && e < int64_t(*base) + int64_t(image.size())) entries.insert(uint32_t(e));
+            }
+        auto v = veneers(image, *base);
+        if (!m && v.empty()) continue;                            // needs-executable-entry-review
+        auto a = std::make_unique<Audited>();
+        a->file = name, a->img.base = *base, a->img.data = std::move(image), a->seeds = entries;
+        a->prog = discover(a->img, a->seeds);
+        if (log) log(fmt("%s %zu functions; %s", name.c_str(), a->prog->funcs.size(), source.c_str()));
+        if (!m) {
+            json::Value add; add.kind = json::Value::Object;
+            jset(add, "name", jstr(stem));
+            jset(add, "file", jstr(name));
+            jset(add, "base", jstr(fmt("%08X", *base)));
+            jset(add, "seeds", jseeds(entries));
+            jset(add, "overlay", jbool(true));
+            jset(add, "evidence", jstr(source + "; exact in-image SH-2 export veneers; on-machine audit"));
+            additions.items.push_back(std::move(add));
+        }
+        programs.push_back(std::move(a));
+    }
+    // Close statically resolved calls across uniquely owned image ranges (audit-modules.py).
+    for (int iteration = 0; iteration < 8; ++iteration) {
+        std::map<std::string, std::set<uint32_t>> requests;
+        for (auto& caller : programs) {
+            for (auto& f : caller->prog->funcs) {
+                if (f->bad) continue;
+                f->calls.each([&](uint32_t target) {
+                    if (caller->inside(target)) return;
+                    Audited* owner = nullptr;
+                    int n = 0;
+                    for (auto& p : programs) if (p->inside(target)) owner = p.get(), ++n;
+                    if (n != 1) return;
+                    if (!owner->prog->func_index.count(target) && !owner->prog->data.has(target)) requests[owner->file].insert(target);
+                });
+            }
+        }
+        bool changed = false;
+        for (auto& [owner_name, targets] : requests) {
+            Audited* owner = nullptr;
+            for (auto& p : programs) if (p->file == owner_name) owner = p.get();
+            std::set<uint32_t> trial_seeds = owner->seeds;
+            trial_seeds.insert(targets.begin(), targets.end());
+            auto trial = discover(owner->img, trial_seeds);
+            std::set<uint32_t> accepted;
+            for (uint32_t t : targets) {
+                auto it = trial->func_index.find(t);
+                if (it == trial->func_index.end()) continue;
+                const Function& tf = *trial->funcs[it->second];
+                if (tf.bad) continue;
+                bool overlap = false;
+                for (uint32_t c : tf.code) if (trial->data.has(c)) { overlap = true; break; }
+                if (!overlap) accepted.insert(t);
+            }
+            if (!accepted.empty()) {
+                owner->seeds.insert(accepted.begin(), accepted.end());
+                owner->prog = discover(owner->img, owner->seeds);
+                changed = true;
+            }
+        }
+        if (!changed) break;
+    }
+    json::Value candidate = profile;
+    json::Value& mods = [&]() -> json::Value& { for (auto& [n, v] : candidate.fields) if (n == "modules") return v; throw std::runtime_error("profile has no modules"); }();
+    {   // as module_images.expand_modules: the container chunks become modules of their own
+        std::set<std::string> listed;
+        for (auto& mod : mods.items) listed.insert(mod.at("file").str());
+        for (auto& m : modules) {
+            if (listed.count(m.file)) continue;
+            std::string evidence;
+            if (auto* cs = profile.find("module_containers"))
+                for (auto& c : cs->items) if (c.at("file").str() == m.source_file) evidence = c.at("evidence").str();
+            json::Value o; o.kind = json::Value::Object;
+            jset(o, "name", jstr(m.name));
+            jset(o, "file", jstr(m.file));
+            jset(o, "source_file", jstr(m.source_file));
+            jset(o, "offset", jstr(*m.offset));
+            jset(o, "bytes", jstr(*m.bytes));
+            jset(o, "base", jstr(m.base));
+            json::Value offs; offs.kind = json::Value::Array;
+            for (int64_t v : m.required_veneer_offsets) { json::Value n; n.kind = json::Value::Number; n.s = std::to_string(v); offs.items.push_back(n); }
+            jset(o, "required_veneer_offsets", offs);
+            json::Value sd; sd.kind = json::Value::Array;
+            for (auto& x : m.seeds) sd.items.push_back(jstr(x));
+            jset(o, "seeds", sd);
+            jset(o, "overlay", jbool(true));
+            jset(o, "evidence", jstr(evidence));
+            mods.items.push_back(std::move(o));
+        }
+    }
+    for (auto& a : additions.items) mods.items.push_back(a);
+    for (auto& mod : mods.items) {
+        std::string file = mod.at("file").str();
+        for (auto& p : programs) if (p->file == file) jset(mod, "seeds", jseeds(p->seeds));
+    }
+    jset(candidate, "audit_note", jstr("Experimental bulk profile. Static discovery and documented bases are not gameplay validation."));
+    std::string out;
+    json::dump_sorted(candidate, out);
+    return out;
+}
+
 std::vector<Spec> prepare_specs(const GenOptions& o, std::vector<SceneRow>& scene_rows) {
     fs::path work = fs::absolute(o.work);
     json::Value profile = json::parse(read_text(o.profile));
@@ -437,6 +686,10 @@ EmitBuild discover_build(const std::vector<Spec>& specs, const GenOptions& o) {
 void generate_from_profile(const GenOptions& o) {
     std::vector<SceneRow> rows;
     auto specs = prepare_specs(o, rows);
+    if (!o.x64_set.empty()) {
+        generate_x64_set(discover_build(specs, o), o.x64_set, o.progress);
+        return;
+    }
     fs::create_directories(o.out);
     {
         std::ofstream log(fs::path(o.out) / "scene-data-entries.tsv", std::ios::binary | std::ios::trunc);
