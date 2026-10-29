@@ -1845,7 +1845,7 @@ index 15eaa96..75308ad 100644
  // The range a number may take, by key.
  static const struct { const char* key; int lo, hi; } kRanges[] = {
 diff --git a/runtime/src/machine/agent.cpp b/runtime/src/machine/agent.cpp
-index 8f7fc01..a59600a 100644
+index 8f7fc01..07a83f9 100644
 --- a/runtime/src/machine/agent.cpp
 +++ b/runtime/src/machine/agent.cpp
 @@ -16,7 +16,9 @@
@@ -1858,9 +1858,13 @@ index 8f7fc01..a59600a 100644
  #include <string>
  #if !defined(_WIN32)
  #include <sys/socket.h>
-@@ -95,6 +97,14 @@ static void send_frame() {
+@@ -94,7 +96,18 @@ static void send_frame() {
+ }
  
  void agent_poll() {
++    extern uint64_t g_state_live_loads;
++    static uint64_t loads_seen;
++    if (g_state_live_loads != loads_seen) loads_seen = g_state_live_loads, g_until = 0;   // a live load set the clock back
      if (g_cfg.agent_fd < 0 || sat_vblanks() < g_until) return;
 +    // SF3_AGENT_LINE=N holds the pause, once the VBlank has come, until raster line N of it (the
 +    // display's lines up to 262), so that a step ends where another machine's frame does: Beetle
@@ -1873,7 +1877,7 @@ index 8f7fc01..a59600a 100644
      say("vblank " + std::to_string(sat_vblanks()));
      std::string line;
      while (read_line(line)) {
-@@ -115,6 +125,28 @@ void agent_poll() {
+@@ -115,6 +128,37 @@ void agent_poll() {
          } else if (cmd == "read") read_memory(args);
          else if (cmd == "write") write_memory(args);
          else if (cmd == "frame") send_frame();
@@ -1883,6 +1887,15 @@ index 8f7fc01..a59600a 100644
 +            if (!(args >> path)) say("error save PATH");
 +            else if (!std::getenv("SF3_STATE_ID")) say("error save needs SF3_STATE_ID (the executable/disc identity)");
 +            else try { state_request_save(path); say("ok"); } catch (const std::exception& e) { say(std::string("error ") + e.what()); }
++        } else if (cmd == "load") {
++            // a native state, checked now and loaded at the next safe moment; `loaded` reports it
++            std::string path;
++            if (!(args >> path)) say("error load PATH");
++            else if (!std::getenv("SF3_STATE_ID")) say("error load needs SF3_STATE_ID (the executable/disc identity)");
++            else try { state_request_load(path); say("ok"); } catch (const std::exception& e) { say(std::string("error ") + e.what()); }
++        } else if (cmd == "loaded") {
++            int r = state_load_result();
++            say("loaded " + std::string(state_load_busy() ? "busy" : "done") + " " + std::to_string(r));
 +        } else if (cmd == "saved") say("saved " + std::string(state_save_busy() ? "busy" : "done") + " " + std::to_string(state_write_result()));
 +        else if (cmd == "statepart") {
 +            std::string name;
@@ -2594,7 +2607,7 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..53f1d2d 100644
+index a17d926..fadc1a2 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
 @@ -1,11 +1,11 @@
@@ -2786,7 +2799,15 @@ index a17d926..53f1d2d 100644
              s = SH2Context{};
              s.cpu = 1;
              s.vbr = 0x06000400u;
-@@ -421,7 +522,40 @@ static void watch_for_stalls() {
+@@ -378,6 +479,7 @@ static void slave_main() {
+             sh2_call(s, entry);
+             sat_fatal("the slave's entry %08X returned", entry);
+         } catch (SlaveReset&) {
++            g_slave_snapshot_ready = false;       // a reset can unwind a slave parked for a snapshot (a live load)
+             sat_trace("slave reset");
+         }
+     }
+@@ -421,7 +523,40 @@ static void watch_for_stalls() {
      }
  }
  
@@ -2828,7 +2849,7 @@ index a17d926..53f1d2d 100644
  
  void slave_on() {
      if (!g_slave_thread) {
-@@ -443,10 +577,17 @@ void slave_off() {
+@@ -443,10 +578,17 @@ void slave_off() {
      to_slave();                     // it unwinds and parks
  }
  
@@ -2847,7 +2868,7 @@ index a17d926..53f1d2d 100644
  }
  
  // SINIT: the master pulses the slave's FRT input capture
-@@ -460,16 +601,50 @@ void slave_kick() {
+@@ -460,16 +602,57 @@ void slave_kick() {
  // The clock and the multitap are the run's own settings, but a dump goes on with the ones it was made with.
  void machine_state(State& s) {
      uint8_t ip[16];
@@ -2870,10 +2891,17 @@ index a17d926..53f1d2d 100644
 +    if (s.loading) g_slice = 0;                 // worked out again from g_vtime on its first use
 +    s(g_slave), s(g_slave_on), s(g_slave_idle), s(g_slave_polls);
 +    if (s.loading && g_slave_on) {
-+        if (g_slave_thread) state_fail("load requires a fresh process");
 +        g_slave_resume = true;
-+        g_slave_thread = true;
-+        std::thread(slave_main).detach();
++        // live load: the parked slave unwinds when it next runs, then resumes at its pc; until then it is
++        // no more parked than a fresh process's slave that has not run yet
++        if (g_slave_thread) g_slave_reset = true, g_slave_snapshot_ready = false;
++        else {
++            g_slave_thread = true;
++            std::thread(slave_main).detach();
++        }
++    } else if (s.loading && g_slave_thread) {
++        g_slave_resume = false;
++        g_slave_reset = true, g_slave_snapshot_ready = false;   // live load of a dump with the slave off: it unwinds and waits
 +    }
 +}
 +
@@ -2901,7 +2929,7 @@ index a17d926..53f1d2d 100644
  }
  
  // --coverage FILE: "MODULE ADDRESS INSTRUCTIONS RAN" for every recompiled function, RAN 1 or 0.
-@@ -488,6 +663,33 @@ static void write_coverage(const std::string& path) {
+@@ -488,6 +671,33 @@ static void write_coverage(const std::string& path) {
      std::error_code e;
      std::filesystem::rename(part, path, e);
      if (e) sat_note("coverage: cannot replace %s: %s", path.c_str(), e.message().c_str());
@@ -2935,7 +2963,7 @@ index a17d926..53f1d2d 100644
  }
  
  // --checkpoint SECONDS: coverage written again every SECONDS of the host's time, so a run that is
-@@ -512,6 +714,7 @@ static void checkpoint_due() {
+@@ -512,6 +722,7 @@ static void checkpoint_due() {
  static const int kModemLine = 12;
  
  void master_poll_devices() {
@@ -2943,7 +2971,7 @@ index a17d926..53f1d2d 100644
      uint64_t now = sat_now();
      video_tick(now);
      writes_due();
-@@ -528,17 +731,38 @@ void master_poll_devices() {
+@@ -528,17 +739,38 @@ void master_poll_devices() {
      if (g_cfg.stop_vblanks && sat_vblanks() >= g_cfg.stop_vblanks) sat_stop("VBlank limit");
  }
  
@@ -2984,7 +3012,7 @@ index a17d926..53f1d2d 100644
  }
  
  static int g_int_depth;
-@@ -555,6 +779,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -555,6 +787,7 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
      c.r[15] -= 4; st32(c.r[15], sh2_get_sr(c));
      c.r[15] -= 4; st32(c.r[15], kIntPC);
      c.imask = level;
@@ -2992,7 +3020,7 @@ index a17d926..53f1d2d 100644
      if (bios_is_dispatcher(vec, target)) {
          bios_dispatch(c, vec);
      } else {
-@@ -568,11 +793,16 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
+@@ -568,11 +801,16 @@ void sat_interrupt(SH2Context& c, uint32_t vec, uint32_t level) {
  }
  
  void sh2_sleep(SH2Context& c, uint32_t pc) {
@@ -3012,7 +3040,7 @@ index a17d926..53f1d2d 100644
      }
      sat_fatal("sleep at %08X: nothing woke it", pc);
  }
-@@ -584,6 +814,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
+@@ -584,6 +822,11 @@ void sh2_trapa(SH2Context& c, uint32_t imm, uint32_t pc) {
  
  void sh2_bad_return(SH2Context& c, uint32_t expected) {
      if (tasks_pending()) { tasks_route(c, expected); return; }
@@ -3024,7 +3052,7 @@ index a17d926..53f1d2d 100644
      sat_fatal("returned to %08X, expected %08X", c.pc, expected);
  }
  
-@@ -616,6 +851,7 @@ void sh2_program_start(SH2Context& c, uint32_t addr) {
+@@ -616,6 +859,7 @@ void sh2_program_start(SH2Context& c, uint32_t addr) {
  
  int saturn_main(const SaturnConfig& cfg) {
      g_cfg = cfg;
@@ -3032,7 +3060,7 @@ index a17d926..53f1d2d 100644
      g_t0 = std::chrono::steady_clock::now();
      mmio_watch(cfg.watch_lo, cfg.watch_hi);
      if (cfg.watch_lo <= cfg.watch_hi && (SH2_IS_WRAM_H(cfg.watch_lo) || SH2_IS_WRAM_L(cfg.watch_lo))) {
-@@ -644,6 +880,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -644,6 +888,7 @@ int saturn_main(const SaturnConfig& cfg) {
      }
      g_master = SH2Context{};
      g_master.budget = kBudget;
@@ -3040,7 +3068,7 @@ index a17d926..53f1d2d 100644
      video_init();
      sound_init();
      cd_init();
-@@ -658,7 +895,7 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -658,7 +903,7 @@ int saturn_main(const SaturnConfig& cfg) {
      else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
      for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
      bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
@@ -3049,7 +3077,23 @@ index a17d926..53f1d2d 100644
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
-@@ -704,3 +941,12 @@ int saturn_main(const SaturnConfig& cfg) {
+@@ -677,6 +922,15 @@ int saturn_main(const SaturnConfig& cfg) {
+             tasks_route(g_master, ~0u);
+         } catch (TaskUnwind& u) {
+             entry = u.pc;
++        } catch (StateLoadNow& l) {
++            // a live load at a safe moment (state.cpp): every fiber is dropped, as at a program start
++            tasks_reset();
++            state_load(l.path);
++            writes_skip_past();
++            entry = g_master.pc;
++            tasks = true;
++            void state_loaded_live();
++            state_loaded_live();
+         } catch (ProgramStart& s) {
+             tasks_reset();
+             entry = s.addr;
+@@ -704,3 +958,12 @@ int saturn_main(const SaturnConfig& cfg) {
      std::fflush(stdout);
      std::_Exit(0);                  // the slave's thread is parked: do not wait for it
  }
@@ -3472,7 +3516,7 @@ index 33a2cdd..46829ad 100644
      else if (off >= 0x19C && off < 0x1A0) dma(o, 1);
      else if (off >= 0x1B0 && off < 0x1B4) { dma(o, 0); dma(o, 1); }
 diff --git a/runtime/src/machine/saturn.h b/runtime/src/machine/saturn.h
-index 6cbd98f..8315611 100644
+index 6cbd98f..06a8a3e 100644
 --- a/runtime/src/machine/saturn.h
 +++ b/runtime/src/machine/saturn.h
 @@ -55,6 +55,7 @@ struct SaturnConfig {
@@ -3509,12 +3553,19 @@ index 6cbd98f..8315611 100644
  
  // ---- dumps of the machine (state.cpp; state.h for the parts) ----------------------------------
  void state_enable();                // the run has safe moments: a game's task switch
-@@ -112,10 +124,20 @@ void state_poll();                  // from the master's polls: dumps due, a sto
+@@ -112,10 +124,27 @@ void state_poll();                  // from the master's polls: dumps due, a sto
  void state_point(SH2Context& c);    // a safe moment: c's registers and PC are all the run needs to go on
  void state_stop(const char* why);   // the run stops at the next dump, or soon without one
  void state_finish();                // the last dump written
 +void state_request_save(const std::string& path);
 +void state_check_file(const std::string& path);
++// A live load (the agent's `load PATH`): the file is checked now, and it is loaded at the next safe moment.
++// state_point throws StateLoadNow there, the master's host stack unwinds to saturn_main, and the run goes on
++// from the dump's PC on a fresh task, the same as --state-in at start-up.
++struct StateLoadNow { std::string path; };
++void state_request_load(const std::string& path);
++bool state_load_busy();
++int state_load_result();             // 1 loaded, -1 no safe moment came in time, 0 nothing new
 +bool state_save_busy();
 +int state_write_result();
 +std::vector<uint8_t> state_part_bytes(const std::string& name);   // agent `statepart NAME`
@@ -3530,7 +3581,7 @@ index 6cbd98f..8315611 100644
  
  // ---- the BIOS (bios.cpp) -----------------------------------------------------------
  void bios_boot();                   // the state the BIOS leaves, the 1st read file loaded
-@@ -205,7 +227,10 @@ uint32_t onchip_read(SH2Context& c, uint32_t a, int size);
+@@ -205,7 +234,10 @@ uint32_t onchip_read(SH2Context& c, uint32_t a, int size);
  void onchip_write(SH2Context& c, uint32_t a, uint32_t v, int size);
  void onchip_input_capture(int cpu);   // SINIT/MINIT: the FRT's input-capture flag
  void onchip_reset(int cpu);
@@ -3541,7 +3592,7 @@ index 6cbd98f..8315611 100644
  uint64_t onchip_phi_clocks(uint64_t ns);   // φ's clocks in `ns`: the FRT's and the watchdog's time base
  bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if due and above c's mask; taken?
  
-@@ -213,11 +238,18 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
+@@ -213,11 +245,18 @@ bool onchip_deliver(SH2Context& c);   // the watchdog's interval interrupt, if d
  void video_init();
  void video_reboot();                  // the BIOS boots a disc again: VDP2's registers as at power-on
  void video_tick(uint64_t now);        // raster timing: VBlank in/out, lines, VDP1 frames
@@ -3824,7 +3875,7 @@ index ef4f660..13864ed 100644
              }
          }
 diff --git a/runtime/src/machine/state.cpp b/runtime/src/machine/state.cpp
-index 67ccdd3..1d8c24d 100644
+index 67ccdd3..567556a 100644
 --- a/runtime/src/machine/state.cpp
 +++ b/runtime/src/machine/state.cpp
 @@ -19,17 +19,53 @@
@@ -3909,7 +3960,7 @@ index 67ccdd3..1d8c24d 100644
  static uint64_t g_at_vblank = ~0ull;            // --state-at: the first safe moment from this VBlank on
  static std::chrono::steady_clock::time_point g_next;
  static bool g_points;                           // the run has safe moments (state_enable)
-@@ -75,15 +124,55 @@ static void write_file(std::vector<uint8_t> bytes, std::string path, uint64_t vb
+@@ -75,27 +124,96 @@ static void write_file(std::vector<uint8_t> bytes, std::string path, uint64_t vb
      bool ok = f && std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
      if (f) ok = std::fclose(f) == 0 && ok;
      std::error_code e;
@@ -3940,6 +3991,23 @@ index 67ccdd3..1d8c24d 100644
 +    g_request_deadline=sat_vblanks()+120;
 +    g_state_requested=true;
 +}
++static std::string g_load_wanted;
++static uint64_t g_load_deadline;
++static std::atomic<int> g_load_result{0};
++void state_request_load(const std::string& path) {
++    if (!g_sh2_native_states) throw std::runtime_error("This build has no native state continuations");
++    if (g_cfg.realtime) throw std::runtime_error("Native states require virtual timing");
++    if (!g_load_wanted.empty()) throw std::runtime_error("A native state is already waiting to load");
++    if (g_writing || g_wanted) throw std::runtime_error("A native state is still being written");
++    state_check_file(path);
++    g_load_wanted = path;
++    g_load_deadline = sat_vblanks() + 120;
++    g_state_requested = true;
++}
++bool state_load_busy() { return !g_load_wanted.empty(); }
++int state_load_result() { return g_load_result.exchange(0); }
++uint64_t g_state_live_loads;
++void state_loaded_live() { g_load_result = 1; ++g_state_live_loads; }
 +bool state_save_busy() {return g_writing || g_wanted;}
 +int state_write_result() {return g_write_result.exchange(0);}
 +
@@ -3956,7 +4024,7 @@ index 67ccdd3..1d8c24d 100644
 +
 +void state_native_point(SH2Context& c, uint32_t pc) {
 +    if (c.cpu==1) {machine_state_park_slave(pc);return;}
-+    if (sat_in_interrupt() || !g_wanted || g_writing) return;
++    if (sat_in_interrupt() || (!g_wanted && g_load_wanted.empty()) || g_writing) return;
 +    if (!machine_state_quiesce_slave()) return;
 +    c.pc=pc;
 +    state_point(c);
@@ -3967,11 +4035,22 @@ index 67ccdd3..1d8c24d 100644
      if (!g_cfg.state_at.empty()) g_at_vblank = std::stoull(g_cfg.state_at);
      if (g_cfg.state_every) g_next = std::chrono::steady_clock::now() + std::chrono::seconds(g_cfg.state_every);
  }
-@@ -96,6 +185,12 @@ void state_poll() {
+ 
+ // From the master's polls: a dump is due by the host's clock, or a stop has waited long enough.
+ void state_poll() {
++    if (!g_load_wanted.empty() && sat_vblanks() > g_load_deadline) {
++        g_load_wanted.clear();
++        g_load_result = -1;
++        sat_note("state: no safe moment for the load came; the run goes on");
++    }
++    if (!g_load_wanted.empty()) g_state_requested = true;     // recompiled code asks for a safe moment (SH2_STATE_POINT)
+     if (g_cfg.state_out.empty()) return;
+     if (sat_vblanks() >= g_at_vblank) g_wanted = true;
+     if (g_cfg.state_every && std::chrono::steady_clock::now() >= g_next) {
          g_next = std::chrono::steady_clock::now() + std::chrono::seconds(g_cfg.state_every);
          g_wanted = true;
      }
-+    g_state_requested=g_wanted;
++    g_state_requested=g_wanted || !g_load_wanted.empty();
 +    if(g_wanted && !g_request_deadline) g_request_deadline=sat_vblanks()+120;
 +    if(g_wanted && sat_vblanks()>g_request_deadline) {
 +        g_wanted=false;g_state_requested=false;g_at_vblank=~0ull;g_request_deadline=0;
@@ -3980,7 +4059,7 @@ index 67ccdd3..1d8c24d 100644
      if (g_stop_why && sat_vblanks() >= g_stop_by) {
          sat_note("state: no safe moment came, so none was written at the stop");
          sat_stop(g_stop_why);
-@@ -103,6 +198,7 @@ void state_poll() {
+@@ -103,6 +221,7 @@ void state_poll() {
  }
  
  void state_stop(const char* why) {
@@ -3988,8 +4067,16 @@ index 67ccdd3..1d8c24d 100644
      if (g_cfg.state_out.empty() || !g_points) sat_stop(why);
      if (g_stop_why) return;
      g_stop_why = why;
-@@ -113,10 +209,15 @@ void state_stop(const char* why) {
+@@ -111,12 +230,23 @@ void state_stop(const char* why) {
+ }
+ 
  void state_point(SH2Context& c) {
++    if (!g_load_wanted.empty() && !g_writing && c.cpu == 0 && !sat_in_interrupt() && !state_slave_busy()) {
++        std::string path = std::move(g_load_wanted);
++        g_load_wanted.clear();
++        g_state_requested = g_wanted;
++        throw StateLoadNow{path};
++    }
      if (!g_wanted || g_writing || c.cpu != 0 || sat_in_interrupt() || state_slave_busy()) return;
      g_wanted = false;
 +    g_request_deadline=0;
@@ -4004,7 +4091,7 @@ index 67ccdd3..1d8c24d 100644
      for (auto& p : kParts) {
          State s;
          p.fn(s);
-@@ -127,6 +228,9 @@ void state_point(SH2Context& c) {
+@@ -127,6 +257,9 @@ void state_point(SH2Context& c) {
          put(out, &size, sizeof size);
          put(out, s.data.data(), s.data.size());
      }
@@ -4014,7 +4101,7 @@ index 67ccdd3..1d8c24d 100644
      if (g_writer.joinable()) g_writer.join();
      g_writing = true;
      g_writer = std::thread(write_file, std::move(out), g_cfg.state_out, sat_vblanks());
-@@ -140,6 +244,35 @@ void state_finish() {
+@@ -140,6 +273,35 @@ void state_finish() {
      if (g_writer.joinable()) g_writer.join();
  }
  
@@ -4050,7 +4137,7 @@ index 67ccdd3..1d8c24d 100644
  // ---- loading --------------------------------------------------------------------------------
  void state_load(const std::string& path) {
      g_loading_path = path;
-@@ -147,13 +280,24 @@ void state_load(const std::string& path) {
+@@ -147,13 +309,24 @@ void state_load(const std::string& path) {
      if (!f) state_fail("cannot open it");
      std::vector<uint8_t> bytes;
      uint8_t buf[1 << 16];
@@ -4076,7 +4163,7 @@ index 67ccdd3..1d8c24d 100644
      std::map<std::string, std::vector<uint8_t>> parts;
      while (at < bytes.size()) {
          uint8_t n = bytes[at++];
-@@ -163,6 +307,7 @@ void state_load(const std::string& path) {
+@@ -163,6 +336,7 @@ void state_load(const std::string& path) {
          std::memcpy(&size, bytes.data() + at + n, sizeof size);
          at += n + sizeof size;
          if (bytes.size() - at < size) state_fail("cut short");

@@ -249,6 +249,7 @@ Other `saturn` options include:
 - `--fullscreen` and `--scale N`
 - `--headless --vblanks N`
 - `--state-in FILE` and `--state-out FILE`
+- `--agent FD`, for test tools: steps, pads, memory, frames, and native states. `save PATH`/`saved` write a state. `load PATH`/`loaded` load one live at the next safe moment, so the process doesn't restart (`loaded done 1`; `-1` means no safe moment came within 120 VBlanks).
 - `--record-input FILE` and `--input FILE`
 - `--clock`
 - `--coverage FILE`
