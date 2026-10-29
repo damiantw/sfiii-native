@@ -405,6 +405,11 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
   - `--hold-until N`: units stay out of range of stationary enemies until N units can reach the same target this round, then commit together
   - `--ranged`, `--casters` and `--item-attack`: units that shoot, cast their first attack spell, or use their first item on an enemy within 2 tiles (focus targets first)
   - `--healers`: units that cast Heal on a hurt ally next to them (or walk to one) before attacking
+- **SH-2 interpreter fallback (PS5 port groundwork):** `native/recomp/sh2_interp.cpp` runs SH-2 code that the
+  recompiler did not cover, with the compiled code's poll and return rules. It is not wired into the desktop build yet.
+  `tools/ps5/sh2interp-diff.py` checks it against saturn-recomp's `sh2emu.py` on random invented programs.
+  `tools/tests/test_sh2_interp.py` runs 100 of them (it needs clang++ and the saturn-recomp checkout). The decode table
+  `native/recomp/sh2_decode_table.h` is generated from saturn-recomp's `sh2.py` by `tools/ps5/gen-sh2-decode.py`.
 - **Differential testing against Beetle Saturn:** `tools/sf3-diff.py` and `tools/sf3test` run the same inputs on
   the native port and on a libretro core that you build separately and run with your own BIOS. They compare RAM,
   story flags, VDP1/VDP2 output and saves.

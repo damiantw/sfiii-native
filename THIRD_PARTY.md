@@ -6,7 +6,7 @@ The root MIT license applies to this project's original source, not Sega game co
 
 `tools/runtime-diagnostics.patch` modifies saturn-recomp revision `c8b724dc8140431a21627fc4c8c98b75a5346ca7`, derived from saturnkit.
 
-Copyright (c) 2026 Samuele Voltan. Copyright (c) 2026 Callum Jenkins. MIT license; the complete notice is retained in `LICENSES/saturn-recomp.txt`. Setup obtains the upstream source rather than vendoring it here. Its `THIRD_PARTY.md` and source notices cover Musashi, SoftFloat, minicoro, stb_truetype, Inter, Dear ImGui and MAME-derived sound behavior. Keep those notices with any redistributed upstream runtime code or permitted runtime binaries. The optional Mednafen-derived GPL rasterizer is not enabled by the supported build configuration.
+Copyright (c) 2026 Samuele Voltan. Copyright (c) 2026 Callum Jenkins. MIT license; the complete notice is retained in `LICENSES/saturn-recomp.txt`. Setup obtains the upstream source rather than vendoring it here. Its `THIRD_PARTY.md` and source notices cover Musashi, SoftFloat, minicoro, stb_truetype, Inter, Dear ImGui and MAME-derived sound behavior. Keep those notices with any redistributed upstream runtime code or permitted runtime binaries. The optional Mednafen-derived GPL rasterizer is not enabled by the supported build configuration. `native/recomp/sh2_decode_table.h` is generated from saturn-recomp's `sh2.py` instruction table (same MIT notice).
 
 ## SDL3 and controller mappings
 
