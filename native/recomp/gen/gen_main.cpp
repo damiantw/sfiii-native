@@ -15,7 +15,7 @@ using namespace sf3::gen;
 
 int main(int argc, char** argv) {
     GenOptions o;
-    std::string specs_out;
+    std::string specs_out, audit_out;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto next = [&]() -> std::string {
@@ -28,15 +28,21 @@ int main(int argc, char** argv) {
         else if (a == "--runtime") o.runtime = next();
         else if (a == "--block-coverage") o.block_coverage = true;
         else if (a == "--x64") o.x64 = true;
+        else if (a == "--x64-set") o.x64_set = next();
+        else if (a == "--audit") audit_out = next();
         else if (a == "--specs") specs_out = next();
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
-    if (o.work.empty() || o.profile.empty() || (o.out.empty() && specs_out.empty())) {
-        fprintf(stderr, "usage: sf3-gen --work WORK --profile PROFILE.json --out OUT --runtime DIR [--block-coverage] [--x64] [--specs FILE]\n");
+    if (o.work.empty() || o.profile.empty() || (o.out.empty() && specs_out.empty() && o.x64_set.empty() && audit_out.empty())) {
+        fprintf(stderr, "usage: sf3-gen --work WORK --profile PROFILE.json --out OUT --runtime DIR [--block-coverage] [--x64] [--x64-set DIR] [--audit CANDIDATE.json] [--specs FILE]\n");
         return 2;
     }
     o.log = [](const std::string& s) { printf("%s\n", s.c_str()); fflush(stdout); };
     try {
+        if (!audit_out.empty()) {
+            std::ofstream(audit_out, std::ios::binary) << audit_profile(o.work, o.profile, o.log);
+            return 0;
+        }
         if (!specs_out.empty()) {
             std::vector<SceneRow> rows;
             auto specs = prepare_specs(o, rows);
@@ -49,7 +55,7 @@ int main(int argc, char** argv) {
                 q << '\n';
             }
         }
-        if (!o.out.empty()) generate_from_profile(o);
+        if (!o.out.empty() || !o.x64_set.empty()) generate_from_profile(o);
     } catch (const std::exception& e) {
         fprintf(stderr, "sf3-gen: %s\n", e.what());
         return 1;

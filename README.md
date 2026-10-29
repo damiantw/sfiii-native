@@ -170,6 +170,19 @@ package build also fetches the pinned saturn-recomp runtime and applies the fork
 Each run of the `Linux and macOS candidates` workflow on `main` attaches prebuilt packages as artifacts, for
 `linux-x86_64`, `darwin-aarch64` and `darwin-x86_64`. Mac packages are ad-hoc signed, not notarized.
 
+**Generic build (experimental, for ports).** `native/recomp/generic` builds the runtime, the x86-64 loader and
+the SH-2 interpreter with no code or data made from a disc. It runs a module set that `sf3-gen` writes from your
+own disc, in C++ and without Python:
+
+```sh
+sf3-gen --work WORK --profile PROFILE.json --audit candidate.json   # on-machine module audit
+sf3-gen --work WORK --profile candidate.json --x64-set SET_DIR      # SET_DIR/modules.sf3m + <MODULE>.sf3c
+cmake -S native/recomp/generic -B build-generic -DSATURN_RUNTIME=<saturn-recomp>/runtime
+```
+
+The set is tied to the disc and to the cache ABI (currently 3). Anything it misses runs in the interpreter.
+The packaged launcher above does not use this build yet.
+
 For developers, [docs/linux-bringup.md](docs/linux-bringup.md) has the exact checks: the source audit, the unit
 tests and the runtime regression targets. It also explains how to fetch the pinned runtime by hand. Before
 pushing, run `python3 -B tools/check-source-package.py --tracked` (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)).

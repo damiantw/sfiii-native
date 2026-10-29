@@ -1,5 +1,5 @@
 diff --git a/runtime/include/saturn/sh2.h b/runtime/include/saturn/sh2.h
-index 1219a02..4e3daa3 100644
+index 1219a02..9a23e05 100644
 --- a/runtime/include/saturn/sh2.h
 +++ b/runtime/include/saturn/sh2.h
 @@ -11,9 +11,11 @@
@@ -139,7 +139,26 @@ index 1219a02..4e3daa3 100644
      else sh2_io_write(a, v, 4);
  }
  
-@@ -196,6 +250,8 @@ const SH2Module* sh2_identify(uint32_t base);     // the module whose image is i
+@@ -191,11 +245,27 @@ extern const uint32_t g_sh2_tasks[2];             // the game's setjmp and longj
+ struct SH2TaskSwitch { uint32_t save, save_key, resume_sp, sw, switch_key; };
+ extern const SH2TaskSwitch g_sh2_task_switches[];
+ extern const int g_sh2_ntask_switches;
++// The module set the runtime runs: the build's generated tables above, or one a host installs at start
++// (code caches made on the machine; see sat_set_module_set). Every reader goes through sh2_module_set().
++struct SH2ModuleSet {
++    const SH2Module* const* modules;
++    int nmodules;
++    bool native_states;
++    uint32_t tasks[2];
++    const SH2TaskSwitch* task_switches;
++    int ntask_switches;
++};
++// Replaces the generated tables for the rest of the process; call before saturn_main. The set and
++// everything it points to must live as long as the process. Such a build links empty generated tables.
++void sat_set_module_set(const SH2ModuleSet* set);
++const SH2ModuleSet& sh2_module_set();
+ const SH2Module* sh2_module(const char* name);
+ const SH2Module* sh2_identify(uint32_t base);     // the module whose image is in memory at base
  const SH2Module* sh2_identify_containing(uint32_t addr, bool* exact);   // a module whose image in memory holds addr
  void    sh2_activate(const SH2Module* m);          // replaces any active module it overlaps
  SH2Func sh2_lookup(uint32_t addr);                  // nullptr if not an entry of an active module
@@ -252,15 +271,29 @@ index 0000000..712a96c
 +    ~SH2CallFrame() { g_sh2_frames->pop(depth); }
 +};
 diff --git a/runtime/src/core/core.cpp b/runtime/src/core/core.cpp
-index cb6af72..ef13591 100644
+index cb6af72..03bb32d 100644
 --- a/runtime/src/core/core.cpp
 +++ b/runtime/src/core/core.cpp
-@@ -3,8 +3,16 @@
+@@ -3,8 +3,30 @@
  // active modules (one per address range: the resident programs and the one
  // swapped in).
  #include "saturn/sh2.h"
 +#include "call_frames.h"
 +extern const bool g_sh2_native_states __attribute__((weak)) = false;
++// A core-only link (selftest, tools tests) may give only the module tables: no tasks, no switches.
++extern const uint32_t g_sh2_tasks[2] __attribute__((weak)) = {0, 0};
++extern const SH2TaskSwitch g_sh2_task_switches[1] __attribute__((weak)) = {};
++extern const int g_sh2_ntask_switches __attribute__((weak)) = 0;
++// The generated tables stay strong references, so a static library's modules.cpp is still linked; a
++// build that installs its set at run time links empty ones (gen/x64_set.cpp).
++static const SH2ModuleSet* g_module_set_override;
++void sat_set_module_set(const SH2ModuleSet* set) { g_module_set_override = set; }
++const SH2ModuleSet& sh2_module_set() {
++    if (g_module_set_override) return *g_module_set_override;
++    static const SH2ModuleSet built = {g_sh2_modules, g_sh2_nmodules, g_sh2_native_states,
++                                       {g_sh2_tasks[0], g_sh2_tasks[1]}, g_sh2_task_switches, g_sh2_ntask_switches};
++    return built;
++}
 +// The bus model lives in the machine (mmio.cpp); a core-only link (selftest, tools tests) never turns it on.
 +__attribute__((weak)) void sh2_bus_access(uint32_t, int, bool) {}
  #include <cstdio>
@@ -272,7 +305,7 @@ index cb6af72..ef13591 100644
  
  alignas(64) uint8_t g_wram_l[0x100000 + 8];     // +8: a word read at the last byte stays inside
  alignas(64) uint8_t g_wram_h[0x100000 + 8];
-@@ -13,19 +21,24 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
+@@ -13,19 +35,24 @@ alignas(64) uint8_t g_wram_h[0x100000 + 8];
  // Areas by the top three bits: 0 cached, 1 cache-through (the same 27-bit
  // external bus), 2 associative purge (writes drop a cache line: nothing to
  // do), 3 the cache's address array, 6 its data array, 7 the on-chip
@@ -300,7 +333,7 @@ index cb6af72..ef13591 100644
          return sh2_mmio_read(p, size);
      }
      if (area == 2) return 0;
-@@ -33,6 +46,7 @@ uint32_t sh2_io_read(uint32_t a, int size) {
+@@ -33,6 +60,7 @@ uint32_t sh2_io_read(uint32_t a, int size) {
  }
  
  void sh2_io_write(uint32_t a, uint32_t v, int size) {
@@ -308,7 +341,7 @@ index cb6af72..ef13591 100644
      uint32_t area = a >> 29;
      if (area <= 1) {
          uint32_t p = a & 0x07FFFFFFu;
-@@ -40,6 +54,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -40,6 +68,10 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
              for (int i = size - 1; i >= 0; --i, v >>= 8) g_wram_h[(p + i) & 0xFFFFFu] = (uint8_t)v;
              return;
          }
@@ -319,7 +352,7 @@ index cb6af72..ef13591 100644
          sh2_mmio_write(p, v, size);
          return;
      }
-@@ -50,7 +68,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
+@@ -50,7 +82,7 @@ void sh2_io_write(uint32_t a, uint32_t v, int size) {
  static uint8_t* host(uint32_t a) {
      a &= 0x1FFFFFFFu;
      if (a >= 0x06000000u && a < 0x08000000u) return g_wram_h + (a & 0xFFFFFu);
@@ -328,7 +361,7 @@ index cb6af72..ef13591 100644
      return nullptr;
  }
  
-@@ -88,6 +106,10 @@ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc) {
+@@ -88,15 +120,19 @@ uint32_t sh2_crc32(const uint8_t* p, size_t n, uint32_t crc) {
      return ~crc;
  }
  
@@ -337,9 +370,22 @@ index cb6af72..ef13591 100644
 +const SH2BlockCoverage* sh2_block_coverage() { return g_block_tables; }
 +
  const SH2Module* sh2_module(const char* name) {
-     for (int i = 0; i < g_sh2_nmodules; ++i)
-         if (!std::strcmp(g_sh2_modules[i]->name, name)) return g_sh2_modules[i];
-@@ -113,42 +135,188 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
+-    for (int i = 0; i < g_sh2_nmodules; ++i)
+-        if (!std::strcmp(g_sh2_modules[i]->name, name)) return g_sh2_modules[i];
++    for (int i = 0; i < sh2_module_set().nmodules; ++i)
++        if (!std::strcmp(sh2_module_set().modules[i]->name, name)) return sh2_module_set().modules[i];
+     return nullptr;
+ }
+ 
+ const SH2Module* sh2_identify(uint32_t base) {
+-    for (int i = 0; i < g_sh2_nmodules; ++i) {
+-        const SH2Module* m = g_sh2_modules[i];
++    for (int i = 0; i < sh2_module_set().nmodules; ++i) {
++        const SH2Module* m = sh2_module_set().modules[i];
+         uint8_t* p = host(base);
+         if (m->base != base || !p || !host(base + m->size - 1)) continue;
+         if (sh2_crc32(p, m->size) == m->crc) return m;
+@@ -113,42 +149,188 @@ static bool has_entry(const SH2Module* m, uint32_t addr) {
      return lo < m->nfuncs && m->funcs[lo].addr == addr;
  }
  
@@ -364,8 +410,10 @@ index cb6af72..ef13591 100644
  const SH2Module* sh2_identify_containing(uint32_t addr, bool* exact) {
 -    const SH2Module* by_entry = nullptr;
 -    int entries = 0;
-     for (int i = 0; i < g_sh2_nmodules; ++i) {
-         const SH2Module* m = g_sh2_modules[i];
+-    for (int i = 0; i < g_sh2_nmodules; ++i) {
+-        const SH2Module* m = g_sh2_modules[i];
++    for (int i = 0; i < sh2_module_set().nmodules; ++i) {
++        const SH2Module* m = sh2_module_set().modules[i];
          if (addr - m->base >= m->size) continue;
          if (sh2_identify(m->base) == m) { *exact = true; return m; }
 -        if (has_entry(m, addr)) { by_entry = m; ++entries; }
@@ -541,7 +589,18 @@ index cb6af72..ef13591 100644
          uint32_t lo = 0, hi = m->nfuncs;
          while (lo < hi) {
              uint32_t mid = (lo + hi) / 2;
-@@ -183,14 +351,59 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -164,8 +346,8 @@ static bool is_base(uint32_t addr) {
+     static int n = -1;
+     if (n < 0) {
+         n = 0;
+-        for (int i = 0; i < g_sh2_nmodules; ++i) {
+-            uint32_t b = g_sh2_modules[i]->base;
++        for (int i = 0; i < sh2_module_set().nmodules; ++i) {
++            uint32_t b = sh2_module_set().modules[i]->base;
+             bool seen = false;
+             for (int k = 0; k < n; ++k) seen |= bases[k] == b;
+             if (!seen && n < kSlots * 2) bases[n++] = b;
+@@ -183,14 +365,59 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  
@@ -646,7 +705,7 @@ index 0000000..00c23c1
 +    }
 +};
 diff --git a/runtime/src/host/host.cpp b/runtime/src/host/host.cpp
-index feded39..ee4fa8b 100644
+index feded39..0224462 100644
 --- a/runtime/src/host/host.cpp
 +++ b/runtime/src/host/host.cpp
 @@ -2,8 +2,8 @@
@@ -1243,7 +1302,7 @@ index feded39..ee4fa8b 100644
      const float pad = 20, title = 56, section = 30, row = 52, gap = 6, column = 340, between = 24;
      std::vector<std::pair<MenuId, Control>> game = {{M_RESUME, Control::Action}};
 +#ifdef SF3_CONTROLLER_SUPPORT
-+    if(g_sh2_native_states) {game.push_back({M_STATE_SAVE, Control::Action});game.push_back({M_STATE_LOAD, Control::Action});}
++    if(sh2_module_set().native_states) {game.push_back({M_STATE_SAVE, Control::Action});game.push_back({M_STATE_LOAD, Control::Action});}
 +    game.push_back({M_REPLAY_SAVE, Control::Action});
 +    game.push_back({M_REPLAY_LOAD, Control::Action});
 +    game.push_back({M_CAPTURE, Control::Action});
@@ -1299,7 +1358,7 @@ index feded39..ee4fa8b 100644
 +static void native_state_action(bool load) {
 +#ifdef SF3_CONTROLLER_SUPPORT
 +    try {
-+        if(!g_sh2_native_states) throw std::runtime_error("This build has no native state continuations");
++        if(!sh2_module_set().native_states) throw std::runtime_error("This build has no native state continuations");
 +        if(sat_resuming()) throw std::runtime_error("Wait for replay to finish first");
 +        const char* root=std::getenv("SF3_STATE_ROOT");
 +        if(!root || !*root) throw std::runtime_error("Start the game with its launcher to use native states");
@@ -1325,7 +1384,7 @@ index feded39..ee4fa8b 100644
 +#endif
 +}
 +static void checkpoint_action(bool load) {
-+    if(g_sh2_native_states) native_state_action(load);else replay_action(load);
++    if(sh2_module_set().native_states) native_state_action(load);else replay_action(load);
 +}
 +
 +static void draw(bool present = true);
@@ -1609,7 +1668,7 @@ index feded39..ee4fa8b 100644
 +        bool speed_button=i==4+kRenderScaleCount;
 +        ui_fill_rounded(r, 5*replay_bar_scale(), (speed_button ? g_game_speed>1 : i>=4 && vdp1_render_scale()==kRenderScales[i-4]) ? rgba(0.22f,0.43f,0.9f,1):rgba(0.18f, 0.22f, 0.3f, 1));
 +        ui_text(r.x+r.w/2, r.y+r.h/2, 13*replay_bar_scale(),
-+                speed_button ? (g_game_speed==1?"Speed 1x":g_game_speed==2?"Speed 2x":"Speed 3x") : i == 0 ? (g_sh2_native_states?"Save state":"Save checkpoint") : i == 1 ? (g_sh2_native_states?"Load state":"Load checkpoint") : i == 2 ? "Capture issue" : i == 3 ? "Menu" : kRenderNames[i-4],
++                speed_button ? (g_game_speed==1?"Speed 1x":g_game_speed==2?"Speed 2x":"Speed 3x") : i == 0 ? (sh2_module_set().native_states?"Save state":"Save checkpoint") : i == 1 ? (sh2_module_set().native_states?"Load state":"Load checkpoint") : i == 2 ? "Capture issue" : i == 3 ? "Menu" : kRenderNames[i-4],
 +                rgba(0.95f, 0.96f, 0.98f, 1), true);
 +    }
 +#endif
@@ -2607,7 +2666,7 @@ index e1918ba..453fb8f 100644
      const CueFile* f = file_of(im, fad);
      if (!f) return false;
 diff --git a/runtime/src/machine/machine.cpp b/runtime/src/machine/machine.cpp
-index a17d926..6d8164b 100644
+index a17d926..368957f 100644
 --- a/runtime/src/machine/machine.cpp
 +++ b/runtime/src/machine/machine.cpp
 @@ -1,11 +1,11 @@
@@ -2720,6 +2779,21 @@ index a17d926..6d8164b 100644
  }
  
  void sat_trace(const char* fmt, ...) {
+@@ -119,10 +169,10 @@ struct HostFn { uintptr_t host; uint32_t addr; const char* mod; };
+ static const HostFn* host_function(const void* p) {
+     static std::vector<HostFn> fns;
+     if (fns.empty()) {
+-        for (int i = 0; i < g_sh2_nmodules; ++i)
+-            for (uint32_t k = 0; k < g_sh2_modules[i]->nfuncs; ++k)
+-                fns.push_back({(uintptr_t)g_sh2_modules[i]->funcs[k].fn, g_sh2_modules[i]->funcs[k].addr,
+-                               g_sh2_modules[i]->name});
++        for (int i = 0; i < sh2_module_set().nmodules; ++i)
++            for (uint32_t k = 0; k < sh2_module_set().modules[i]->nfuncs; ++k)
++                fns.push_back({(uintptr_t)sh2_module_set().modules[i]->funcs[k].fn, sh2_module_set().modules[i]->funcs[k].addr,
++                               sh2_module_set().modules[i]->name});
+         std::sort(fns.begin(), fns.end(), [](const HostFn& a, const HostFn& b) { return a.host < b.host; });
+     }
+     auto it = std::upper_bound(fns.begin(), fns.end(), (uintptr_t)p, [](uintptr_t v, const HostFn& f) { return v < f.host; });
 @@ -302,6 +352,36 @@ void sat_fatal(const char* fmt, ...) {
      va_start(ap, fmt);
      vprint("FATAL", fmt, ap);
@@ -2868,7 +2942,7 @@ index a17d926..6d8164b 100644
      g_slave_idle = true;
 -    to_master();
 +    if (g_slave_snapshot_request || g_slave_yield_at_point) return;
-+    if (!g_sh2_native_states) { to_master(); return; }      // a build without continuations
++    if (!sh2_module_set().native_states) { to_master(); return; }      // a build without continuations
 +    g_slave_yield_at_point = true;
 +    g_slave_requested_before = g_state_requested.load();
 +    g_state_requested = true;
@@ -2936,6 +3010,17 @@ index a17d926..6d8164b 100644
  }
  
  // --coverage FILE: "MODULE ADDRESS INSTRUCTIONS RAN" for every recompiled function, RAN 1 or 0.
+@@ -479,8 +664,8 @@ static void write_coverage(const std::string& path) {
+     std::string part = path + ".part";
+     FILE* f = std::fopen(part.c_str(), "w");
+     if (!f) { sat_note("coverage: cannot write %s", part.c_str()); return; }
+-    for (int i = 0; i < g_sh2_nmodules; ++i) {
+-        const SH2Module* m = g_sh2_modules[i];
++    for (int i = 0; i < sh2_module_set().nmodules; ++i) {
++        const SH2Module* m = sh2_module_set().modules[i];
+         for (uint32_t k = 0; k < m->nfuncs; ++k)
+             std::fprintf(f, "%s %08X %u %d\n", m->name, m->funcs[k].addr, m->sizes[k], m->ran[k] ? 1 : 0);
+     }
 @@ -488,6 +673,33 @@ static void write_coverage(const std::string& path) {
      std::error_code e;
      std::filesystem::rename(part, path, e);
@@ -3104,12 +3189,18 @@ index a17d926..6d8164b 100644
      video_init();
      sound_init();
      cd_init();
-@@ -658,7 +915,7 @@ int saturn_main(const SaturnConfig& cfg) {
-     else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
-     for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
-     bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
+@@ -655,10 +912,10 @@ int saturn_main(const SaturnConfig& cfg) {
+     sh2_activate(m);
+     sat_note("boot: %s at %08X", m->name, entry);
+     if (cfg.task_setjmp) tasks_configure(cfg.task_setjmp, cfg.task_longjmp);
+-    else if (g_sh2_tasks[0]) tasks_configure(g_sh2_tasks[0], g_sh2_tasks[1]);
+-    for (int i = 0; i < g_sh2_ntask_switches; ++i) tasks_add_switch(g_sh2_task_switches[i]);
+-    bool tasks = cfg.task_setjmp || g_sh2_tasks[0] || g_sh2_ntask_switches;
 -    if (tasks) state_enable();
-+    if (tasks || g_sh2_native_states) state_enable();
++    else if (sh2_module_set().tasks[0]) tasks_configure(sh2_module_set().tasks[0], sh2_module_set().tasks[1]);
++    for (int i = 0; i < sh2_module_set().ntask_switches; ++i) tasks_add_switch(sh2_module_set().task_switches[i]);
++    bool tasks = cfg.task_setjmp || sh2_module_set().tasks[0] || sh2_module_set().ntask_switches;
++    if (tasks || sh2_module_set().native_states) state_enable();
      state_init();
      if (!cfg.state_in.empty()) {
          state_load(cfg.state_in);
@@ -3935,7 +4026,7 @@ index ef4f660..13864ed 100644
              }
          }
 diff --git a/runtime/src/machine/state.cpp b/runtime/src/machine/state.cpp
-index 67ccdd3..567556a 100644
+index 67ccdd3..d653229 100644
 --- a/runtime/src/machine/state.cpp
 +++ b/runtime/src/machine/state.cpp
 @@ -19,17 +19,53 @@
@@ -3967,8 +4058,8 @@ index 67ccdd3..567556a 100644
 +        auto mix = [&](const void* p, size_t n) {
 +            for (size_t i = 0; i < n; ++i) { h ^= ((const uint8_t*)p)[i]; h *= 1099511628211ull; }
 +        };
-+        for (int k = 0; k < g_sh2_nmodules; ++k) {
-+            const SH2Module* m = g_sh2_modules[k];
++        for (int k = 0; k < sh2_module_set().nmodules; ++k) {
++            const SH2Module* m = sh2_module_set().modules[k];
 +            mix(m->name, std::strlen(m->name) + 1);
 +            mix(&m->base, 4); mix(&m->size, 4); mix(&m->crc, 4); mix(&m->nfuncs, 4);
 +        }
@@ -3996,7 +4087,16 @@ index 67ccdd3..567556a 100644
  };
  
  static std::string g_loading_path;
-@@ -54,10 +90,23 @@ void core_state(State& s) {
+@@ -47,17 +83,30 @@ void core_state(State& s) {
+         s.str(name);
+         if (!s.loading) continue;
+         m = nullptr;
+-        for (int k = 0; k < g_sh2_nmodules && !name.empty(); ++k)
+-            if (name == g_sh2_modules[k]->name) m = g_sh2_modules[k];
++        for (int k = 0; k < sh2_module_set().nmodules && !name.empty(); ++k)
++            if (name == sh2_module_set().modules[k]->name) m = sh2_module_set().modules[k];
+         if (!name.empty() && !m) state_fail(("no module " + name + " in this build").c_str());
+         sh2_set_active_slot(i, m);
      }
  }
  
@@ -4041,7 +4141,7 @@ index 67ccdd3..567556a 100644
  void state_enable() { g_points = true; }
  
 +void state_request_save(const std::string& path) {
-+    if (!g_sh2_native_states) throw std::runtime_error("This build has no native state continuations");
++    if (!sh2_module_set().native_states) throw std::runtime_error("This build has no native state continuations");
 +    if (g_cfg.realtime) throw std::runtime_error("Native states require virtual timing");
 +    if (g_writing || g_wanted) throw std::runtime_error("A native state is still being written");
 +    identity();
@@ -4055,7 +4155,7 @@ index 67ccdd3..567556a 100644
 +static uint64_t g_load_deadline;
 +static std::atomic<int> g_load_result{0};
 +void state_request_load(const std::string& path) {
-+    if (!g_sh2_native_states) throw std::runtime_error("This build has no native state continuations");
++    if (!sh2_module_set().native_states) throw std::runtime_error("This build has no native state continuations");
 +    if (g_cfg.realtime) throw std::runtime_error("Native states require virtual timing");
 +    if (!g_load_wanted.empty()) throw std::runtime_error("A native state is already waiting to load");
 +    if (g_writing || g_wanted) throw std::runtime_error("A native state is still being written");
