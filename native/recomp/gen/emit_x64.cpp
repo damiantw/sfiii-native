@@ -1,5 +1,6 @@
 // SF3 recomp, on-console generator: the x86-64 backend (MIT). See emit_x64.h, x64_abi.h.
 #include "emit_x64.h"
+#include "module_set.h"
 
 #include <array>
 #include <filesystem>
@@ -629,7 +630,11 @@ void write_file(const std::string& path, const std::string& text) {
 X64Module emit_x64_module(const EmitBuild& b, const EmitModule& mod) {
     ModulePlan P = plan_module(b, mod);
     X64Module out;
-    out.name = mod.name, out.ns = P.ns, out.entries = P.entries;
+    out.name = mod.name, out.ns = P.ns, out.entries = P.entries, out.callable_entry = mod.callable_entry;
+    for (uint32_t e : P.entries) {
+        auto it = P.by_entry.find(e);
+        out.sizes.push_back(it == P.by_entry.end() ? uint16_t(0) : uint16_t(it->second->code.size()));
+    }
     Cache& c = out.cache;
     c.h.backend = 2, c.h.image_base = mod.base, c.h.image_size = uint32_t(P.img.data.size());
     c.h.image_crc = crc32(P.img.data.data(), P.img.data.size());
@@ -686,6 +691,30 @@ void generate_x64(const EmitBuild& b, const std::string& out) {
         s += "\n}  // namespace " + x.ns + "\n";
         write_file(out + "/" + x.ns + "_x64.cpp", s);
     }
+}
+
+void generate_x64_set(const EmitBuild& b, const std::string& out,
+                      const std::function<void(size_t, size_t, const std::string&)>& progress) {
+    std::filesystem::create_directories(out);
+    ModuleSetFile set;
+    set.native_states = b.native_states, set.tasks[0] = b.tasks[0], set.tasks[1] = b.tasks[1];
+    for (auto& t : b.task_switches) {
+        if (t.size() != 5) throw std::runtime_error("x64: a task switch needs 5 values");
+        set.task_switches.push_back({t[0], t[1], t[2], t[3], t[4]});
+    }
+    for (size_t i = 0; i < b.modules.size(); ++i) {
+        auto& m = b.modules[i];
+        if (progress) progress(i, b.modules.size(), m.name);
+        if (m.name.size() > 255) throw std::runtime_error("x64: module name too long");
+        X64Module x = emit_x64_module(b, m);
+        auto bytes = cache_serialize(x.cache);
+        write_file(out + "/" + m.name + ".sf3c", std::string(bytes.begin(), bytes.end()));
+        set.modules.push_back({m.name, x.callable_entry, x.sizes});
+    }
+    auto bytes = set_serialize(set);
+    // last, so a set file means every cache it names was written
+    write_file(out + "/modules.sf3m", std::string(bytes.begin(), bytes.end()));
+    if (progress) progress(b.modules.size(), b.modules.size(), "");
 }
 
 }  // namespace sf3::gen

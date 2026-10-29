@@ -112,6 +112,16 @@ void register_unwind(void* base, size_t size) {
 
 }  // namespace
 
+bool sf3_x64_load(const Cache& c, uint8_t* ran, LoadedCode& l, std::string& why) {
+    if (c.h.backend != 2) return why = "not x86-64 code", false;
+    ServiceTable svc{};
+    svc[size_t(Service::Table)] = (void*)g_table;
+    svc[size_t(Service::ModuleRan)] = ran;
+    if (!load_cache(c, svc, l, why)) return false;
+    register_unwind(l.base, l.size);
+    return true;
+}
+
 bool sf3_x64_bind(const char* name, const uint32_t* addrs, SH2Func* fn, uint32_t n, uint8_t* ran) {
     const char* dir = std::getenv("SF3_X64_DIR");
     if (!dir) fail(name, "SF3_X64_DIR is not set");
@@ -122,15 +132,10 @@ bool sf3_x64_bind(const char* name, const uint32_t* addrs, SH2Func* fn, uint32_t
     Cache c;
     std::string why;
     if (!cache_parse(bytes.data(), bytes.size(), c, why)) fail(name, why);
-    if (c.h.backend != 2) fail(name, "not x86-64 code");
     if (c.funcs.size() != n) fail(name, "entry count differs");
     for (uint32_t i = 0; i < n; ++i) if (c.funcs[i].addr != addrs[i]) fail(name, "entries differ");
-    ServiceTable svc{};
-    svc[size_t(Service::Table)] = (void*)g_table;
-    svc[size_t(Service::ModuleRan)] = ran;
     LoadedCode l;
-    if (!load_cache(c, svc, l, why)) fail(name, why);
-    register_unwind(l.base, l.size);
+    if (!sf3_x64_load(c, ran, l, why)) fail(name, why);
     for (uint32_t i = 0; i < n; ++i) fn[i] = l.funcs[i].fn;
     return true;
 }

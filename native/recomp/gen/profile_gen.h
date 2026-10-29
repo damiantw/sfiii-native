@@ -22,6 +22,8 @@ struct GenOptions {
     std::string runtime;         // saturn-recomp's runtime directory, as CMakeLists.txt names it
     bool block_coverage = false;
     bool x64 = false;                   // also write the x86-64 backend's caches and binding stubs (emit_x64.h)
+    std::string x64_set;                // instead of the tree: only the caches and modules.sf3m, into this directory
+    std::function<void(size_t, size_t, const std::string&)> progress;   // x64_set: before each module
     int per_file = 8000;
     bool comments = true;
     std::function<void(const std::string&)> log;
@@ -50,6 +52,12 @@ EmitBuild discover_build(const std::vector<Spec>&, const GenOptions&);
 
 // The whole of generate.py --framework saturn-recomp: the tree and scene-data-entries.tsv.
 void generate_from_profile(const GenOptions&);
+
+// tools/audit-modules.py without its report: the profile plus the modules found on the disc and the
+// entries closed across modules, as the candidate profile it writes (the generator's input). Reads
+// WORK/manifest.json and WORK/extract/. Returns the candidate as JSON text.
+std::string audit_profile(const std::string& work, const std::string& profile_path,
+                          const std::function<void(const std::string&)>& log = {});
 
 // module_entries.py and the veneer rule, for one image.
 std::set<uint32_t> idiom_entries(const std::vector<uint8_t>& data, uint32_t base);
