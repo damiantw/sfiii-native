@@ -13,17 +13,16 @@
 
 namespace sf3::gen::json {
 
+struct Field;   // {first: name, second: value}: a struct, not std::pair, so Value may be incomplete in it
+
 struct Value {
     enum Kind { Null, Bool, Number, String, Array, Object } kind = Null;
     bool b = false;
     std::string s;                                      // String: decoded UTF-8; Number: its text
     std::vector<Value> items;                           // Array
-    std::vector<std::pair<std::string, Value>> fields;  // Object, in file order
+    std::vector<Field> fields;                          // Object, in file order
 
-    const Value* find(const std::string& k) const {
-        for (auto& [n, v] : fields) if (n == k) return &v;
-        return nullptr;
-    }
+    const Value* find(const std::string& k) const;   // defined below: Value must be complete first (clang, libstdc++ 14)
     const Value& at(const std::string& k) const {
         auto* v = find(k);
         if (!v) throw std::runtime_error("missing JSON field: " + k);
@@ -38,18 +37,30 @@ struct Value {
         if (kind != Number || s.find_first_of(".eE") != std::string::npos) throw std::runtime_error("JSON value is not an integer");
         return std::stoll(s);
     }
-    bool truthy() const {
-        switch (kind) {
-        case Null: return false;
-        case Bool: return b;
-        case Number: return std::stod(s) != 0;
-        case String: return !s.empty();
-        case Array: return !items.empty();
-        case Object: return !fields.empty();
-        }
-        return false;
-    }
+    bool truthy() const;
 };
+
+struct Field {
+    std::string first;
+    Value second;
+};
+
+inline bool Value::truthy() const {
+    switch (kind) {
+    case Null: return false;
+    case Bool: return b;
+    case Number: return std::stod(s) != 0;
+    case String: return !s.empty();
+    case Array: return !items.empty();
+    case Object: return !fields.empty();
+    }
+    return false;
+}
+
+inline const Value* Value::find(const std::string& k) const {
+    for (auto& [n, v] : fields) if (n == k) return &v;
+    return nullptr;
+}
 
 class Parser {
 public:
