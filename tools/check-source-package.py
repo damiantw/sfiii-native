@@ -10,7 +10,7 @@ FORBIDDEN = {'.bin', '.cue', '.iso', '.chd', '.wav', '.sav', '.state', '.exe', '
              '.obj', '.o', '.lib', '.pdb', '.png', '.jpg', '.zip', '.7z', '.log'}
 ALLOWED_TOP = {'native', 'profiles', 'tools', 'docs', 'LICENSES', 'desktop'}
 ALLOWED_ROOT = {'.gitignore', '.gitattributes', '.github/FUNDING.yml', '.github/workflows/portable.yml', '.github/workflows/synthetic.yml', '.github/workflows/linux-native.yml', '.github/workflows/bench.yml', 'README.md', 'LICENSE', 'THIRD_PARTY.md', 'dependencies.json'}
-SOURCE_SUFFIXES = {'.c', '.cpp', '.h', '.hlsl', '.inc', '.py', '.ps1', '.cmd', '.cmake', '.patch', '.cs', '.manifest', '.rc'}
+SOURCE_SUFFIXES = {'.c', '.cpp', '.h', '.hlsl', '.inc', '.py', '.ps1', '.cmd', '.cmake', '.patch', '.cs', '.manifest', '.rc', '.sh'}
 PATTERNS = {
     'personal Windows path': re.compile(rb'[A-Za-z]:[\\/]+Users[\\/]+', re.I),
     'GitHub credential': re.compile(rb'(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})'),
