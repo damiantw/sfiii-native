@@ -410,6 +410,9 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
   `tools/ps5/sh2interp-diff.py` checks it against saturn-recomp's `sh2emu.py` on random invented programs.
   `tools/tests/test_sh2_interp.py` runs 100 of them (it needs clang++ and the saturn-recomp checkout). The decode table
   `native/recomp/sh2_decode_table.h` is generated from saturn-recomp's `sh2.py` by `tools/ps5/gen-sh2-decode.py`.
+- **On-console generator skeleton (PS5 port groundwork):** `native/recomp/gen` holds the pieces that build game code on
+  the console: discovery, a code cache, an RW→RX loader and a baseline backend that sends every function to the interpreter.
+  [docs/ps5-generator.md](docs/ps5-generator.md) has the design and status. `tools/tests/test_gen_skeleton.py` tests it with invented code.
 - **Differential testing against Beetle Saturn:** `tools/sf3-diff.py` and `tools/sf3test` run the same inputs on
   the native port and on a libretro core that you build separately and run with your own BIOS. They compare RAM,
   story flags, VDP1/VDP2 output and saves.
