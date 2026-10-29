@@ -1,7 +1,7 @@
 // SF3 recomp, on-console generator: the backend interface (MIT).
 //
 // A backend turns one discovered function into host code in a Cache. The first backend,
-// X64ThunkBackend, emits a 22-byte thunk per function that enters the interpreter
+// X64ThunkBackend, emits a 17-byte thunk per function (16-byte aligned) that enters the interpreter
 // (sh2_interp_call(c, entry)). With it the whole load/mprotect/dispatch path runs before any
 // real code generation exists, so it is a correct baseline to diff the real backend against.
 // The real x86-64 backend (PLAN P1) does the same work as emit.py: registers in SH2Context,
