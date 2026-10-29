@@ -80,6 +80,7 @@
 !/tools/runtime-diagnostics.patch
 !/tools/windows.cmake
 !/tools/tests/
+!/tools/ps5/
 !/tools/sf3patch/
 !/tools/sf3test/
 !/tools/sf3-sweep.py
