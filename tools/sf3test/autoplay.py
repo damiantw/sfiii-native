@@ -17,12 +17,14 @@ import hashlib
 import random
 
 from . import memory_map
+from . import tactics
 
 DIRS = ('UP', 'DOWN', 'LEFT', 'RIGHT')
 TAP = 6                 # frames a tap is held
 GAP = 10                # frames between taps
 STUCK_CHECKS = 6        # unchanged picture samples before the escape phrase
 SAMPLE = 30             # frames between picture samples
+WATCH_EVERY = 30  # round 19: frames between --watch-fall HP samples
 
 
 def frame_key(frame):
@@ -46,7 +48,12 @@ class Policy:
         self.attacks = 0
         self.cast, self.casts, self.tried = False, 0, {}
         self.pathing, self.blocked, self.blocked_key = False, {}, None
+        self.att_miss, self.last_attack = {}, None
         self.explore = 0.0
+        self.heal, self.heal_at, self.heal_fail, self.heal_check, self.sigs = (), 0.6, {}, None, {}
+        self.heal_item = ()
+        self.leader_attack, self.hit = None, {}
+        self.tactics, self.still, self.root_epos, self.tac_check, self.tac_fail = {}, {}, None, None, {}
 
     def town(self):
         r = self.rng.random()
@@ -129,7 +136,7 @@ class Policy:
 
 
 def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assist=None, walker=False, rearm=None,
-         idle_over_turns=None, pathing=False, explore=0.0):
+         idle_over_turns=None, pathing=False, explore=0.0, leader=None, protect=None, watch=None, keep_away=0, avoid=None, focus=None, heal=None, heal_at=None, escort=None, heal_item=None, leader_attack=None, tactics=None, root_epos=None, boost_floor=None):
     """Drive `side` (already past the save's load) for `frames` frames. Returns dict(presses,
     events, sha1, resets): presses as [(frame offset, buttons)], events the map/battle changes.
     When the play-time tick falls back (the game went back to its title: a menu's quit, a game
@@ -144,13 +151,46 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     hand-over (long battle openings and boss dialogue used to end battles as 'idle' for good).
     `idle_over_turns` overrides IDLE_OVER. `pathing` (round 26) walks battle units along a planned
     path (see plan_step) instead of greedily. `explore` (round 5, search candidates): the share of
-    battle turns that aim at a random enemy, hold back or cast instead of the greedy choice."""
+    battle turns that aim at a random enemy, hold back or cast instead of the greedy choice.
+    `leader` (round 19): the force slot whose fall loses the battle; default the lowest on-field slot
+    (Sc3 Ch7 dock fight: a guest in slot 7 sat below Synbios' 31 and was kept back as the leader).
+    `watch` (round 19, opt-in): force slots whose HP is sampled every WATCH_EVERY frames; a fall is
+    returned in 'fell' as (frame offset, slot) even when the game revives the unit before the end (Sc2
+    Ch6 Garvin fight: Medion fell, the church restored him to full HP, and the window end looked fine).
+    `keep_away` (round 19, opt-in): the leader and protected units also retreat at full HP whenever a
+    live enemy (HP above 1: barrels are 1/1 records) is within that many tiles (Sc3 Ch7 dock fight: Julian
+    stood still at 22,26 until the Masked Monk walked up and poisoned him; the poison then drained him).
+    `avoid` (round 19, opt-in): (x, y, r): the leader and protected units walk out of the tiles within r
+    of (x, y) (Sc2 Ch6 Garvin fight: a scripted blast at ~525.6k (1.003) / ~495.5k (2.000) zeroes every
+    unit, both sides, around 33-41,33-45, and Medion started at 36,45 and stayed there).
+    `focus` (round 19, opt-in): enemy slots the other units path to first while alive (Sc3 Ch7 dock fight:
+    the Masked Monk, enemy 1, was never attacked and poisoned Julian, then Synbios).
+    `leader_attack` (round 27, opt-in, with pathing): a share S; on its turn the leader walks to and
+    attacks an enemy it can finish (HP at most its best hit) or one under S of max HP, within
+    LEADER_REACH steps and never through the `avoid` zone, instead of only striking what is in reach.
+    `tactics` (round 29, opt-in): dict(hold_until=N, ranged, casters, healers, item_attack slots), see
+    aimed_turn and tactics.py; `root_epos` {enemy slot: (x, y)} at the search root marks enemies that
+    have not moved since as stationary (the --hold-until threats, the --protect heavy hitters).
+    `boost_floor` (round 34, search --boost): memory_map.boost_floor slots whose in-battle attack and
+    defence are put back up each battle turn (the game re-derives them; Sc2 Ch6 lost the boost)."""
     mm = memory_map.lookup(profile)
     pol = Policy(seed)
     pol.pathing = pathing
     pol.cast = bool(assist)
     pol.explore = explore
+    pol.leader = leader
+    pol.protect = tuple(protect or ())
+    pol.keep_away = keep_away or 0
+    pol.avoid = tuple(avoid) if avoid else None
+    pol.focus = tuple(focus or ())
+    pol.heal, pol.heal_at, pol.heal_fail, pol.heal_check = tuple(heal or ()), heal_at or LEADER_SAFE, {}, None
+    pol.heal_item = tuple(heal_item or ())
+    pol.leader_attack = leader_attack
+    pol.tactics = dict(tactics or {})
+    pol.root_epos = root_epos
+    pol.escort = escort
     presses, events = [], []
+    fell, watch_base = [], (mm.get('units') or {}).get('force') if watch else None
     done, last_key, same, turn = 0, None, 0, 0
     prev = None
     held = None
@@ -168,6 +208,8 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
     def state():
         m = side.read(mm['map_id'], 1)[0]
         b = side.read(mm['battle_id'], 1)[0]
+        if not b and memory_map.in_battle(side.read, mm):
+            b = 0xFF          # round 27: Sc2 V1.003 map 0x49 fights with battle id 0 (memory_map.BATTLE_ACTIVE)
         return m, b
 
     def press(buttons, n):
@@ -181,6 +223,11 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
         for _ in range(n):
             side.step()
             done += 1
+            if watch_base and done % WATCH_EVERY == 0:
+                for k in watch:
+                    a = watch_base + k * memory_map.UNIT_STRIDE + memory_map.UNIT_HP
+                    if int.from_bytes(side.read(a, 2), 'big') == 0 and k not in [x for _, x in fell]:
+                        fell.append((done, k))
             if done % SAMPLE == 0:
                 k = frame_key(side.frame())
                 same = same + 1 if k == last_key else 0
@@ -224,6 +271,10 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
         if b and mm.get('units') and assist:
             for addr, data in memory_map.assist_writes(side.read, mm['units'],
                                                        enemy_hp=1 if assist == 'party+enemy1' else None):
+                side.write(addr, data)
+                pokes += 1
+        if b and mm.get('units') and boost_floor:
+            for addr, data in memory_map.boost_hold_writes(side.read, mm['units'], boost_floor):
                 side.write(addr, data)
                 pokes += 1
         if b and mm.get('units') and not idle_over:
@@ -303,7 +354,7 @@ def play(side, profile, frames, seed, log=None, reload=None, prelude=None, assis
             if done >= frames:
                 break
     script = script_text(presses)
-    return dict(presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, casts=pol.casts, pokes=pokes, legs=blocked, areas=areas, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
+    return dict(fell=fell, presses=presses, events=events, resets=resets, outcomes=outcomes, attacks=pol.attacks, casts=pol.casts, pokes=pokes, legs=blocked, areas=areas, sha1=hashlib.sha1(script.encode()).hexdigest()[:12],
                 script=script)
 
 
@@ -340,6 +391,7 @@ STEP = {'RIGHT': (1, 0), 'LEFT': (-1, 0), 'UP': (0, 1), 'DOWN': (0, -1)}
 # UP = Attack, LEFT = Magic, RIGHT = Item, DOWN = Hold. Attack with no one in reach says
 # 'There is no target...'; with a target, the next C picks the highlighted enemy and the next C confirms.
 OUTCOME_HOLD = 600
+MISS_PHANTOM = 3
 RING = {'attack': 'UP', 'magic': 'LEFT', 'item': 'RIGHT', 'hold': 'DOWN'}
 
 
@@ -388,8 +440,12 @@ def hud_up(frame, run_min=48):
     if frame is None:                  # no picture (unit tests): take it as unit control
         return True
     w, h, rgb = frame.width, frame.height, frame.rgb
+    # round 27 (Sc2 v1.003 war-machine fight): the panel sits lower, beside the land-effect box,
+    # with only 4 flat rows (y 18-21 of 240) above its name; every other row from 3% to 20% missed
+    # them, so the panel read as gone: the probe and the leader's turn pressed B into the free
+    # cursor and nobody moved for 15k VBlanks until the blast. Every row to a quarter, 4 rows
     rows = 0
-    for y in range(h * 3 // 100, h // 5, 2):
+    for y in range(h * 3 // 100, h // 4):
         row, run, prev = y * w * 3, 0, None
         for x in range(w // 4, w * 3 // 4):
             r, g, b = rgb[row + x * 3], rgb[row + x * 3 + 1], rgb[row + x * 3 + 2]
@@ -402,7 +458,79 @@ def hud_up(frame, run_min=48):
             else:
                 run = 0
             prev = (g, b) if ok else None
-    return rows >= 3
+    return rows >= 4
+
+
+ESCORT_R = 4                          # --escort: enemies this close to the escorted unit are the targets
+HEAL_WALK = 6                         # --heal-item: a hurt ward this close draws the carrier to it
+ESCORT_GUARD = 8                      # --escort: units ring the escort while an enemy is this close
+SIGS = {}                             # force table -> {slot: panel name bits}, kept across play() calls
+SIG_TOL = 20                          # name-line pixels two looks at one unit's panel may differ by
+
+
+def panel_sig(frame, run_min=48):
+    """(bits, enemy) for the unit panel at the top of the picture, or None when none is up. bits is
+    the white text of the name line (14 rows by 88 pixels from the panel's left edge), the same for
+    one unit from turn to turn (the HP digits sit below it); enemy is a red name (enemy panels).
+    Round 27 (Sc3 Ch7 dock fight): Gracia stood boxed in at 20,26 all fight, so the probe never saw
+    her move and her turns never reached the cautious or --heal branch; her panel names her."""
+    if frame is None:
+        return None
+    w, h, rgb = frame.width, frame.height, frame.rgb
+
+    def px(x, y):
+        i = (y * w + x) * 3
+        return rgb[i], rgb[i + 1], rgb[i + 2]
+
+    def blue(r, g, b):
+        return b >= 60 and b > r + 35 and b > g + 20 and r < 70
+
+    for y in range(h * 3 // 100, h // 4):
+        run, prev = 0, None
+        for x in range(w // 4, w * 7 // 8):
+            r, g, b = px(x, y)
+            ok = blue(r, g, b)
+            if ok and prev and abs(b - prev[1]) <= 2 and abs(g - prev[0]) <= 2:
+                run += 1
+                if run >= run_min:
+                    x0 = x - run
+                    while x0 > 0 and blue(*px(x0 - 1, y)):
+                        x0 -= 1
+                    if y + 22 > h or x0 + 90 > w:
+                        return None
+                    # round 27 (v71 probe): the attack scene shows the defender's name panel up top
+                    # too (Gracia's, while a Masked Pegasus struck her), so her 'turn' cast into the
+                    # scene. Only the field panel has the land-effect box beside it on the left
+                    le = sum(1 for yy in range(y, y + 20) for xx in range(max(0, x0 - 50), max(0, x0 - 3))
+                             if blue(*px(xx, yy)))
+                    if le < 150:
+                        return None
+                    bits = tuple(1 if sum(px(xx, yy)) > 600 else 0
+                                 for yy in range(y + 2, y + 16) for xx in range(x0 + 2, x0 + 90))
+                    red = sum(1 for yy in range(y, min(h, y + 22)) for xx in range(x0, x0 + 90)
+                              for (rr, gg, bb) in (px(xx, yy),) if rr > 170 and gg < 110 and bb < 110)
+                    return bits, red >= 12
+            else:
+                run = 0
+            prev = (g, b) if ok else None
+    return None
+
+
+def panel_unit(pol, sig, slots, tol=SIG_TOL):
+    """The force slot whose learned panel name matches sig (None when unknown or an enemy panel).
+    A force panel no learned name matches belongs to the one on-field slot not learned yet, when
+    exactly one is left (a unit boxed in from the first turn)."""
+    if not sig or sig[1]:
+        return None
+    sigs = pol.sigs
+    for k, b in sigs.items():
+        if sum(p != q for p, q in zip(b, sig[0])) <= tol:
+            return k
+    left = [k for k in slots if k not in sigs]
+    if len(left) == 1 and len(sigs) >= 1:
+        sigs[left[0]] = sig[0]
+        return left[0]
+    return None
 
 
 def battle_outcome(rd, units):
@@ -429,14 +557,37 @@ def step_of(p, d):
     return (p[0] + STEP[d][0], p[1] + STEP[d][1])
 
 
-def plan_step(p, live, occupied, blocked, size=64, limit=6000, passable=frozenset()):
+# round 27 (Sc2 V1.003 Ch6 war machine, map 0x49): the camera there is turned a quarter, so pad RIGHT
+# steps y-1 and UP x+1 (Hazuki at 12,4); every planned step went the wrong way or into a wall. The
+# probe step of each turn shows which way a pad direction goes: ROTATIONS maps a planned direction
+# (STEP's sense) to the pad direction that makes it under the turn seen
+ROTATIONS = (lambda a, b: (a, b), lambda a, b: (-b, a), lambda a, b: (-a, -b), lambda a, b: (b, -a))
+
+
+def learn_turn(pressed, delta):
+    """The rotation index under which pad `pressed` steps by `delta`, or None (not one step)."""
+    for i, rot in enumerate(ROTATIONS):
+        if rot(*STEP[pressed]) == tuple(delta):
+            return i
+    return None
+
+
+def pad_for(d, turn):
+    """The pad direction that steps the way `d` means in STEP, under rotation index `turn`."""
+    if not turn:
+        return d
+    return next(k for k in STEP if ROTATIONS[turn](*STEP[k]) == STEP[d])
+
+
+def plan_step(p, live, occupied, blocked, size=64, limit=6000, passable=frozenset(), goals=None):
     """First direction of a shortest path from `p` to a tile next to a live enemy, over a
     size x size grid where unseen tiles are taken as open (optimistic planning: a failed step marks
     its edge, `blocked` counts failures per edge; two failures close it, one makes it dear).
     Tiles other units hold are closed, except `passable` ones (the unit's own force: a unit walks
     through its allies but cannot stop on one). None when no tile is reachable."""
     import heapq
-    goals = {(x + dx, y + dy) for x, y in live for dx, dy in STEP.values()} - occupied - set(passable)
+    goals = (set(goals) if goals is not None else  # tactics: given end tiles
+             {(x + dx, y + dy) for x, y in live for dx, dy in STEP.values()}) - occupied - set(passable)
     if not goals:
         return None
     h = lambda q: min(abs(q[0] - g[0]) + abs(q[1] - g[1]) for g in goals)
@@ -466,10 +617,11 @@ def plan_step(p, live, occupied, blocked, size=64, limit=6000, passable=frozense
 LEADER_SAFE = 0.6
 
 
-def retreat_path(p, live, allies, blocked, reach=5, size=64):
+def retreat_path(p, live, allies, blocked, reach=5, size=64, avoid=None):
     """Directions from `p` to the free tile within `reach` steps farthest from every live enemy
     (allies are walked through but not ended on, enemies and known-blocked edges are not
-    crossed); [] when no tile is farther than `p` itself."""
+    crossed); [] when no tile is farther than `p` itself. With `avoid` (x, y, r) it never ends in that zone
+    (v123, Sc2 Ch6: a hurt Medion backed away from the enemies into the blast tiles and stayed there)."""
     def dist(q):
         return min(abs(q[0] - e[0]) + abs(q[1] - e[1]) for e in live) if live else 0
     enemies = set(live)
@@ -485,10 +637,41 @@ def retreat_path(p, live, allies, blocked, reach=5, size=64):
                     continue
                 seen[r] = seen[q] + [d]
                 nxt.append(r)
+                if tactics.in_avoid(r, avoid):
+                    continue
                 if r not in allies and (dist(r), -depth) > best_key:
                     best, best_key = seen[r], (dist(r), -depth)
         frontier = nxt
     return best
+
+
+LEADER_REACH = 4                      # --leader-attack: steps the leader walks to a target
+
+
+def leader_target(p, targets, occupied, avoid=None, reach=LEADER_REACH):
+    """--leader-attack: of `targets` [(x, y)], the one with a free tile next to it (not in `occupied`,
+    not within the avoid zone (x, y, r)) nearest the leader at `p`, at most `reach` steps; None if none."""
+    best = None
+    for tx, ty in targets:
+        for dx, dy in STEP.values():
+            q = (tx + dx, ty + dy)
+            d = abs(q[0] - p[0]) + abs(q[1] - p[1])
+            if d > reach or (q in occupied and q != p):
+                continue
+            if tactics.in_avoid(q, avoid):
+                continue
+            if best is None or d < best[0]:
+                best = (d, (tx, ty))
+    return best and best[1]
+
+
+def unit_hp_of(read, table, slot):
+    e = read(table + slot * memory_map.UNIT_STRIDE + memory_map.UNIT_HP, 2)
+    return int.from_bytes(e, 'big')
+
+
+def unit_mp_of(read, table, slot):
+    return read(table + slot * memory_map.UNIT_STRIDE + memory_map.UNIT_MP, 1)[0]
 
 
 def is_hurt(read, table, slot, share):
@@ -497,6 +680,24 @@ def is_hurt(read, table, slot, share):
     hp = int.from_bytes(e[memory_map.UNIT_HP:memory_map.UNIT_HP + 2], 'big')
     top = int.from_bytes(e[memory_map.UNIT_MAX_HP:memory_map.UNIT_MAX_HP + 2], 'big')
     return top > 0 and hp < share * top
+
+
+def heal_due(rd, units, pol, me):
+    """A --heal unit below heal_at with MP for a first-level cast, whose casts have not failed twice."""
+    return (me in getattr(pol, 'heal', ()) and pol.heal_fail.get(me, 0) < 2
+            and is_hurt(rd, units['force'], me, pol.heal_at) and unit_mp_of(rd, units['force'], me) >= 3)
+
+
+def heal_cast(rd, units, pol, me, ring='magic', target=None, caster=None, aim=None):
+    """Ring Magic, first spell, first level, default target (the caster itself for Heal); the next
+    turn checks the target's HP rose (pol.heal_check: target, its HP, the caster charged on a miss).
+    ring='item' uses the first item instead (Items, Use, first item, default target)"""
+    t = me if target is None else target
+    pol.heal_check = (t, unit_hp_of(rd, units['force'], t), me if caster is None else caster)
+    pol.casts += 1
+    pick = [((aim,), 6), ((), 20)] if aim else []      # --healers: move the target cursor onto an ally
+    return ([(('C',), 6), ((), 30), ((RING[ring],), 6), ((), 14)]
+            + [(('C',), 6), ((), 30)] * 2 + pick + [(('C',), 6), ((), 30)] * 2 + tap(('C',), gap=40) * 4)
 
 
 def aimed_turn(side, units, pol, press):
@@ -513,7 +714,45 @@ def aimed_turn(side, units, pol, press):
     key = tuple(sorted(e[0] for e in enemies))           # a new battle (enemy roster): forget edges
     if key != pol.blocked_key:
         pol.blocked, pol.blocked_key, pol.phantoms = {}, key, set()
+        pol.turn = 0
+        pol.att_miss, pol.last_attack = {}, None
+        pol.still, pol.tac_check = {}, None
+        pol.sigs = SIGS.setdefault(units['force'], {})
     phantoms = getattr(pol, 'phantoms', set())
+    hp_of = {k: hp for k, x, y, f, hp in enemies}
+    la = getattr(pol, 'last_attack', None)
+    if la:
+        # round 19 (Sc3 Ch7 dock fight): stale enemy records left from the harbour fight sit next to
+        # force units; Attack on one finds no target and the turn never ends, so every candidate
+        # replayed the same loop. An attack that leaves the adjacent records' HP unchanged MISS_PHANTOM
+        # times marks them as phantoms for this battle
+        keys, hp0 = la[:2]
+        pol.last_attack = None
+        hp1 = sum(hp_of.get(k, 0) for k in keys)
+        if len(la) > 2 and hp1 < hp0:              # --leader-attack: the most one hit by that unit took
+            pol.hit[la[2]] = max(pol.hit.get(la[2], 0), hp0 - hp1)
+        if hp1 == hp0:
+            pol.att_miss[keys] = pol.att_miss.get(keys, 0) + 1
+            if pol.att_miss[keys] >= MISS_PHANTOM:
+                pol.phantoms = phantoms = phantoms | set(keys)
+        else:
+            pol.att_miss.pop(keys, None)
+    hc = getattr(pol, 'heal_check', None)
+    if hc:
+        # --heal: a cast that left the caster's HP no higher was not a heal (first spell not Heal, no
+        # MP, a message): two of those and that unit retreats instead from then on
+        pol.heal_check = None
+        if unit_hp_of(rd, units['force'], hc[0]) <= hc[1]:
+            who = hc[2] if len(hc) > 2 else hc[0]
+            pol.heal_fail[who] = pol.heal_fail.get(who, 0) + 1
+        else:
+            pol.heals = getattr(pol, 'heals', 0) + 1
+    tcx = getattr(pol, "tac_check", None)
+    if tcx:
+        # --casters/--ranged/--item-attack: a use that took no HP from the enemies in reach counts
+        pol.tac_check = None
+        if sum(hp_of.get(k, 0) for k in tcx[0]) >= tcx[1]:
+            pol.tac_fail[tcx[2]] = pol.tac_fail.get(tcx[2], 0) + 1
     live = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k not in phantoms]
     if not live:
         return tap(('C',), gap=30) * 4
@@ -522,6 +761,8 @@ def aimed_turn(side, units, pol, press):
         if pol.idle % 5 == 0:
             return tap(('C',), gap=30) * 6
         return tap(('C',), gap=30) if pol.idle % 3 == 0 else tap(('B',), gap=20)
+    still = tactics.track_still(pol.still, enemies, pol.root_epos) - phantoms
+    tac = pol.tactics or {}
     before = pos()
     cx = sum(e[0] for e in live) / len(live)
     lead = next(iter(before.values()), (0, 0))
@@ -532,7 +773,15 @@ def aimed_turn(side, units, pol, press):
         now = pos()
         moved = [k for k in before if k in now and now[k] != before[k]]   # a unit that left the table did not move
         if moved:
+            t = learn_turn(d, (now[moved[0]][0] - before[moved[0]][0], now[moved[0]][1] - before[moved[0]][1]))
+            if t is not None:
+                pol.turn = t
+            if moved[0] not in getattr(pol, 'sigs', {}):
+                sg = panel_sig(side.frame())
+                if sg and not sg[1]:
+                    pol.sigs[moved[0]] = sg[0]
             break
+    turn = getattr(pol, 'turn', 0)
     if not moved and not hud_up(side.frame()) and getattr(pol, 'cursor_b', 0) < 2:
         # round 5 (Sc1 Battle 22 search): nothing moved and no unit panel: the free cursor (B on
         # the start tile enters it; C there opens the field menu or a member's status, which the
@@ -542,6 +791,18 @@ def aimed_turn(side, units, pol, press):
         pol.recentred = getattr(pol, 'recentred', 0) + 1
         return tap(('B',), gap=60)
     pol.cursor_b = 0
+    if not moved and (getattr(pol, 'heal', ()) or getattr(pol, 'leader', None) is not None or getattr(pol, 'protect', None)):
+        who = panel_unit(pol, panel_sig(side.frame()), list(before))
+        if who is not None and heal_due(rd, units, pol, who):
+            return heal_cast(rd, units, pol, who)
+        lead0 = pol.leader if getattr(pol, 'leader', None) in before else min(before)
+        if who is not None and (who == lead0 or who in (getattr(pol, 'protect', None) or ())):
+            # round 27 (Sc3 Ch7 dock fight v71): Gracia boxed in at 20,26 by teammates was never
+            # probed, so she never retreated and three enemies closed on her; every level-8 candidate
+            # fell the same way. Her panel names her: take the cautious branch (its retreat path
+            # crosses teammates)
+            moved = [who]
+            pol.named = getattr(pol, 'named', 0) + 1
     if not moved:
         # Nothing moved: a message (C), a menu left open (B), or (round 11) a unit that cannot
         # step (enemies, teammates or terrain all round). The ring opens on C without a step too, so
@@ -576,6 +837,82 @@ def aimed_turn(side, units, pol, press):
         else:
             cast_pick = True
         pol.explored = getattr(pol, 'explored', 0) + 1
+    picked = goal is not live                      # a search candidate's random enemy
+    if goal is live and getattr(pol, 'focus', ()):
+        fx = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k in (getattr(pol, "focus", None) or ()) and k not in phantoms]
+        if fx:
+            goal = fx
+    esc = getattr(pol, 'escort', None)
+    esc = [e for e in ((esc,) if isinstance(esc, int) else (esc or ())) if e in before and e != me]
+    if esc and not hold_back and not picked:
+        # round 27 (Sc3 Ch7 dock fight, probes ap71b-f): Gracia (31) takes no player turns (the game
+        # moves her), stays at 20,26 and the church follows when she falls; three enemies closed on
+        # her while the force chased the far ones. --escort: enemies within ESCORT_R of an escorted
+        # unit come first, and with none near the unit walks next to the escorted unit nearest the
+        # enemies. v72 (one escort, Gracia): the force ringed her and Julian (protected, at 21,30)
+        # fell alone, so the protected units are escorted too (--escort 31 7)
+        near = [(x, y) for k, x, y, f, hp in enemies if hp > 0 and k not in phantoms
+                and any(abs(x - before[e][0]) + abs(y - before[e][1]) <= ESCORT_R for e in esc)]
+        # v73: from 287k the enemies sat back 8+ tiles from the ring and every candidate scored the
+        # same for 4 levels (a stalemate), so the ring only holds while an enemy is within
+        # ESCORT_GUARD of an escorted slot; farther off, units attack as usual
+        gap = {e: min(abs(before[e][0] - x) + abs(before[e][1] - y) for x, y in live) for e in esc}
+        if near:
+            goal = near
+            pol.escorting = getattr(pol, 'escorting', 0) + 1
+        elif min(gap.values()) <= ESCORT_GUARD:
+            goal = [before[min(esc, key=gap.get)]]
+            pol.escorting = getattr(pol, 'escorting', 0) + 1
+
+    hi = getattr(pol, 'heal_item', ())
+    if me in hi and pol.heal_fail.get(me, 0) < 2:
+        # round 27 (Sc3 Ch7 dock fight v74, probe ap74b): no force member has Heal (Edmund's one
+        # spell is Antidote) and Gracia wore down to 8 HP by 325k in every candidate; Edmund carries
+        # a Healing Drop and Items/Use with the default target put it on Gracia beside him (20 -> 35).
+        # A --heal-item unit next to a hurt escorted/protected unit uses its first item, default target
+        wards = [e for e in esc + list(getattr(pol, 'protect', None) or ()) if e in before and e != me]
+        hurt = [e for e in wards if abs(before[e][0] - before[me][0]) + abs(before[e][1] - before[me][1]) == 1
+                and is_hurt(rd, units['force'], e, pol.heal_at)]
+        if hurt:
+            press(('B',), 6)
+            press((), 20)
+            if not hud_up(side.frame()):
+                # v76 (probe ap76a): this B put the unit back and left the free cursor up, so the
+                # ring never opened and every turn went to status panels (25 levels at one score);
+                # a second B puts the cursor back on the unit, as in the cautious branch
+                press(('B',), 6)
+                press((), 40)
+            pol.item_heals = getattr(pol, 'item_heals', 0) + 1
+            return heal_cast(rd, units, pol, me, ring='item', target=hurt[0])
+        far = [e for e in wards if abs(before[e][0] - before[me][0]) + abs(before[e][1] - before[me][1]) <= HEAL_WALK
+               and is_hurt(rd, units['force'], e, pol.heal_at)]
+        if far:
+            # v78: Gracia sat at 11/35 for 70 backtracks with the item carriers a few tiles off; a
+            # hurt ward within HEAL_WALK draws the carrier next to it (the item goes on next turn)
+            goal = [before[min(far, key=lambda e: unit_hp_of(rd, units['force'], e))]]
+            pol.item_walks = getattr(pol, 'item_walks', 0) + 1
+
+    goal_tiles = None                              # tactics: the tiles to end the move on (None: next to a goal)
+    if (me in tac.get("healers", ()) and pol.heal_fail.get(me, 0) < 2
+            and unit_mp_of(rd, units["force"], me) >= tactics.MP_MIN):
+        # round 29 (--healers, Sc3 Ch7 dock: Gracia at 19/35 from ~279k and nobody healed her): a
+        # healer casts its first spell, first level, on the most hurt ally next to it (itself
+        # included) before it attacks; one farther off, within HEAL_WALK, draws it closer
+        hurt = [k for k in before if tactics.md(before[k], before[me]) <= HEAL_WALK
+                and is_hurt(rd, units["force"], k, pol.heal_at)]
+        if hurt:
+            k = min(hurt, key=lambda k: unit_hp_of(rd, units["force"], k))
+            if tactics.md(before[k], before[me]) <= 1:
+                press(("B",), 6)
+                press((), 20)
+                if not hud_up(side.frame()):
+                    press(("B",), 6)
+                    press((), 40)
+                pol.ally_heals = getattr(pol, "ally_heals", 0) + 1
+                aim = None if k == me else pad_for(tactics.aim_dir(before[me], before[k]), turn)
+                return heal_cast(rd, units, pol, me, target=k, aim=aim)
+            goal = [before[k]]
+            pol.heal_walks = getattr(pol, "heal_walks", 0) + 1
 
     def dist(p):
         return min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in live)
@@ -586,52 +923,159 @@ def aimed_turn(side, units, pol, press):
     # fell 30k VBlanks later. So the leader never advances: B returns the probe step and it only
     # attacks what is already in reach; below LEADER_SAFE of max HP it walks away from the
     # enemies (through teammates, to a free tile)
-    cautious = False
-    if me == min(before):
+    cautious = lead_attack = False
+    lead = pol.leader if getattr(pol, 'leader', None) in before else min(before)
+    # v115 (Sc2 Ch6 Garvin fight): the blast at 34-38,37-40 every ~8.6k VBlanks killed every unit
+    # left in it, not only the leader. --avoid-all: any unit that starts its turn in the --avoid
+    # zone plays the cautious turn (walks out, strikes only what is in reach)
+    av0 = getattr(pol, "avoid", None) if tac.get("avoid_all") else None
+    zone_all = bool(av0 and me in before and tactics.in_avoid(before[me], av0))
+    if me == lead or me in (getattr(pol, 'protect', None) or ()) or zone_all:
         press(('B',), 6)
         press((), 20)
+        if not hud_up(side.frame()):
+            # round 19 (Sc3 Ch7 dock fight, Julian at 22,26): this B put the unit back and also left
+            # the free cursor up (no unit panel), so the retreat steps moved the cursor and the C
+            # presses opened members' status panels, every turn for 30k VBlanks. A second B puts
+            # the cursor back on the unit (its panel returns) and the steps move the unit again
+            press(('B',), 6)
+            press((), 40)
+            pol.recentred = getattr(pol, 'recentred', 0) + 1
         cautious = True
         pol.cautious = getattr(pol, 'cautious', 0) + 1
         now = pos()
-        if me in now and is_hurt(rd, units['force'], me, LEADER_SAFE):
-            path = retreat_path(now[me], live, {v for k, v in now.items() if k != me}, pol.blocked)
-            for i, d in enumerate(path):
-                q = pos().get(me)
-                if q is None:
+        if me in now and heal_due(rd, units, pol, me):
+            # round 27 (Sc3 Ch7 dock fight v69): Gracia (31) went 35 -> 23 -> 11 HP over the first
+            # levels and every later candidate fell under the --guard-hp floor; retreating alone never
+            # brought her HP back. A --heal unit below heal_at casts its first spell, first level, on
+            # the default target (the caster itself for Heal), before it would retreat
+            return heal_cast(rd, units, pol, me)
+        ka = getattr(pol, 'keep_away', 0)
+        threats = [(x, y) for k, x, y, f, hp in enemies if hp > 1 and k not in phantoms]
+        near_threat = bool(ka and me in now and threats and
+                           min(abs(now[me][0] - e[0]) + abs(now[me][1] - e[1]) for e in threats) <= ka)
+        av = getattr(pol, 'avoid', None)
+        in_zone = bool(av and me in now and tactics.in_avoid(now[me], av))
+        las = getattr(pol, "leader_attack", None)
+        if las and pol.pathing and me == lead and me in now and not in_zone:
+            # v90 (Sc2 Ch6 Garvin fight, probe ap90 at 458k): Medion, cautious, stood among four Giga
+            # Breakers (two at 37-60 of 170 HP), only struck what was in reach and fell at ~486k in
+            # every candidate. --leader-attack S: the leader walks to and attacks an enemy it can
+            # finish (HP at most its best hit so far) or one under S of max HP, within LEADER_REACH
+            # steps, never onto or through the --avoid zone; otherwise it plays cautious as before
+            fin = pol.hit.get(me, 0)
+            weak = [(x, y) for k, x, y, f, hp in enemies if hp > 1 and k not in phantoms
+                    and (hp <= fin or is_hurt(rd, units["enemies"], k, las))]
+            tgt = weak and leader_target(now[me], weak, {v for k, v in now.items() if k != me} | set(live), av)
+            if tgt:
+                goal, hold_back, lead_attack = [tgt], False, True
+                pol.leader_attacks = getattr(pol, "leader_attacks", 0) + 1
+        if (me != lead and pol.pathing and me in now and not lead_attack and me not in tac.get("passive", ())
+                and not (in_zone or near_threat or is_hurt(rd, units["force"], me, LEADER_SAFE))):
+            # round 29 (Sc3 dock v99, Sc1 v102: protected units only retreated and the fights stalled):
+            # --protect means avoid danger, not never attack. A protected unit walks to and attacks a
+            # target (focus first) it can hit within HOLD_MOVE steps from a tile not next to a
+            # stationary enemy (one that has not moved: the Sc1 boss pocket) nor in the --avoid zone.
+            # --passive slots keep the old never-attack play (Sc3 v105: the guest Julian went in and fell
+            # to 1/40 HP by level 4)
+            fx = [(x, y) for k, x, y, f, hp in enemies if hp > 1 and k in (getattr(pol, "focus", None) or ()) and k not in phantoms]
+            heavy = [(x, y) for k, x, y, f, hp in enemies if k in still]
+            st = tactics.safe_target(now[me], fx or [(x, y) for k, x, y, f, hp in enemies if hp > 1 and k not in phantoms],
+                                     {v for k, v in now.items() if k != me} | set(live), heavy, av)
+            if st:
+                goal, goal_tiles, hold_back, lead_attack = [st[0]], st[1], False, True
+                pol.protect_attacks = getattr(pol, "protect_attacks", 0) + 1
+        if me in now and not lead_attack and (in_zone or near_threat or is_hurt(rd, units['force'], me, LEADER_SAFE)):
+            # round 27 (Sc2 V1.003 war machine): the leader gets one turn before the blast and the
+            # first planned step hit an unseen wall, so the turn ended in the zone. A step that fails
+            # in the first two marks the edge and plans again from where the unit stands (8 plans)
+            walked = 0
+            for _plan in range(8):
+                here = pos().get(me)
+                if here is None:
                     break
-                press((d,), 8)
-                press((), 10)
-                if pos().get(me, q) == q:          # a wall early on; later it is the move range's end
-                    if i < 2:
-                        pol.blocked[(q, step_of(q, d))] = 1
+                path = retreat_path(here, [tactics.avoid_centre(av)] if in_zone else live,
+                                    {v for k, v in pos().items() if k != me}, pol.blocked,
+                                    reach=max(1, (8 if in_zone else 5) - walked), avoid=av if (tac.get("avoid_all") and not in_zone) or (av and len(av) == 4) else None)
+                replan = False
+                for i, d in enumerate(path):
+                    q = pos().get(me)
+                    if q is None:
+                        break
+                    press((pad_for(d, turn),), 8)
+                    press((), 10)
+                    if pos().get(me, q) == q:          # a wall early on; later it is the move range's end
+                        if walked < 2:
+                            pol.blocked[(q, step_of(q, d))] = 1
+                            replan = True
+                        break
+                    walked += 1
+                    pol.retreats = getattr(pol, 'retreats', 0) + 1
+                if not replan:
                     break
-                pol.retreats = getattr(pol, 'retreats', 0) + 1
+    if lead_attack:
+        cautious = False
+    rng_by = {k for k in set(tac.get("ranged", ())) | set(tac.get("casters", ())) | set(tac.get("item_attack", ()))
+              if pol.tac_fail.get(k, 0) < tactics.FAIL_MAX}
+    reach = tactics.SPELL_RANGE if me in rng_by else 1
+    tg = [g for g in goal if g in live] if goal_tiles is None else []
+    if pol.pathing and not cautious and not hold_back and tg and me in pos():
+        now = pos()
+        occ = {v for k, v in now.items() if k != me} | set(live)
+        t = min(tg, key=lambda e: tactics.md(now[me], e))
+        threats = [(x, y) for k, x, y, f, hp in enemies if k in still]
+        if tac.get("hold_until") and threats:
+            # round 29 (--hold-until N, Sc1 Battle 22 end v91-v103: units walked up to the boss pocket
+            # one at a time and fell to the wizards): a unit whose every tile to hit its target is in a
+            # stationary enemy's range waits just outside until N units (all that are left, if fewer)
+            # can reach that target this round, then they commit together
+            skip = {lead} | set(getattr(pol, "protect", None) or ())
+            hg = tactics.hold_goals(now[me], t, threats, occ, tac["hold_until"], now, rng_by, skip, reach)
+            if hg is not None:
+                goal_tiles = hg
+                pol.hold_waits = getattr(pol, "hold_waits", 0) + 1
+        if goal_tiles is None and reach > 1:
+            # --ranged/--casters/--item-attack: end 2 tiles from the target (out of its melee)
+            goal_tiles = tactics.strike_tiles([t], reach, occ) or None
     if hold_back and not cautious:
         press(('B',), 6)
         press((), 20)
     if pol.pathing and not cautious and not hold_back:
         fails = 0
+        # a failed step late in the move is usually the end of the move range, not a wall: close it
+        # for this turn only (round 33, Sc2 Ch6 probe/p132a: such range ends at y 16-17 piled up in
+        # pol.blocked into a closed line, and the inside team stood still south of the gate)
+        turn_edges = {}
         for _ in range(16):
             now = pos()
             if me not in now:                      # the mover left the roster mid-turn (fell, withdrew)
                 break
             p = now[me]
-            if dist(p) <= 1 or fails >= 8 or (goal is not live and min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in goal) <= 1):
+            if goal_tiles is not None:
+                if p in goal_tiles or fails >= 8:
+                    break
+            elif dist(p) <= 1 or fails >= 8 or (goal is not live and min(abs(p[0] - e[0]) + abs(p[1] - e[1]) for e in goal) <= 1):
                 break
             allies = {v for k, v in now.items() if k != me}
             # allies are walked through (round 2: a force packed on the Battle 22 bridge or in the
             # Sc3 final room had no path with allies as walls, so every unit held for 120k VBlanks)
-            d = plan_step(p, goal, allies | set(live), pol.blocked, passable=allies)
+            shut = set()
+            if lead_attack and getattr(pol, "avoid", None):  # --leader-attack: never path through the zone
+                shut = {(i, j) for i in range(64) for j in range(64) if tactics.in_avoid((i, j), pol.avoid)}
+            d = plan_step(p, goal, allies | set(live) | shut, {**pol.blocked, **turn_edges}, passable=allies - shut, goals=goal_tiles)
             if d is None:
                 break
-            press((d,), 8)
+            press((pad_for(d, turn),), 8)
             press((), 10)
             if pos().get(me, p) != p:
                 steps += 1
                 pol.blocked.pop((p, step_of(p, d)), None)
             else:                                  # wall, cliff or the end of the move range
                 q = step_of(p, d)                  # early in the move it is not the range's end
-                pol.blocked[(p, q)] = pol.blocked.get((p, q), 0) + (2 if steps <= 2 else 1)
+                if steps <= 2:
+                    pol.blocked[(p, q)] = pol.blocked.get((p, q), 0) + 2
+                else:
+                    turn_edges[(p, q)] = 2
                 fails += 1
     for _ in range(0 if pol.pathing or cautious or hold_back else 10):
         p = pos().get(me)
@@ -643,7 +1087,7 @@ def aimed_turn(side, units, pol, press):
         order = [d for d in ((dx, dy) if abs(tx - p[0]) >= abs(ty - p[1]) else (dy, dx)) if d]
         went = False
         for d in order:
-            press((d,), 8)
+            press((pad_for(d, turn),), 8)
             press((), 10)
             if pos().get(me, p) != p:
                 went, steps = True, steps + 1
@@ -688,11 +1132,37 @@ def aimed_turn(side, units, pol, press):
     adjacent = dist(pos()[me]) <= 1
     press(('C',), 6)
     press((), 30)                                  # command ring, cursor on Hold
+    mq = pos().get(me)
+    inr = [k for k, x, y, f, hp in enemies if hp > 0 and k not in getattr(pol, "phantoms", set()) and mq
+           and tactics.md((x, y), mq) <= tactics.SPELL_RANGE]
+    kind = None
+    if me in rng_by and inr and not cautious:
+        if me in tac.get("casters", ()) and unit_mp_of(rd, units["force"], me) >= tactics.MP_MIN:
+            kind = "magic"
+        elif me in tac.get("item_attack", ()):
+            kind = "item"
+        elif me in tac.get("ranged", ()):
+            kind = "attack"
     near = me in pos() and dist(pos()[me]) <= 2                    # first-level spells reach 2 tiles (Blaze, Heal)
     cast_now = (near and pol.cast and pol.tried.get(me, 0) % 2 == 0) or (near and cast_pick)
+    # round 19 (Sc3 Ch7 dock fight, search v55): the leader and protected units never cast. Julian's
+    # first spell is Egress, and a random cast took the force out of the fight to the church, which
+    # the battle-over check took for a win (the battle byte went to the field and a story bit was set)
+    cast_now = cast_now and not cautious and not lead_attack
     if near and pol.cast:
         pol.tried[me] = pol.tried.get(me, 0) + 1
-    if cast_now:
+    if kind:
+        # round 29 (--casters / --item-attack / --ranged): first spell at its first level, first item,
+        # or a bow shot on the highlighted target in reach; two uses that take no HP turn it off
+        pol.tac_check = (tuple(sorted(inr)), sum(hp_of.get(k, 0) for k in inr), me)
+        press((RING[kind],), 6)
+        press((), 14)
+        for _ in range(2 if kind == "attack" else 4):
+            press(("C",), 6)
+            press((), 30)
+        pol.attacks += 1
+        pol.tac_uses = getattr(pol, "tac_uses", 0) + 1
+    elif cast_now:
         # --assist runs: each unit's turns alternate Magic and Attack, Magic first (first spell, its first level, the
         # highlighted target, confirm); a unit with no spells gets a message the trailing C closes
         press((RING['magic'],), 6)
@@ -703,6 +1173,11 @@ def aimed_turn(side, units, pol, press):
         pol.attacks += 1
         pol.casts += 1
     elif adjacent:
+        mp = pos().get(me)
+        keys = tuple(sorted(k for k, x, y, f, hp in enemies if hp > 0 and k not in getattr(pol, 'phantoms', set()) and mp
+                            and abs(x - mp[0]) + abs(y - mp[1]) <= 1))
+        if keys:
+            pol.last_attack = (keys, sum(hp_of.get(k, 0) for k in keys), me)
         press((RING['attack'],), 6)
         press((), 14)
         press(('C',), 6)

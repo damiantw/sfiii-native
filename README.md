@@ -343,7 +343,8 @@ passes the synthetic tests in CI.
 **Still in progress and known issues:**
 
 - **Full playthroughs.** Playthroughs of each scenario, from start to ending, are still running. The automated
-  Scenario 2 V2.000 playthrough is currently blocked; this is under investigation.
+  Scenario 2 V2.000 Chapter 6 Garvin battle has only been won with the test-only `--boost` assist (party stats only, see
+  Testing), so that segment is kept out of the committed, pad-only replays.
 - **Coverage.** Measured coverage of real game code blocks is about 44–49% for Sc1, about 44% for Sc3 and 40–42%
   for Sc2. Code that has not run yet is not known to work.
 - **Premium Disc:** not supported (no profile). Its features cannot be reached from Scenario 3.
@@ -374,7 +375,26 @@ repository. [docs/testing-plan.md](docs/testing-plan.md) has the full plan and r
 - **Coverage:** `saturn --coverage` and `tools/sf3-block-coverage.py` measure which game code ran. Map sweeps
   (`tools/sf3-sweep.py`) drive every save record and map.
 - **Story replays:** `tools/sf3-story.py` plays forward from saves. It records deterministic, pad-only segments
-  (`tools/story-replays/`), which replay frame-exactly with a fixed clock.
+  (`tools/story-replays/`), which replay frame-exactly with a fixed clock. `sf3-story.py search` finds battle
+  inputs by branching and backtracking. Its battle-policy options (all pad inputs only, no RAM pokes) include:
+  - `--leader` and `--protect`: units whose fall loses the battle. Protected units avoid danger (they retreat when hurt, in the `--avoid` zone or within `--keep-away`) but still attack a target they can hit without ending next to a stationary enemy; `--passive` slots never attack
+  - `--guard-hp`: the HP floor for those units
+  - `--escort`: keep units next to a guest
+  - `--avoid X,Y,R` or `--avoid X0,Y0,X1,Y1`: leave a trap zone (the tiles within R of X,Y, or that rectangle)
+  - `--avoid-all`: every unit, not only the leader and protected units, walks out of the `--avoid` zone, and a hurt unit backing away from enemies never ends its retreat inside it
+  - `--target E W`: add W times the share of enemy slot E's HP taken to the score (a boss nobody hits); `--advance X,Y SLOT...`: subtract 0.05 per tile between each listed live force slot and X,Y (moves a split team toward its goal)
+  - `--boost HP ATK DEF` (test only, a cheat that pokes RAM): once at the root, scale the on-field force max HP (at most 999), attack and defence (at most 250) by these factors in the battle table and the party records. The game re-derives in-battle attack and defence, so every battle turn puts the boosted values back for the same units, also when a search continues a boosted segment. The segment header then says `assist boost-H-A-D` and records every poke, so such a segment replays exactly but is never committed to `tools/story-replays/`
+  - Story-line guards: a scenario clear save ends the story line (no goals past it), and a reload or candidate whose story flags fall well below the root (the title, the opening movie or a new game after a quit) counts as a failure, never as progress
+  - `--zone-fatal [V]`: from VBlank V on (default 0), a window that ends with the leader or a protected unit in the `--avoid` zone loses instead of costing 3
+  - `--keep-away`: stay clear of enemies
+  - `--focus`: preferred targets
+  - `--heal` and `--heal-item`: heal with a spell, or with an item on a hurt neighbour
+  - `--leader-attack S`: let the leader walk to and attack an enemy it can finish or one under S of max HP (never through the `--avoid` zone)
+  - `--max-deaths` and `--max-levels`: search limits
+  - `--slim`: keep only the saves on the search path; a backtrack replays an alternative from its parent
+  - `--hold-until N`: units stay out of range of stationary enemies until N units can reach the same target this round, then commit together
+  - `--ranged`, `--casters` and `--item-attack`: units that shoot, cast their first attack spell, or use their first item on an enemy within 2 tiles (focus targets first)
+  - `--healers`: units that cast Heal on a hurt ally next to them (or walk to one) before attacking
 - **Differential testing against Beetle Saturn:** `tools/sf3-diff.py` and `tools/sf3test` run the same inputs on
   the native port and on a libretro core that you build separately and run with your own BIOS. They compare RAM,
   story flags, VDP1/VDP2 output and saves.

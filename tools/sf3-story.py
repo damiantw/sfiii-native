@@ -168,7 +168,7 @@ def start_run(saturn, cue, target, scenario, work, coverage=True, clock=CLOCK):
     os.environ.setdefault('SDL_VIDEO_DRIVER', 'dummy')
     os.environ.setdefault('SDL_AUDIO_DRIVER', 'dummy')
     r = agent.start(str(saturn), args, str(work / 'o'))
-    r._sock.settimeout(120)
+    r._sock.settimeout(float(os.environ.get('SF3_AGENT_TIMEOUT', '120')))  # long box stalls: raise it
     return r
 
 
@@ -210,8 +210,20 @@ def fatal_lines(work):
     return out
 
 
+# round 33: each scenario ends at its clear save. Loading one starts the next playthrough (Sc3
+# Ch7:13 -> NG+ Flagship battle), so it is never a start or a goal to drive past: the story
+# line for acceptance stops there (Sc3 r8-r32 searched a new game from :13 by mistake).
+ENDINGS = ("3-Battle-22-to-End:27", "Sc1-COMPLETE:01", "Sc2-Ch6:14", "Sc3-Ch7:13")
+
+
+def is_ending(rid):
+    return any(rid == e or rid.endswith(":" + e) for e in ENDINGS)
+
+
 def goal_list(ts, start):
     i0 = ts.index(start)
+    if is_ending(start["id"]):
+        raise SystemExit(f"record {start['id']} is the scenario clear save: loading it starts a new game, not story progress")
     goals = [dict(t) for t in ts[i0 + 1:] if story.playtime(t['record']['data']) > story.playtime(start['record']['data'])]
     # only records that add story-flag bits are flag goals (end-of-battle and suspend saves often
     # carry the same flags as the start: those are proven by the battle outcome and map events)
@@ -228,11 +240,25 @@ def goal_list(ts, start):
         elif t['battle'] == 0 and t['map'] != last_map:
             kept.append(dict(t, map_goal=True))
         last_map = t['map']
-    return kept
+    end = next((i for i, g in enumerate(kept) if is_ending(g["id"])), None)
+    return kept if end is None else kept[:end + 1]
 
 
 def _stop_reset(sd):
     raise Done('reset')
+
+
+def _reload_same_line(sd, profile, start):
+    """Back at the title (game over, a quit): load the save again, but a quit that ends in the
+    opening movie or a NEW GAME is not the story line. When the loaded state has fewer story-flag
+    bits than the start record, the drive stops with status new-game (a failure, never progress)."""
+    ok = autoplay.reload_menu(sd, profile, 6500)
+    have = end_hashes(sd, profile).get('flag_bits')
+    want = sum(bin(x).count('1') for x in start['flags'])
+    if not ok or have is None or have < want - 16:
+        print(f'reload: flag bits {have} < start {want} (title, opening movie or new game)', flush=True)
+        raise Done('new-game')
+    return ok
 
 
 def drive(a):
@@ -268,7 +294,7 @@ def drive(a):
                 raise Done('no-load')
             s.loaded = load
         res = autoplay.play(s, a.profile, a.frames, a.seed, assist=a.assist, walker=True, rearm=20, idle_over_turns=60, pathing=a.pathing,
-                            reload=_stop_reset if a.no_reload else lambda sd: autoplay.reload_menu(sd, a.profile, 6500))
+                            reload=_stop_reset if a.no_reload else lambda sd: _reload_same_line(sd, a.profile, start))
     except Done as e:
         status = 'ok' if str(e) in ('frames', 'goal') else str(e)
     except (agent.RunEnded, agent.AgentError, BrokenPipeError, ConnectionResetError) as e:
@@ -290,7 +316,7 @@ def drive(a):
         status = 'crash'
     reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
     header = dict(profile=a.profile, save=Path(start_save(a.saves, start)).name, record=start['id'],
-                  seed=a.seed if not a.cont else f"{h.get('seed')}+{a.seed}", assist=a.assist or 'none',
+                  seed=a.seed if not a.cont else f"{h.get('seed')}+{a.seed}", assist=a.assist or ((h.get('assist') or 'none') if a.cont else 'none'),
                   clock=a.clock, record_sha1=hashlib.sha1(start['record']['data']).hexdigest()[:16],
                   load=load, binary=sha_bin(a.saturn), end_vblank=end and end['vblank'],
                   end_ram_sha1=end and end['ram_sha1'], end_flags_sha1=end and end['flags_sha1'],
@@ -464,6 +490,31 @@ def main():
     q.add_argument('--max-backs', type=int, default=40)
     q.add_argument('--progress', action='store_true', help='also score story progress outside battle: +1000 per new map id reached, +10 per story flag bit (post-battle walks, e.g. the Sc3 Flagship deck)')
     q.add_argument('--leader', type=int, help='force slot whose fall loses the battle (default: the lowest slot at the root; Sc3 Flagship: 31)')
+    q.add_argument('--protect', type=int, nargs='+', help='more force slots whose fall loses the battle; they avoid danger (retreat when hurt, in the --avoid zone or within --keep-away) but still attack a target they can hit from a tile not next to a stationary enemy (Sc3 Ch7 dock fight: the guest Julian, 7)')
+    q.add_argument('--watch-fall', action='store_true', help='sample the leader/protected HP during each window; a fall loses even if the game revives the unit by the window end (Sc2 Ch6: church)')
+    q.add_argument('--keep-away', type=int, default=0, help='the leader/protected units retreat whenever a live enemy is within N tiles, and each one ending a window that close costs 1.5 (Sc3 Ch7 dock fight: the Masked Monk poisoned Julian)')
+    q.add_argument('--avoid', type=lambda t: tuple(int(v) for v in t.split(',')), help='X,Y,R or X0,Y0,X1,Y1 (a rectangle): the leader/protected units walk out of the tiles within R of X,Y (or the rectangle), and each one ending a window there costs 3 (Sc2 Ch6: scripted blast zone)')
+    q.add_argument('--focus', type=int, nargs='+', help='enemy slots the force paths to first while they live (Sc3 Ch7 dock fight: the Masked Monk, 1)')
+    q.add_argument('--heal-item', type=int, nargs='+', help='force slots that use their first item (default target) on a hurt escorted or protected unit next to them (Sc3 dock: Edmund 42 and his Healing Drop)')
+    q.add_argument('--leader-attack', type=float, metavar='S', help='the leader walks to and attacks an enemy it can finish or one under S of max HP (e.g. 0.35), within 4 steps and never through the --avoid zone, instead of only striking what is in reach (Sc2 Ch6: Medion among the Giga Breakers)')
+    q.add_argument('--escort', type=int, nargs='+', help='force slots that must not fall, e.g. one the game moves itself (Sc3 dock: Gracia 31, Julian 7): enemies near any are the targets, else units walk next to the one nearest the enemies')
+    q.add_argument('--heal', type=int, nargs='+', help='force slots that cast their first spell on themselves when hurt (below --guard-hp + 0.3, else 0.6) before retreating; a cast that heals nothing twice turns it off for that slot (Sc3 dock: Gracia, 31)')
+    q.add_argument('--guard-hp', type=float, help='a candidate that leaves the leader or a --protect slot below this share of its HP at the search root loses (backtracks) (Sc3 dock fight v66)')
+    q.add_argument('--max-deaths', type=int, help='a candidate with more fallen force units than this loses (backtracks) (Sc1 battle 29, v62b: 8 of 11 fell, 3 left against a 491-HP boss)')
+    q.add_argument('--keep-alts', type=int, help='each level below the stack top keeps only its next N untried candidates (with --prune: caps disk per level)')
+    q.add_argument('--hold-until', type=int, metavar='N', help='units stay out of range (3 tiles) of enemies that have not moved (since the search root or for 3 turns) until N units, or all that are left, can reach the same target this round, then commit together (Sc1 Battle 22 end: the boss and two High Wizards)')
+    q.add_argument('--ranged', type=int, nargs='+', help='force slots with a bow: they end 2 tiles from the target and shoot')
+    q.add_argument('--casters', type=int, nargs='+', help='force slots that cast their first attack spell (Blaze, Freeze, Bolt; first level) on an enemy within 2 tiles while they have MP')
+    q.add_argument('--item-attack', type=int, nargs='+', help='force slots that use their first item (an attack item) on an enemy within 2 tiles')
+    q.add_argument('--healers', type=int, nargs='+', help='force slots that cast Heal (first spell) on the most hurt ally next to them, or walk to one within 6 tiles, before attacking (Sc3 dock: nobody healed Gracia)')
+    q.add_argument('--target', nargs=2, metavar=('E', 'W'), help='score W times the share of enemy slot E root HP taken (a boss nobody hits)')
+    q.add_argument('--advance', nargs='+', metavar='X,Y|SLOT', help='X,Y SLOT...: score minus 0.05 per tile between each listed live force slot and X,Y (move a split team toward its goal)')
+    q.add_argument('--boost', nargs=3, type=float, metavar=('HP', 'ATK', 'DEF'), help='TEST ONLY cheat: once at the root, scale the on-field force max HP, attack and defence by these factors (battle table and party records), then put the boosted attack and defence back each battle turn (the game re-derives them); the segment header says assist boost-H-A-D, so it is never an acceptance replay')
+    q.add_argument('--zone-fatal', nargs='?', type=int, const=0, default=None, metavar='V', help='from VBlank V on (default 0), a window that ends with the leader or a --protect slot inside the --avoid zone loses (backtracks), instead of costing 3 (Sc2 Ch6: the blast)')
+    q.add_argument('--avoid-all', action='store_true', help='every unit, not only the leader and --protect slots, walks out of the --avoid zone when its turn starts there, and hurt units never end a retreat inside it (Sc2 Ch6: the blast kills all units left in it)')
+    q.add_argument('--passive', type=int, nargs='+', help='--protect slots that never attack (they only retreat and hold), the behaviour before --protect could attack (Sc3 dock: the guest Julian, 7)')
+    q.add_argument('--slim', action='store_true', help='keep only the saves on the search path (one per level); an untried alternative is replayed from its parent with its seed when the search backtracks to it')
+    q.add_argument('--prune', action='store_true', help='delete candidate saves the search can never backtrack to (keeps the stack top and the untried alternatives)')
     q.add_argument('--no-left', action='store_true', help='do not score battle id 0 as Egress/defeat (Sc2 V1.003: its map/battle bytes do not track in Ch6)')
     q.add_argument('--resync', action='store_true', help='after each level, replay the committed pads straight from the save and continue from that run (save-state restores are not exact)')
     q.add_argument('--stall', type=int, default=8, help='stop when the best score is flat this many levels (0: never)')

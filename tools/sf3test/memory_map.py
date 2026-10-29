@@ -139,6 +139,23 @@ BATTLE_UNITS.update({
     'scenario2-v25_1-v1_003': dict(enemies=0x06030920, force=0x06033260, live=0x98),
 })
 
+# Round 19 (story driver): a battle-active byte that does not depend on the map/battle ids or the unit
+# tables. On Sc3 both ids stay 9/1 from the Flagship fight through the Ch7 ship and harbour, and after
+# a battle that ends by event (the Destonia harbour fight) the enemy table keeps its last 'live'
+# records, two of them next to force units, while the force walks the ship. u8 0603664E is 1 in
+# battle and 2 in the field: over a pad-only Ch7:13 replay (265k VBlanks, sampled every 1500) it
+# flips 2->1 at the Flagship start (25.5k), 1->2 after the win and level-ups (48k), 2->1 at the
+# harbour start (99k) and 1->2 when that fight ends (111k), and stays 2 to 265k. 06023AA4 (0 in battle,
+# 6 in the field) and 060FA019 (0 / 20) flip at the same samples. (addr, battle value)
+# Round 27 (Sc2 V1.003 Ch6 war-machine fight, map 0x49): the battle id reads 0 all fight, so autoplay
+# took it for a town and walked spirals (A/C examine) for the whole search: no unit was ever steered,
+# the leader never retreated and the blast at ~523k took the force every candidate. u8 0603B269 is 1
+# there (root 512.9k and 400 later) and 2 in the town after the defeat (527k-528k); the only byte of
+# 1MB work RAM that flips that way with values < 8 (the same 1/2 sense as Sc3's). V2.000 reads its
+# battle id there (0x0B), so it gets no entry
+BATTLE_ACTIVE = {'scenario3-v25_1-redump': (0x0603664E, 1),
+                 'scenario2-v25_1-v1_003': (0x0603B269, 1)}
+
 # Map ids a map sweep must not edit into a save: checked on Beetle Saturn with a real BIOS (the game
 # never draws again after the load), so a failure there says nothing about the port.
 # Sc3 ids from 0xA5 up that fail in the sweep and show only black or 'CD READ ERROR' on Beetle
@@ -215,7 +232,15 @@ def lookup(profile):
     scenario, base, tick = PROFILES[profile]
     return dict(profile=profile, scenario=scenario, state_base=base, tick=tick,
                 map_id=base + MAP_ID, battle_id=base + BATTLE_ID, prev_map=base + PREV_MAP,
-                units=BATTLE_UNITS.get(profile))
+                units=BATTLE_UNITS.get(profile), battle_active=BATTLE_ACTIVE.get(profile))
+
+
+def in_battle(read, mm):
+    """True/False from the profile's battle-active byte; None when the profile has none."""
+    ba = mm.get('battle_active')
+    if not ba:
+        return None
+    return read(ba[0], 1)[0] == ba[1]
 
 
 def on_field(rec, live=None):
@@ -266,6 +291,78 @@ def assist_writes(read, units, enemy_hp=None, hp=999, stat=99, move=12):
         for k, x, y, f, h in read_units(read, units['enemies'], units.get('live')):
             if h > enemy_hp and (units.get('live') or not f & 0x80) and x < 128 and y < 128:
                 out.append((units['enemies'] + k * UNIT_STRIDE + UNIT_HP, enemy_hp.to_bytes(2, 'big')))
+    return out
+
+
+def boost_writes(read, units, state_base=None, hp=3.0, atk=2.0, dfn=2.0, size=0x6000):
+    """Test-only cheat (never on by default; sf3-story.py search --boost): [(addr, bytes)] that scale
+    every on-field force unit's max HP (to at most 999, current HP refilled unless 0) by `hp` and its
+    attack and defence by `atk` / `dfn` (at most 250), in the battle table and, when `state_base`
+    is given, in the party record with the same name and max HP in the save block there (base
+    attack/defence at +0x14/+0x15), so the change also outlasts the battle."""
+    out = []
+    raw = read(units['force'], UNIT_STRIDE * UNIT_COUNT)
+    blk = read(state_base, size) if state_base is not None else b''
+    for k in range(UNIT_COUNT):
+        e = raw[k * UNIT_STRIDE:(k + 1) * UNIT_STRIDE]
+        if not on_field(e, units.get('live')) or not looks_like_force(e, units.get('live')):
+            continue
+        mh = int.from_bytes(e[UNIT_MAX_HP:UNIT_MAX_HP + 2], 'big')
+        mh2 = min(999, int(mh * hp))
+        cur = int.from_bytes(e[UNIT_HP:UNIT_HP + 2], 'big')
+        a = units['force'] + k * UNIT_STRIDE
+        ad = [min(250, int(e[UNIT_ATK] * atk)), min(250, int(e[UNIT_DEF] * dfn))]
+        out += [(a + UNIT_MAX_HP, mh2.to_bytes(2, 'big')), (a + UNIT_ATK, bytes(ad))]
+        if cur:
+            out.append((a + UNIT_HP, mh2.to_bytes(2, 'big')))
+        name = e[:12].split(b'\0')[0]
+        if not name or not blk:
+            continue
+        i = blk.find(name + b'\0')
+        while i >= 0:
+            p = blk[i:i + UNIT_STRIDE]
+            if len(p) == UNIT_STRIDE and int.from_bytes(p[UNIT_MAX_HP:UNIT_MAX_HP + 2], 'big') == mh:
+                b = state_base + i
+                base = [min(250, int(p[0x14] * atk)), min(250, int(p[0x15] * dfn))]
+                cur2 = [min(250, p[UNIT_ATK] + base[0] - p[0x14]), min(250, p[UNIT_DEF] + base[1] - p[0x15])]
+                out += [(b + UNIT_MAX_HP, mh2.to_bytes(2, 'big')), (b + 0x14, bytes(base)), (b + UNIT_ATK, bytes(cur2))]
+                if int.from_bytes(p[UNIT_HP:UNIT_HP + 2], 'big'):
+                    out.append((b + UNIT_HP, mh2.to_bytes(2, 'big')))
+                break
+            i = blk.find(name + b'\0', i + 1)
+    return out
+
+
+def boost_floor(read, units, pokes):
+    """The --boost attack/defence floor, {force slot: (name, attack, defence)}, from the 2-byte
+    attack/defence pokes in `pokes` [(addr, bytes)] (the last one per slot) that land on a force record,
+    named as that record reads now. The game re-derives the in-battle attack and defence (Sc2 Ch6 on
+    2.000: poked to 250 at the root, read 61-93 again 140k VBlanks later) while max HP stays, so
+    boost_hold_writes puts them back during play."""
+    out = {}
+    raw = read(units['force'], UNIT_STRIDE * UNIT_COUNT)
+    for addr, data in pokes:
+        k, o = divmod(addr - units['force'], UNIT_STRIDE)
+        if len(data) != 2 or o != UNIT_ATK or not 0 <= k < UNIT_COUNT:
+            continue
+        name = raw[k * UNIT_STRIDE:k * UNIT_STRIDE + 12].split(b'\0')[0]
+        if name:
+            out[k] = (name, data[0], data[1])
+    return out
+
+
+def boost_hold_writes(read, units, floor):
+    """[(addr, bytes)] that lift each floor slot's in-battle attack and defence back to its
+    boost_floor values, for records that are still that unit (same name), on the field and a force
+    record; values above the floor are kept and nothing is written for a slot already at it."""
+    out = []
+    raw = read(units['force'], UNIT_STRIDE * UNIT_COUNT)
+    for k, (name, atk, dfn) in sorted(floor.items()):
+        e = raw[k * UNIT_STRIDE:(k + 1) * UNIT_STRIDE]
+        if e[:12].split(b'\0')[0] != name or not on_field(e, units.get('live')) or not looks_like_force(e, units.get('live')):
+            continue
+        if e[UNIT_ATK] < atk or e[UNIT_DEF] < dfn:
+            out.append((units['force'] + k * UNIT_STRIDE + UNIT_ATK, bytes([max(e[UNIT_ATK], atk), max(e[UNIT_DEF], dfn)])))
     return out
 
 

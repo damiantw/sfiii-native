@@ -47,31 +47,83 @@ def unit_hp(read, units):
     return out
 
 
-def metrics(units_now, root, leader):
-    """Battle standing against the root roster (`root` a unit_hp result at the search start)."""
+def metrics(units_now, root, leader, protect=()):
+    """Battle standing against the root roster (`root` a unit_hp result at the search start).
+    `protect` (round 19): more force slots whose fall loses the battle (Sc3 Ch7 dock fight: the
+    guest Julian, slot 7; his fall sends the force to the church while Synbios is still up)."""
     f, e = units_now['force'], units_now['enemies']
     e_top = sum(max(m, h, 1) for h, m in root['enemies'].values()) or 1
-    e_left = sum(e.get(k, (0, 0))[0] for k in root['enemies'])
+    # cap each slot at its root top: mid-attack scenes can leave a garbage HP word in a record
+    # (Sc3 dock fight v61: force_left read 354.96 during Edmund's barrel attack)
+    def cap(now, k, r):
+        return max(0, min(now.get(k, (0, 0))[0], max(r[k][0], r[k][1], 1)))
+    e_left = sum(cap(e, k, root['enemies']) for k in root['enemies'])
     kills = sum(1 for k in root['enemies'] if e.get(k, (0, 0))[0] <= 0)
     f_top = sum(max(m, h, 1) for h, m in root['force'].values()) or 1
-    f_left = sum(f.get(k, (0, 0))[0] for k in root['force'])
+    f_left = sum(cap(f, k, root['force']) for k in root['force'])
     deaths = sum(1 for k in root['force'] if f.get(k, (0, 0))[0] <= 0)
     lh, lm = f.get(leader, (0, 1))
     lroot = max(root['force'].get(leader, (1, 1)))
+    lost = [k for k in (protect or ()) if k in root['force'] and f.get(k, (0, 0))[0] <= 0]
     return dict(enemy_left=e_left / e_top, kills=kills, force_left=f_left / f_top, deaths=deaths,
-                leader=lh / max(lm, lroot, 1), leader_down=lh <= 0,
+                leader=lh / max(lm, lroot, 1), leader_down=lh <= 0 or bool(lost),
                 won=bool(root['enemies']) and kills == len(root['enemies']))
+
+
+def threat(read, units, guarded, reach):
+    """--keep-away: how many guarded force slots end the window with a live enemy (HP above 1, not a
+    barrel) within `reach` tiles; each costs 1.5 in score."""
+    fo = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(read, units['force'], units.get('live'))}
+    en = [(x, y) for k, x, y, f, hp in memory_map.read_units(read, units['enemies'], units.get('live')) if hp > 1]
+    return sum(1 for g in guarded if g in fo and en and
+               min(abs(fo[g][0] - x) + abs(fo[g][1] - y) for x, y in en) <= reach)
+
+
+def in_zone(read, units, guarded, zone):
+    """--avoid X,Y,R: how many guarded force slots end the window within R tiles of (X, Y); each costs 3."""
+    fo = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(read, units['force'], units.get('live'))}
+    return sum(1 for g in guarded if g in fo and autoplay.tactics.in_avoid(fo[g], zone))
+
+
+def low_hp(units_now, root, guarded, share):
+    """--guard-hp F (round 27, Sc3 dock fight v66): a guarded slot below F of its root top HP. Gracia
+    went 23 -> 11 of 35 at 283.5k and Julian 40 -> 13 at 285.6k, then every candidate eight levels on lost
+    Julian; a floor makes the search back up to where the damage was taken."""
+    f = units_now['force']
+    return any(g in root['force'] and f.get(g, (0, 0))[0] < share * max(max(root['force'][g]), 1)
+               for g in guarded)
+
+
+def push_terms(read, units, job):
+    """--target E W: W times the share of enemy slot E's root HP taken (Sc2 Ch6: Garvin, enemy 4,
+    360 HP, never hit in any run). --advance X,Y SLOT...: minus 0.05 per tile between each live
+    listed force slot and (X, Y) (the inside team stood at y 9-17 while the guards waited near 15,20)."""
+    bonus = 0.0
+    if job.get('target'):
+        e, w = int(job['target'][0]), float(job['target'][1])
+        now = unit_hp(read, units)['enemies']
+        if e in now:                     # max HP from the table: a boss can join after the root
+            hp, mx = now[e]
+            top = max(mx, (job['root']['enemies'].get(e) or (0, 0))[1], 1)
+            bonus += w * (1 - max(0, min(hp, top)) / top)
+        elif e in job['root']['enemies']:  # gone from the field since the root: fallen
+            bonus += w
+    if job.get('advance'):
+        (x, y), slots = job['advance']
+        fo = {k: (a, b) for k, a, b, f, hp in memory_map.read_units(read, units['force'], units.get('live')) if hp > 0}
+        bonus -= 0.05 * sum(abs(fo[k][0] - x) + abs(fo[k][1] - y) for k in slots if k in fo)
+    return bonus
 
 
 def score(m):
     if m.get('goal'):
         return 1e6
-    if m['leader_down'] or m.get('reset') or m.get('left'):
+    if m['leader_down'] or m.get('reset') or m.get('left') or m.get('too_many_deaths') or m.get('low_hp') or m.get('zone_fatal'):
         return -1e6
     if m['won']:
         return 1e5
     return (4 * (1 - m['enemy_left']) + 1.0 * m['kills'] + 1.5 * m['force_left'] - 1.0 * m['deaths']
-            + 2 * m['leader'])
+            + 2 * m['leader'] - 1.5 * m.get('threat', 0) - 3 * m.get('in_zone', 0))
 
 
 def left_battle(read, job, reached):
@@ -82,6 +134,52 @@ def left_battle(read, job, reached):
     if not job.get('root_battle') or job.get('no_left') or reached:
         return False
     return read(memory_map.lookup(job['profile'])['battle_id'], 1)[0] == 0
+
+
+def battle_over(read, job, m, flag_bits):
+    """Round 19: with a battle-active byte (memory_map.BATTLE_ACTIVE), a battle that began active and is
+    now over with the leader up, no reset and either every root enemy down or a new story flag bit is
+    won (Sc3 harbour: the fight ends by event, the enemy table stays stale, so kills never complete).
+    An Egress also leaves the battle but sets no story flag."""
+    if not job.get('root_active'):
+        return False
+    if memory_map.in_battle(read, memory_map.lookup(job['profile'])) is not False:
+        return False
+    if m['leader_down'] or m.get('reset'):
+        return False
+    return m['won'] or flag_bits > job.get('root_flag_bits', 0)
+
+
+def live_dirs(levels):
+    """The candidate dirs backtracking can still reach: the stack top's and every untried ranked
+    alternative below it (a popped level is never expanded again)."""
+    keep = {Path(levels[-1]['state']).parent}
+    for lv in levels[:-1]:
+        keep |= {Path(c['state']).parent for c in lv['ranked'][lv['pick'] + 1:]
+                 if c.get('state') and c['score'] > -1e6}
+    return keep
+
+
+def cap_alternatives(levels, n):
+    """--keep-alts N (round 27, Sc1 v62b grew to 2.3 GB, v67 ~38 MB a level under --prune): each level
+    below the top keeps only its next N untried ranked candidates; the rest are never backtracked to
+    (and --prune deletes their saves)."""
+    for lv in levels[:-1]:
+        lv['ranked'] = lv['ranked'][:lv['pick'] + 1 + n]
+
+
+def prune_dead(cdir, levels):
+    """--prune: delete the candidate dirs the search can never return to (a long search kept a 5 MB
+    save per candidate, ~4 GB/h)."""
+    if not cdir.is_dir():
+        return 0
+    keep = {k.resolve() for k in live_dirs(levels)}
+    gone = 0
+    for d in cdir.iterdir():
+        if d.is_dir() and d.resolve() not in keep:
+            shutil.rmtree(d, ignore_errors=True)
+            gone += 1
+    return gone
 
 
 def save_state(r, path):
@@ -100,9 +198,59 @@ def run_args(job, state=None):
     return args
 
 
+def tactics_of(a):
+    """The round-29 opt-in tactics (sf3-story.py --hold-until, --ranged, --casters, --healers,
+    --item-attack) as the dict autoplay.play takes."""
+    t = {k: getattr(a, k, None) for k in ('hold_until', 'ranged', 'casters', 'healers', 'item_attack', 'passive', 'avoid_all')}
+    return {k: v for k, v in t.items() if v}
+
+
 def _play(s, job, frames, seed, explore):
     return autoplay.play(s, job['profile'], frames, seed, walker=True, rearm=20, idle_over_turns=60,
-                         pathing=True, explore=explore)
+                         pathing=True, explore=explore,
+                         leader=job.get('leader'), protect=job.get('protect'), keep_away=job.get('keep_away', 0), avoid=job.get('avoid'), focus=job.get('focus'), heal=job.get('heal'), escort=job.get('escort'), heal_item=job.get('heal_item'), leader_attack=job.get('leader_attack'), tactics=job.get('tactics'), root_epos=job.get('root_epos'), boost_floor=job.get('boost_floor'), heal_at=job.get('guard_hp') and min(0.9, job['guard_hp'] + 0.3),
+                         watch=tuple([job['leader']] + list(job.get('protect') or ())) if job.get('watch_fall') else None)
+
+
+def slim_dirs(cdir, levels):
+    """--slim (round 28, Sc3 v92 held 286 candidate saves, 1.5 GB at level 50): keep only the stack
+    path, one picked candidate per level (each the parent its level expands from); untried
+    alternatives lose their saves and are replayed from their parent with their seed on a backtrack."""
+    if not cdir.is_dir():
+        return 0
+    keep = {Path(lv["state"]).parent.resolve() for lv in levels}
+    gone = 0
+    for d in cdir.iterdir():
+        if d.is_dir() and d.resolve() not in keep:
+            shutil.rmtree(d, ignore_errors=True)
+            gone += 1
+    return gone
+
+
+def restore_alt(c, prev, common, run):
+    """--slim backtrack: the alternative `c` (a ranked result of level `prev`) has no save left; run
+    it again from the parent with its seed and explore into its own dir. Returns the new result and
+    whether it matched the first run (VBlank and score)."""
+    if Path(c["state"]).exists():
+        return c, True
+    out = Path(c.get("out") or Path(c["state"]).parent)
+    r = run(dict(common, state=prev["state"], backup=prev["backup"], v=prev["v"], seed=c["seed"],
+                 explore=c["explore"], out=str(out)))
+    return r, r.get("v") == c.get("v") and round(r["score"], 3) == round(c["score"], 3)
+
+
+NEW_GAME_DROP = 16
+
+
+def new_game(s, job):
+    """Round 33: the story-flag bits fell well below the root's (the opening movie or a new game
+    after a quit to the title, or the next playthrough after a clear save): a reset, never progress."""
+    fb = job.get('root_flag_bits')
+    if not fb:
+        return False
+    S = st()
+    have = S.story.bits(s.read(S.story.flag_addr(job['profile']), S.story.FLAG_HI - S.story.FLAG_LO))
+    return have < fb - NEW_GAME_DROP
 
 
 def candidate(job):
@@ -118,7 +266,7 @@ def candidate(job):
     shutil.copyfile(job['backup'], out / 'backup.bin')
     job = dict(job, backup=str(out / 'backup.bin'))
     r = agent.start(job['saturn'], run_args(job, job['state']), str(out / 'o'))
-    r._sock.settimeout(120)
+    r._sock.settimeout(float(os.environ.get('SF3_AGENT_TIMEOUT', '120')))
     try:
         s = S.Recorder(r, job['profile'], copy.deepcopy(job['goals']), out)
         s.loaded, s.g, s.held = True, 0, ''
@@ -131,12 +279,30 @@ def candidate(job):
         for _ in range(30):
             s.step()
         reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
-        m1 = metrics(unit_hp(s.read, units), job['root'], job['leader'])
-        m1.update(goal=bool(reached), reset=bool(p['resets']), left=left_battle(s.read, job, reached))
+        m1 = metrics(unit_hp(s.read, units), job['root'], job['leader'], job.get('protect'))
+        m1.update(goal=bool(reached), reset=bool(p['resets']) or new_game(s, job), left=left_battle(s.read, job, reached))
+        if p.get('fell'):  # --watch-fall: a fall inside the window loses, even if revived by the end
+            m1.update(leader_down=True, fell=p['fell'])
+        if job.get('max_deaths') is not None and m1['deaths'] > job['max_deaths']:
+            m1.update(too_many_deaths=True)   # --max-deaths: back up instead of grinding a lost force down
+        if job.get('guard_hp'):
+            m1.update(low_hp=low_hp(unit_hp(s.read, units), job['root'], [job['leader']] + list(job.get('protect') or ()), job['guard_hp']))
+        if job.get('avoid'):
+            m1.update(in_zone=in_zone(s.read, units, [job['leader']] + list(job.get('protect') or ()), job['avoid']))
+            # v121: the whole force fights inside the zone from ~488k, so --zone-fatal V only applies from VBlank V
+            if job.get('zone_fatal') is not None and m1['in_zone'] and r.vblank >= job['zone_fatal']:
+                # --zone-fatal (v119, Sc2 Ch6: probe/p119 shows Medion at 34,37 inside the zone for
+                # L7-L9 despite the 3-point cost; the 504.6k blast then killed him): ending a window
+                # with the leader or a protected unit in the zone loses
+                m1.update(zone_fatal=True)
+        if job.get('keep_away'):
+            m1.update(threat=threat(s.read, units, [job['leader']] + list(job.get('protect') or ()), job['keep_away']))
         state = out / 'commit.state'
         if not save_state(r, state):
             raise RuntimeError('state not written')
         end = S.end_hashes(s, job['profile'])
+        if battle_over(s.read, job, m1, end.get('flag_bits', 0)):
+            m1.update(won=True, over=True)
         if job.get('progress'):
             # story progress outside battle: new map ids seen and story flag bits set
             new_maps = {e[1] for e in p['events'] if e[1] not in (-1, map0)}
@@ -150,12 +316,18 @@ def candidate(job):
                    m_commit=m1, reached=reached)
         if job['L'] and not reached and score(m1) > -1e6:
             p2 = _play(s, job, job['L'], job['seed'] + 7919, 0.0)
-            m2 = metrics(unit_hp(s.read, units), job['root'], job['leader'])
+            m2 = metrics(unit_hp(s.read, units), job['root'], job['leader'], job.get('protect'))
             r2 = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
-            m2.update(goal=bool(r2), reset=bool(p2['resets']), left=left_battle(s.read, job, r2))
+            m2.update(goal=bool(r2), reset=bool(p2['resets']) or new_game(s, job), left=left_battle(s.read, job, r2))
+            if p2.get('fell'):
+                m2.update(leader_down=True, fell=p2['fell'])
+            if battle_over(s.read, job, m2, S.end_hashes(s, job['profile']).get('flag_bits', 0)):
+                m2.update(won=True, over=True)
         else:
             m2 = m1
         res.update(m_look=m2, score=score(m1) if m1.get('goal') or score(m1) <= -1e6 else score(m2))
+        if (job.get('target') or job.get('advance')) and -1e6 < res['score'] < 1e5:
+            res['score'] += push_terms(s.read, units, job)
         if job.get('progress') and res['score'] > -1e6:
             res['score'] += 1000 * m1['new_maps'] + 10 * m1['flag_bits'] + 2 * m1['spread']
     except Exception as e:
@@ -197,15 +369,31 @@ def search(a):
         rs.loaded = load
     for _ in range(200):
         hp = unit_hp(rs.read, units)
-        if rs.read(mm['battle_id'], 1)[0] and any(v[0] > 0 for v in hp['enemies'].values()) and hp['force']:
+        ib = memory_map.in_battle(rs.read, mm)
+        if (ib if ib is not None else rs.read(mm['battle_id'], 1)[0]) and any(v[0] > 0 for v in hp['enemies'].values()) and hp['force']:
             break
         autoplay.play(rs, a.profile, 300, a.seed, walker=True, rearm=20, idle_over_turns=60, pathing=True)
     rs.pad(())
     for _ in range(30):
         rs.step()
+    boost = getattr(a, 'boost', None)
+    if boost and not str(h.get('assist', 'none')).startswith('boost'):
+        # test-only cheat (--boost H A D): scale the on-field force's max HP, attack and defence once
+        # here (battle table and party records); logged as pokes, so the segment says assisted
+        for addr, data in memory_map.boost_writes(rs.read, units, mm['state_base'], *boost):
+            rs.write(addr, data)
+        for _ in range(2):
+            rs.step()
+    # the game re-derives in-battle attack/defence (max HP stays): hold the boosted values every turn
+    floor = memory_map.boost_floor(rs.read, units, [(int(x[2], 16), bytes.fromhex(x[3])) for x in rs.actions if x[1] == 'poke']) \
+        if boost_tag(a, h).startswith('boost') else {}
+    if floor:
+        print(f'boost floor: {len(floor)} force slots keep their boosted attack/defence', flush=True)
     root = unit_hp(rs.read, units)
     root_pos = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rs.read, units['force'], units.get('live'))}
+    root_epos = {k: (x, y) for k, x, y, f, hp in memory_map.read_units(rs.read, units['enemies'], units.get('live'))}
     root_battle = rs.read(mm['battle_id'], 1)[0]
+    root_active = memory_map.in_battle(rs.read, mm)
     leader = getattr(a, 'leader', None)
     if leader is None or leader not in root['force']:
         leader = min(root['force'])
@@ -214,17 +402,25 @@ def search(a):
     base_actions, v0 = list(rs.actions), r.vblank
     root_end = S.end_hashes(rs, a.profile)
     r.close()
+    common_fb = root_end.get('flag_bits', 0)
     shutil.copyfile(out / 'root' / 'backup.bin', out / 'states' / 'root.backup.bin')
     print(f'root at VBlank {v0}: {len(root["force"])} force, {len(root["enemies"])} enemies, leader slot {leader}', flush=True)
     common = dict(saturn=a.saturn, cue=str(a.cue), clock=a.clock,
-                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, state_id=state_id, W=a.window, L=a.look,
-                  progress=getattr(a, 'progress', False), root_pos=root_pos)
+                  profile=a.profile, goals=goals, root=root, root_battle=root_battle, no_left=getattr(a, 'no_left', False), leader=leader, protect=list(getattr(a, 'protect', None) or ()), watch_fall=getattr(a, 'watch_fall', False), keep_away=getattr(a, 'keep_away', 0) or 0, avoid=getattr(a, 'avoid', None), focus=getattr(a, 'focus', None), max_deaths=getattr(a, 'max_deaths', None), zone_fatal=getattr(a, 'zone_fatal', None), target=getattr(a, 'target', None), advance=parse_advance(getattr(a, 'advance', None)), guard_hp=getattr(a, 'guard_hp', None), heal=getattr(a, 'heal', None), escort=getattr(a, 'escort', None), heal_item=getattr(a, 'heal_item', None), leader_attack=getattr(a, 'leader_attack', None), tactics=tactics_of(a), root_epos=root_epos, boost_floor=floor, state_id=state_id, W=a.window, L=a.look,
+                  progress=getattr(a, 'progress', False), root_pos=root_pos,
+                  root_active=root_active, root_flag_bits=common_fb)
     # levels: each a dict(state, v, actions (from the start), ranked candidates, pick index)
     levels = [dict(state=str(st0), v=v0, actions=base_actions, end=root_end, ranked=[], pick=0, score=0,
                    backup=str(out / 'states' / 'root.backup.bin'))]
     log, backs, done_goal, stalled = [], 0, False, False
     with ProcessPoolExecutor(a.jobs) as ex:
         while levels[-1]['v'] - v0 < a.frames and len(log) < a.max_levels:
+            if getattr(a, 'keep_alts', None) is not None:
+                cap_alternatives(levels, a.keep_alts)
+            if getattr(a, 'slim', False):
+                slim_dirs(out / 'c', levels)
+            elif getattr(a, 'prune', False):
+                prune_dead(out / 'c', levels)
             cur = levels[-1]
             n = len(log)
             jobs = [dict(common, state=cur['state'], backup=cur['backup'], v=cur['v'], seed=a.seed * 1000 + n * 37 + i,
@@ -243,6 +439,14 @@ def search(a):
                     levels.pop()
                     prev = levels[-1]
                     prev['pick'] += 1
+                    while getattr(a, 'slim', False) and prev['pick'] < len(prev['ranked']) and prev['ranked'][prev['pick']]['score'] > -1e6 \
+                            and not Path(prev['ranked'][prev['pick']].get('state') or '/nonexistent').exists():
+                        c, same = restore_alt(prev['ranked'][prev['pick']], prev, common, lambda j: ex.submit(candidate, j).result())
+                        prev['ranked'][prev['pick']] = c
+                        print(f"  slim: replayed candidate {prev['pick']} at level {len(levels) - 1} ({'same' if same else 'DIFFERS, now ' + str(round(c['score'], 2))})", flush=True)
+                        if c['score'] > -1e6 and c.get('state'):
+                            break
+                        prev['pick'] += 1
                     if prev['pick'] < len(prev['ranked']) and prev['ranked'][prev['pick']]['score'] > -1e6:
                         c = prev['ranked'][prev['pick']]
                         levels.append(dict(state=c['state'], v=c['v'], actions=prev['actions'] + c['actions'],
@@ -290,6 +494,11 @@ def search(a):
                 done_goal = True
                 print(f"search: {'goal ' + ','.join(best['reached']) if best.get('reached') else 'battle won'} at VBlank {best['v']}", flush=True)
                 break
+        else:
+            # round 28 (v70, Sc1): the loop ran out of rounds (--max-levels counts backtracked rounds
+            # too) and exited 1 with no message, which looked like a crash
+            print(f"search: stopped after {len(log)} rounds (--max-levels {a.max_levels}) at VBlank "
+                  f"{levels[-1]['v']} ({levels[-1]['v'] - v0} of --frames {a.frames})", flush=True)
     write_segment(a, out, start, load, h, levels[-1], S)
     if done_goal or stalled:
         finalize(a, out)
@@ -309,8 +518,10 @@ def resync(a, S, start, mm, units, out, lv, common, n):
             s.step()
         here, hv = S.end_hashes(s, a.profile), r.vblank  # hash at lv['v'], before save_state steps on
         reached = [e['goal'] for e in s.events if e['kind'] in ('goal', 'map-goal')]
-        m = metrics(unit_hp(s.read, units), common['root'], common['leader'])
+        m = metrics(unit_hp(s.read, units), common['root'], common['leader'], common.get('protect'))
         m.update(goal=bool(reached), reset=False, left=left_battle(s.read, common, reached))
+        if battle_over(s.read, common, m, S.end_hashes(s, a.profile).get('flag_bits', 0)):
+            m.update(won=True, over=True)
         st = out / 'states' / f'sync-{n:04d}.state'
         if not save_state(r, st):
             raise RuntimeError('sync state not written')
@@ -360,13 +571,31 @@ def finalize(a, out):
     return True
 
 
+def parse_advance(v):
+    """--advance X,Y SLOT... -> ((X, Y), [SLOT...]), or None."""
+    if not v:
+        return None
+    x, y = (int(t) for t in v[0].split(','))
+    return (x, y), [int(t) for t in v[1:]]
+
+
+def boost_tag(a, h):
+    """The segment header's assist value: 'boost-H-A-D' for a --boost run (or one continued from
+    a boosted segment), else 'none'."""
+    prev = str((h or {}).get('assist', 'none'))
+    if prev.startswith('boost'):
+        return prev
+    b = getattr(a, 'boost', None)
+    return 'boost-' + '-'.join(f'{x:g}' for x in b) if b else 'none'
+
+
 def write_segment(a, out, start, load, h, lv, S):
     from . import story
     seed = f"search-k{a.k}-w{a.window}-l{a.look}-s{a.seed}"
     if a.cont:
         seed = f"{h.get('seed')}+{seed}"
     header = dict(profile=a.profile, save=Path(S.start_save(a.saves, start)).name, record=start['id'], seed=seed,
-                  assist='none', clock=a.clock, record_sha1=hashlib.sha1(start['record']['data']).hexdigest()[:16],
+                  assist=boost_tag(a, h), clock=a.clock, record_sha1=hashlib.sha1(start['record']['data']).hexdigest()[:16],
                   load=load, binary=S.sha_bin(a.saturn), end_vblank=lv['v'], end_ram_sha1=lv['end']['ram_sha1'],
                   end_flags_sha1=lv['end']['flags_sha1'], reached=','.join(lv.get('reached') or []) or '-')
     (out / 'segment.txt').write_text(story.segment_text(header, lv['actions']))
