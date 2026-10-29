@@ -10,7 +10,7 @@ FORBIDDEN = {'.bin', '.cue', '.iso', '.chd', '.wav', '.sav', '.state', '.exe', '
              '.obj', '.o', '.lib', '.pdb', '.png', '.jpg', '.zip', '.7z', '.log'}
 ALLOWED_TOP = {'native', 'profiles', 'tools', 'docs', 'LICENSES', 'desktop'}
 ALLOWED_ROOT = {'.gitignore', '.gitattributes', '.github/FUNDING.yml', '.github/workflows/portable.yml', '.github/workflows/synthetic.yml', '.github/workflows/linux-native.yml', '.github/workflows/bench.yml', 'README.md', 'LICENSE', 'THIRD_PARTY.md', 'dependencies.json'}
-SOURCE_SUFFIXES = {'.c', '.cpp', '.h', '.hlsl', '.inc', '.py', '.ps1', '.cmd', '.cmake', '.patch', '.cs', '.manifest', '.rc'}
+SOURCE_SUFFIXES = {'.c', '.cpp', '.h', '.hlsl', '.inc', '.py', '.ps1', '.cmd', '.cmake', '.patch', '.cs', '.manifest', '.rc', '.sh'}
 PATTERNS = {
     'personal Windows path': re.compile(rb'[A-Za-z]:[\\/]+Users[\\/]+', re.I),
     'GitHub credential': re.compile(rb'(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})'),
@@ -34,7 +34,7 @@ def main():
         story_segment = path.parts[:2] == ('tools', 'story-replays') and path.suffix == '.seg'   # input text only
         if path.parts[0] in {'native','tools'} and path.suffix.lower() not in SOURCE_SUFFIXES and path.name != 'CMakeLists.txt' and not story_segment:
             failures.append([name,'not a source file'])
-        if path.parts[0] == 'profiles' and name not in {'profiles/usa-v1.001.json','profiles/scenario1-v25_1.json','profiles/scenario2-v24.json','profiles/scenario2-v25_1-v1_003.json','profiles/scenario2-v25_1-v2_000.json','profiles/scenario2-v25_1-upgrade.json','profiles/scenario2-supplied-v1003.json','profiles/scenario3-v25_1.json','profiles/scenario3-v25_1-redump.json','profiles/scenario1-v25_1-addons.json','profiles/scenario2-v25_1-addons-v1_003.json','profiles/scenario2-v25_1-addons-v2_000.json','profiles/scenario3-v25_1-addons-redump.json','profiles/premium-disc-v25_1.json'}:
+        if path.parts[0] == 'profiles' and name not in {'profiles/usa-v1.001.json','profiles/scenario1-v25_1.json','profiles/scenario2-v24.json','profiles/scenario2-v25_1-v1_003.json','profiles/scenario2-v25_1-v2_000.json','profiles/scenario2-v25_1-upgrade.json','profiles/scenario2-supplied-v1003.json','profiles/scenario3-v25_1.json','profiles/scenario3-v25_1-redump.json','profiles/scenario1-v25_1-addons.json','profiles/scenario2-v25_1-addons-v1_003.json','profiles/scenario2-v25_1-addons-v2_000.json','profiles/scenario3-v25_1-addons-redump.json','profiles/premium-disc-v25_1.json','profiles/premium-disc-v25_1-addons.json'}:
             failures.append([name,'unreviewed generation profile'])
         if path.parts[0] == 'desktop' and name not in {'desktop/dependencies.json','desktop/posix-dependencies.json'} and path.suffix not in {'.py','.cs'}:
             failures.append([name,'not desktop application source'])

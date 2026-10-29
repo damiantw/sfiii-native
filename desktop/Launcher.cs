@@ -15,7 +15,7 @@ class Launcher : Form {
         new[]{"scenario1-translation-v25_1-addons", "scenario1-usa-v1_001", "scenario1-translation-v25_1"},
         new[]{"scenario2-translation-v25_1-addons-v2_000", "scenario2-translation-v25_1-addons-v1_003", "scenario2-translation-v25_1-v2_000", "scenario2-translation-v25_1-v1_003", "scenario2-translation-v25_1-upgrade", "scenario2-supplied-v1003", "scenario2-translation-v24"},
         new[]{"scenario3-translation-v25_1-addons-redump", "scenario3-translation-v25_1-redump", "scenario3-translation-v25_1"},
-        new[]{"premium-disc-translation-v25_1"}};
+        new[]{"premium-disc-translation-v25_1", "premium-disc-translation-v25_1-addons"}};
     // Retired ids that earlier builds stored in game.json / desktop-ready.json, mapped to the registered id of
     // the same revision (same content_sha256; keep in sync with tools/disc_profile.py LEGACY_PROFILE_IDS).
     static readonly Dictionary<string,string> LegacyProfiles = new Dictionary<string,string> {{"scenario1-usa-translation-v25_1", "scenario1-translation-v25_1"}};

@@ -21,7 +21,7 @@ from disc_profile import canonical_profile_id
 PROFILES = (('scenario1-translation-v25_1-addons', 'scenario1-usa-v1_001', 'scenario1-translation-v25_1'),
             ('scenario2-translation-v25_1-addons-v2_000', 'scenario2-translation-v25_1-addons-v1_003', 'scenario2-translation-v25_1-v2_000', 'scenario2-translation-v25_1-v1_003', 'scenario2-translation-v25_1-upgrade', 'scenario2-supplied-v1003', 'scenario2-translation-v24'),
             ('scenario3-translation-v25_1-addons-redump', 'scenario3-translation-v25_1-redump', 'scenario3-translation-v25_1'),
-            ('premium-disc-translation-v25_1',))
+            ('premium-disc-translation-v25_1', 'premium-disc-translation-v25_1-addons'))
 # Default data folders keep their original names so existing game data stays where it was.
 DATA_FOLDERS = ('Scenario1-USA', 'Scenario2-v24', 'Scenario3-v25_1', 'Premium-Disc-v25_1')
 

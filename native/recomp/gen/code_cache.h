@@ -4,7 +4,7 @@
 // /data/sfiii/cache/. It is machine code for the host, made from the user's own disc on the
 // user's own console, and is never distributed. Layout (little-endian, all offsets from the file start):
 //   Header | Entry[nfuncs] sorted by guest addr | Reloc[nrelocs] | code bytes (code_size)
-// Relocations patch 64-bit absolute addresses of runtime services (ld/st helpers, sh2_call,
+// Relocations patch 64-bit absolute addresses (the 8 bytes in the code hold an addend) of runtime services (ld/st helpers, sh2_call,
 // sh2_poll, the interpreter) at load time. The cache stores no host addresses, so ASLR and a
 // runtime rebuild don't invalidate it. A changed runtime ABI bumps kAbi, and the cache is rebuilt.
 #pragma once
@@ -16,16 +16,18 @@ namespace sf3::gen {
 
 constexpr uint32_t kCacheMagic = 0x43334653;   // "SF3C"
 constexpr uint32_t kCacheVersion = 1;
-constexpr uint32_t kAbi = 1;                   // runtime services' ABI; see Service
+constexpr uint32_t kAbi = 3;                   // runtime services' ABI; see Service, x64_abi.h
 
 enum class Service : uint32_t {                // targets a reloc can name
     InterpCall = 0,                            // sf3::sh2_interp_call(SH2Context&, uint32_t)
     Sh2Call, Sh2Poll, Ld8, Ld16, Ld32, St8, St16, St32,
+    Table,                                     // the x64 backend's service table (x64_abi.h)
+    ModuleRan,                                 // the module's ran[] bytes
     Count
 };
 
 struct CacheHeader {
-    uint32_t magic, version, abi, backend;     // backend: 1 = x86-64 SysV
+    uint32_t magic, version, abi, backend;     // backend: 1 = x86-64 interpreter thunks, 2 = x86-64 code
     uint32_t image_base, image_size, image_crc;
     uint32_t nfuncs, nrelocs, code_size;
 };

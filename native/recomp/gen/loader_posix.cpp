@@ -16,7 +16,10 @@ bool load_cache(const Cache& c, const ServiceTable& svc, LoadedCode& out, std::s
     for (auto& r : c.relocs) {
         void* t = svc[size_t(r.target)];
         if (!t) { munmap(m, size); return why = "missing service", false; }
-        std::memcpy(b + r.code_off, &t, 8);
+        uint64_t v;
+        std::memcpy(&v, b + r.code_off, 8);
+        v += reinterpret_cast<uint64_t>(t);
+        std::memcpy(b + r.code_off, &v, 8);
     }
     if (mprotect(m, size, PROT_READ | PROT_EXEC)) { munmap(m, size); return why = "mprotect RX failed", false; }
     out.base = m, out.size = size, out.funcs.clear();

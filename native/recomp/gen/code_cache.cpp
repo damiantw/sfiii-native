@@ -25,7 +25,7 @@ bool cache_parse(const uint8_t* p, size_t n, Cache& c, std::string& why) {
     std::memcpy(&c.h, p, sizeof c.h);
     if (c.h.magic != kCacheMagic) return why = "not a code cache", false;
     if (c.h.version != kCacheVersion || c.h.abi != kAbi) return why = "old cache version", false;
-    if (c.h.backend != 1) return why = "other backend", false;
+    if (c.h.backend != 1 && c.h.backend != 2) return why = "other backend", false;
     size_t need = sizeof(CacheHeader) + size_t(c.h.nfuncs) * sizeof(CacheEntry) + size_t(c.h.nrelocs) * sizeof(CacheReloc) + c.h.code_size;
     if (n != need) return why = "size mismatch", false;
     const uint8_t* q = p + sizeof(CacheHeader);
