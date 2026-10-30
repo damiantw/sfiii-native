@@ -3763,10 +3763,10 @@ index 6cbd98f..817b2bc 100644
  
  // ---- sound (sound.cpp, scsp.cpp through sound.h) ----------------------------------------------
 diff --git a/runtime/src/machine/scu.cpp b/runtime/src/machine/scu.cpp
-index 52ca0df..a5608ba 100644
+index 52ca0df..40b5986 100644
 --- a/runtime/src/machine/scu.cpp
 +++ b/runtime/src/machine/scu.cpp
-@@ -75,7 +75,28 @@ static bool bbus(uint32_t a) {
+@@ -75,7 +75,32 @@
      return a >= 0x05A00000u && a < 0x05FE0000u;
  }
  
@@ -3783,6 +3783,10 @@ index 52ca0df..a5608ba 100644
 +static bool g_dma_timed;
  static void copy(uint32_t& src, uint32_t& dst, uint32_t bytes, uint32_t radd, uint32_t wadd) {
 +    BusQuiet quiet;
++    // The SCU cannot move data from the B bus to the B bus: such a transfer writes nothing (as on the
++    // reference emulator). The Premium Disc's menu starts one, VDP1 VRAM 0x60000 -> 0x1E300, after
++    // loading its thumbnails; copying it overwrote the title's PRESS START sprite at 0x20000.
++    if (bbus(src) && bbus(dst)) { sat_trace("SCU DMA: %X bytes %08X -> %08X, B bus to B bus, not done", bytes, src, dst); return; }
 +    if (g_dma_timed && (src & 0x07F00000u) == 0x06000000u && bbus(dst)) {
 +        const bool vdp2 = (dst & 0x07F00000u) == 0x05E00000u;
 +        uint32_t d = dst;
@@ -3795,7 +3799,7 @@ index 52ca0df..a5608ba 100644
      // 32-bit units; the B bus takes them as two 16-bit writes, each moving by the write add
      for (uint32_t i = 0; i < bytes; i += 4) {
          uint32_t n = bytes - i < 4 ? bytes - i : 4;
-@@ -102,8 +123,12 @@ static void copy(uint32_t& src, uint32_t& dst, uint32_t bytes, uint32_t radd, ui
+@@ -102,8 +127,12 @@
      }
  }
  
@@ -3809,7 +3813,7 @@ index 52ca0df..a5608ba 100644
      uint32_t radd = (d.ad >> 8 & 1) ? 4 : 0;
      uint32_t wadd = (d.ad & 7) ? 1u << (d.ad & 7) : 0;
      if (d.md >> 24 & 1) {                       // indirect: {count, write, read} triples at the write address
-@@ -127,15 +152,17 @@ static void dma_run(int lvl) {
+@@ -127,15 +156,17 @@
          if (d.md >> 16 & 1) d.r = src;
          if (d.md >> 8 & 1) d.w = dst;
      }
@@ -3829,7 +3833,7 @@ index 52ca0df..a5608ba 100644
  // every line (T1MD bit 8 clear) or only on timer 0's line (bit 8 set). An
  // interrupt raised again before it is taken is one interrupt, so at the
  // runtime's poll rate timer 1 comes about once a poll.
-@@ -194,7 +221,7 @@ void scu_write(uint32_t off, uint32_t v, int size) {
+@@ -194,7 +225,7 @@
          case 0x0C: d.ad = v; return;
          case 0x10:
              d.en = v & 0x100;
