@@ -7209,7 +7209,7 @@ index 4c8bcb1..246c28b 100644
 -void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs); }
 +void vdp2_state(State& s) { s(g_vdp2_vram), s(g_vdp2_cram), s(g_vdp2_regs);if(s.loading)g_cache_valid=false; }
 diff --git a/runtime/src/video/video.cpp b/runtime/src/video/video.cpp
-index 88d1642..a20e3fa 100644
+index 88d1642..06fee96 100644
 --- a/runtime/src/video/video.cpp
 +++ b/runtime/src/video/video.cpp
 @@ -3,7 +3,8 @@
@@ -7261,7 +7261,7 @@ index 88d1642..a20e3fa 100644
      if (!host_open()) {                         // the host has said why
          std::fprintf(stderr, "saturn: no window could be opened; --headless runs without one\n");
          std::exit(3);
-@@ -58,24 +77,57 @@ static bool listed(const std::string& list, const std::string& item) {
+@@ -58,24 +77,71 @@ static bool listed(const std::string& list, const std::string& item) {
  }
  
  // --dump: VDP1 VRAM, its draw framebuffer, VDP1's registers, VDP2 VRAM, CRAM and VDP2's registers, one after the other
@@ -7281,8 +7281,8 @@ index 88d1642..a20e3fa 100644
 -    std::fclose(f);
 +    bool ok = !std::ferror(f);
 +    return std::fclose(f) == 0 && ok;
- }
- 
++}
++
 +void video_capture_debug(const std::string& directory) {
 +    if (!dump("", sat_vblanks(), &directory, true)) throw std::runtime_error("Cannot write captured video memory");
 +    if (g_frame.w > 0 && g_frame.h > 0 && !g_frame.px.empty())
@@ -7293,15 +7293,20 @@ index 88d1642..a20e3fa 100644
 +    dump("crash-", sat_vblanks());
 +    if (g_frame.w > 0 && g_frame.h > 0 && !g_frame.px.empty())
 +        write_png(g_cfg.out + "/crash-last-frame.png", g_frame);
-+}
-+
+ }
+ 
 +
 +// Picture latch: a field whose display lines saw a large write to VDP2 VRAM (a bitmap being
 +// replaced while it is shown, as the movie player does with each frame's top half before it
-+// writes the bottom one in the next VBlank) is shown as the field before it, so the screen never
-+// takes a half-replaced picture. At most one field in a row is held; SF3_NO_LATCH turns it off.
++// writes the bottom one in a later field) is shown as the field before it, so the screen never
++// takes a half-replaced picture. The hold goes on while each field keeps writing on its display
++// lines (the bottom half late, as at a scene cut) up to kLatchCap fields, then one field is
++// always shown, so a game writing VRAM every field still moves. SF3_NO_LATCH turns it off.
++static const int kLatchCap = 4;
 +static uint32_t g_disp_vram_bytes;
-+static bool g_held_last;
++static int g_held_run;
++static uint64_t g_latch_holds;
++uint64_t video_latch_holds() { return g_latch_holds; }
 +static bool latch_off() { static const bool off = std::getenv("SF3_NO_LATCH") != nullptr; return off; }
 +
  static void vblank_in(uint64_t now) {
@@ -7311,9 +7316,18 @@ index 88d1642..a20e3fa 100644
      bool shot = listed(g_cfg.shots, n);
      bool compose = shot || host_wants_frame() || movie_on();
 +    bool composed = false;
-+    const bool hold = compose && !g_held_last && !latch_off() && g_disp_vram_bytes >= 0x10000
++    const bool hold = compose && g_held_run < kLatchCap && !latch_off() && g_disp_vram_bytes >= 0x10000
 +                      && g_frame.w > 0 && !g_frame.px.empty() && !g_cfg.interp;
-+    g_held_last = hold;
++    g_held_run = hold ? g_held_run + 1 : 0;
++    if (hold) ++g_latch_holds;
++    {   // one line per 600 fields that held any: how often the latch acts (none expected outside movies)
++        static uint64_t mark;
++        if (g_vblanks % 600 == 0) {
++            if (g_latch_holds != mark) std::fprintf(stderr, "latch: %llu fields held in fields %llu-%llu\n",
++                (unsigned long long)(g_latch_holds - mark), (unsigned long long)(g_vblanks - 600), (unsigned long long)g_vblanks);
++            mark = g_latch_holds;
++        }
++    }
 +    g_disp_vram_bytes = 0;
 +    if (hold) {
 +        if (shot) write_png(g_cfg.out + "/shot-" + n + ".png", g_frame);
@@ -7324,7 +7338,7 @@ index 88d1642..a20e3fa 100644
      if (vdp1_interp_field(compose) && compose) {
          uint8_t saved[0x30];
          std::copy(g_vdp2_regs + 0x70, g_vdp2_regs + 0xA0, saved);
-@@ -84,31 +136,74 @@ static void vblank_in(uint64_t now) {
+@@ -84,31 +150,74 @@ static void vblank_in(uint64_t now) {
          std::copy(saved, saved + 0x30, g_vdp2_regs + 0x70);
          if (shot) write_png(g_cfg.out + "/shot-" + n + ".png", g_frame);
          movie_frame(g_frame);
@@ -7404,7 +7418,7 @@ index 88d1642..a20e3fa 100644
  // ---- the bus -------------------------------------------------------------------------
  bool video_owns(uint32_t a) {
      return (a >= 0x05A00000u && a < 0x05B01000u) || (a >= 0x05C00000u && a < 0x05D00020u) ||
-@@ -132,9 +227,11 @@ uint32_t video_read(uint32_t a, int size) {
+@@ -132,9 +241,11 @@ uint32_t video_read(uint32_t a, int size) {
      off = a & 0x1FF;
      if (off == 0x04 || off == 0x08 || off == 0x0A) {   // TVSTAT, HCNT, VCNT: from the raster
          int line = (int)(g_line_abs % kLines);
@@ -7418,7 +7432,7 @@ index 88d1642..a20e3fa 100644
          uint16_t tvstat = (uint16_t)((line >= display_lines() ? 8 : 0) | (hblank ? 4 : 0) | ((g_vblanks & 1) ? 2 : 0));
          set16(g_vdp2_regs, 0x04, tvstat);
          set16(g_vdp2_regs, 0x0A, (uint16_t)line);
-@@ -143,12 +240,32 @@ uint32_t video_read(uint32_t a, int size) {
+@@ -143,12 +254,32 @@ uint32_t video_read(uint32_t a, int size) {
  }
  
  void video_write(uint32_t a, uint32_t v, int size) {
@@ -7454,7 +7468,7 @@ index 88d1642..a20e3fa 100644
 +int video_raster_line() { return (int)(g_line_abs % kLines); }
 +int video_display_lines() { return display_lines(); }
 diff --git a/runtime/src/video/video.h b/runtime/src/video/video.h
-index ebaa466..e8a91c3 100644
+index ebaa466..ef63103 100644
 --- a/runtime/src/video/video.h
 +++ b/runtime/src/video/video.h
 @@ -6,6 +6,7 @@
@@ -7465,7 +7479,7 @@ index ebaa466..e8a91c3 100644
  
  // ---- VDP1 (vdp1.cpp) --------------------------------------------------------------------
  extern uint8_t g_vdp1_vram[0x80000];                 // big-endian, as the bus sees it
-@@ -17,23 +18,51 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
+@@ -17,26 +18,55 @@ void vdp1_fb_write(uint32_t off, uint32_t v, int size);
  void vdp1_vblank_out();                              // erase, frame change, the draw PTMR 2 asks for
  void vdp1_tick(uint64_t now);                        // the end of a draw
  uint16_t vdp1_dot(int x, int y, bool dd);           // the sprite dot VDP2 shows at x, line y (dd: double-density, 2 lines a framebuffer line)
@@ -7518,6 +7532,10 @@ index ebaa466..e8a91c3 100644
  
  // ---- --video (movie.cpp) ----------------------------------------------------------------
  bool movie_on();
+ std::string movie_wav();                             // where the sound goes for it
+ void movie_frame(const Frame& f);                    // each field, as composed
+ void movie_finish();                                 // after sound_close: join the sound to the pictures
++uint64_t video_latch_holds();                          // fields shown as the one before (picture latch)
 diff --git a/runtime/tests/CMakeLists.txt b/runtime/tests/CMakeLists.txt
 index 39eb423..4dfe585 100644
 --- a/runtime/tests/CMakeLists.txt
