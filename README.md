@@ -112,6 +112,8 @@ The fork has no releases of its own yet. Upstream's published packages are:
 Upstream releases accept only upstream's registered discs (Sc1 USA, Sc2 v24 and Sc3 V25.1), and they do not include
 the fork's changes. To use the V25.1 profiles and the fork's fixes, build from source.
 
+Upstream's own notes on source changes since its published preview: faster same-address module identification, reduced repeated GPU artwork uploads, larger demand-filled artwork caches on PCs with sufficient RAM, and an adaptive audio cushion after repeated underruns (it starts at 100 ms and grows to 150 ms after repeated underruns, trading latency for fewer interruptions). Upstream tested these on selected Windows Scenario 2 routes; they are not in the published downloads.
+
 Windows source builds follow [docs/BUILDING.md](docs/BUILDING.md): run `tools\setup-dependencies.ps1`, then
 `tools\prepare-game.ps1 -Cue ... -Work ...`.
 
