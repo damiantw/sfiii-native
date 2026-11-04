@@ -97,22 +97,25 @@ To check a dump, `python3 -m tools.sf3patch identify DISC.cue --content-id` prin
 
 The fork has no releases of its own yet. Upstream's published packages are:
 
-- **Windows x64:** [v0.6.0-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.6.0-preview1).
+- **Windows x64:** [v0.6.1-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.6.1-preview1).
   1. Extract the whole ZIP and open **SFIII Native.exe**.
   2. Choose the scenario, your CUE or CHD, and a data folder.
   3. Click **Prepare game**, then **Play**.
 
   There is also an optional
-  [offline AI graphics builder](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.0-preview1/SFIII-Offline-Graphics-Builder-0.6.0-preview1-Windows-x64.zip).
+  [offline AI graphics builder](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.1-preview1/SFIII-Offline-Graphics-Builder-0.6.1-preview1-Windows-x64.zip).
   See [docs/DESKTOP.md](docs/DESKTOP.md).
 - **Linux x64, Apple Silicon and Intel Mac:**
-  [v0.5.0-alpha](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.5.0-alpha). See
+  [v0.6.1-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.6.1-preview1). Upstream built and
+  synthetically tested these packages; real-disc gameplay on these platforms is unvalidated upstream. See
   [docs/POSIX.md](docs/POSIX.md).
 
-Upstream releases accept only upstream's registered discs (Sc1 USA, Sc2 v24 and Sc3 V25.1), and they do not include
-the fork's changes. To use the V25.1 profiles and the fork's fixes, build from source.
+Upstream releases accept only upstream's six registered discs (Sc1 USA, Sc1 V25.1, Sc2 v24, the Sc2 v24-to-V25.1
+migration, the supplied Sc2 V1.003 image whose header reports V24, and Sc3 V25.1), and they do not include the fork's
+changes. To use the fork's other profiles (the V25+ add-on discs, the other Sc2 and Sc3 revisions and the Premium Disc)
+and the fork's fixes, build from source.
 
-Upstream's own notes on source changes since its published preview: faster same-address module identification, reduced repeated GPU artwork uploads, larger demand-filled artwork caches on PCs with sufficient RAM, and an adaptive audio cushion after repeated underruns (it starts at 100 ms and grows to 150 ms after repeated underruns, trading latency for fewer interruptions). Upstream tested these on selected Windows Scenario 2 routes; they are not in the published downloads. Upstream's source also renames the artwork styles to **Animated**, **Illustrated** and **General** (with **Off** in the game); the published v0.6.0-preview1 still uses the earlier names AnimeVideo v3, x4plus anime and x4plus general, respectively, and existing packs and saved settings stay compatible.
+Upstream's v0.6.1-preview1 includes faster same-address module identification, reduced repeated GPU artwork uploads, larger demand-filled artwork caches on PCs with sufficient RAM, and an adaptive audio cushion (it starts at 100 ms and grows to 150 ms after repeated underruns, trading latency for fewer interruptions). Upstream tested these on selected Windows Scenario 2 routes. It also labels the artwork styles **Animated**, **Illustrated** and **General** (with **Off** in the game); older packs and saved settings keep their internal identifiers and stay compatible.
 
 Windows source builds follow [docs/BUILDING.md](docs/BUILDING.md): run `tools\setup-dependencies.ps1`, then
 `tools\prepare-game.ps1 -Cue ... -Work ...`.
