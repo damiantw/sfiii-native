@@ -609,7 +609,7 @@ index cb6af72..177ed5b 100644
              bool seen = false;
              for (int k = 0; k < n; ++k) seen |= bases[k] == b;
              if (!seen && n < kSlots * 2) bases[n++] = b;
-@@ -183,14 +373,59 @@ static bool inside_loaded_program(uint32_t addr) {
+@@ -183,14 +373,78 @@ static bool inside_loaded_program(uint32_t addr) {
      return false;
  }
  
@@ -667,6 +667,25 @@ index cb6af72..177ed5b 100644
 -        else { sh2_program_start(c, addr); return; }
 +        else if (m || !inside_loaded_program(addr)) { sh2_program_start(c, addr); return; }
      }
++    // This routine and its call site occur in the reviewed Scenario 2/3
++    // visibility path. It operates only while the 16:9 compositor is active,
++    // recognizes the exact native viewport bounds and restores guest RAM as
++    // soon as the visibility call returns. Other editions retain their normal
++    // visibility behavior until independently reviewed.
++    extern bool vdp1_widescreen() __attribute__((weak));
++    const uint32_t bounds = c.gbr;
++    const bool candidate = vdp1_widescreen && vdp1_widescreen() && addr == 0x0600C91C &&
++        c.pr == 0x0603D7EC && bounds && (int16_t)ld16(bounds+120) == -160 &&
++        ld16(bounds+124) == 159;
++    // The values are the exact 427-column presentation viewport around the
++    // original 320-column bounds. The separately tested helper documents the
++    // arithmetic; keep this dispatch path self-contained for minimal hosts.
++    const bool widened = candidate;
++    struct RestoreBounds {
++        uint32_t address; bool active;
++        ~RestoreBounds() { if(active) { st16(address+120,uint16_t(-160)); st16(address+124,159); } }
++    } restore{bounds,widened};
++    if(widened) { st16(bounds+120,uint16_t(-213)); st16(bounds+124,213); }
 -    if (SH2Func f = sh2_lookup(addr)) f(c);
 +    if (SH2Func f = sh2_lookup(addr)) { if (SH2_UNLIKELY(audit_on())) audit_call(c, addr); f(c); }
      else sh2_call_unknown(c, addr);
