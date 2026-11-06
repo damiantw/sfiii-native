@@ -5,6 +5,7 @@
 compiled for the host. A runtime ([saturn-recomp](https://github.com/callumjenkins/saturn-recomp)) provides the
 Saturn hardware (VDP1/VDP2 graphics, SCSP sound, CD block, backup memory, input), so static recompilation does
 not remove the need to model those systems.
+
 This repository is a fork of [mattkuhnQAAI/sfiii-native](https://github.com/mattkuhnQAAI/sfiii-native), which
 is Windows-first. The fork adds a Linux build (also packaged for macOS), a Linux translation patcher
 (`sf3patch`), profiles for the Translation Project V25.1 discs, an optional accurate CD-drive timing mode, and a
@@ -128,6 +129,7 @@ The build produces the same self-contained package as CI. It contains a launcher
 (Zig), CMake, Ninja, SDL3 and chdman, all pinned in
 [`desktop/posix-dependencies.json`](desktop/posix-dependencies.json). The game itself is generated and compiled
 later, from your disc, when you **prepare** it.
+
 **1. Host packages (Linux, Debian/Ubuntu).** You need Python 3.12 or newer.
 
 ```sh
