@@ -5,7 +5,6 @@
 compiled for the host. A runtime ([saturn-recomp](https://github.com/callumjenkins/saturn-recomp)) provides the
 Saturn hardware (VDP1/VDP2 graphics, SCSP sound, CD block, backup memory, input), so static recompilation does
 not remove the need to model those systems.
-
 This repository is a fork of [mattkuhnQAAI/sfiii-native](https://github.com/mattkuhnQAAI/sfiii-native), which
 is Windows-first. The fork adds a Linux build (also packaged for macOS), a Linux translation patcher
 (`sf3patch`), profiles for the Translation Project V25.1 discs, an optional accurate CD-drive timing mode, and a
@@ -15,6 +14,8 @@ large automated test harness. Upstream's Windows releases, artwork tools and doc
 > End-to-end playthroughs of every scenario are still being tested. The Premium Disc (Translation V25.1) is
 > **experimental**: it boots and its menus work in headless smoke tests.
 > See [Status and known issues](#status-and-known-issues).
+
+Upstream [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0) adds official widescreen support for the registered Scenario 1–3 profiles (16:9 with GPU rendering; Windows hybrid-GPU laptops request the high-performance GPU before SDL starts). The supported presentation for widescreen is **original game graphics** — turn **AI graphics** to **Off** when using 16:9. See the [v0.8.0 release notes](docs/release-v0.8.0.md).
 
 ## Contents
 
@@ -52,7 +53,6 @@ by its file name or patch label. Each supported disc has a profile in [`profiles
 | Scenario 3 | JP GS-9203 V1.001 (Redump dump) | Translation Project **V25.1** | `scenario3-v25_1-redump.json` |
 | Premium Disc | JP 6106979 V1.000 (Redump dump) | Translation Project **V25.1** (experimental) | `premium-disc-v25_1.json` |
 | Premium Disc | JP 6106979 V1.000 (Redump dump) | Translation Project **V25.1 + V25+ add-ons** (`--addons`, default add-on selection; experimental, boot smoke test only) | `premium-disc-v25_1-addons.json` |
-
 The launcher has **four game entries**: one per scenario, and the Premium Disc. Each entry accepts every registered
 revision of its scenario, and the first one listed above for it is the recommended disc. The Scenario 1 V25.1 profile is upstream's
 (`scenario1-translation-v25_1`). This fork first registered the same disc as `scenario1-usa-translation-v25_1`
@@ -77,6 +77,8 @@ same scenario needs its own data folder.
 - Other revisions and regions (for example the European Scenario 1), other patch versions or selections,
   parent/delta CHDs and ISO input.
 
+Upstream v0.8.0 exposes 16:9 for its six registered profiles (original graphics recommended). Local upstream widescreen gameplay evidence is currently strongest for the supplied Scenario 2 V1.003 image on Windows; see [docs/release-v0.8.0.md](docs/release-v0.8.0.md).
+
 The Scenario 1 USA data-track SHA-256 is `089c77470dec14f1dbffaad1ab50d584f06df5e28b475fc712b8e67e5890f951`.
 To check a dump, `python3 -m tools.sf3patch identify DISC.cue --content-id` prints its Redump match and content id.
 
@@ -97,25 +99,25 @@ To check a dump, `python3 -m tools.sf3patch identify DISC.cue --content-id` prin
 
 The fork has no releases of its own yet. Upstream's published packages are:
 
-- **Windows x64:** [v0.6.1-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.6.1-preview1).
+- **Windows x64:** [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0).
   1. Extract the whole ZIP and open **SFIII Native.exe**.
   2. Choose the scenario, your CUE or CHD, and a data folder.
   3. Click **Prepare game**, then **Play**.
 
   There is also an optional
-  [offline AI graphics builder](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.6.1-preview1/SFIII-Offline-Graphics-Builder-0.6.1-preview1-Windows-x64.zip).
+  [offline AI graphics builder](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Offline-Graphics-Builder-0.8.0-Windows-x64.zip).
   See [docs/DESKTOP.md](docs/DESKTOP.md).
-- **Linux x64, Apple Silicon and Intel Mac:**
-  [v0.6.1-preview1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.6.1-preview1). Upstream built and
-  synthetically tested these packages; real-disc gameplay on these platforms is unvalidated upstream. See
-  [docs/POSIX.md](docs/POSIX.md).
+- **Linux x64:** [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0). Upstream built and
+  synthetically tested the Linux package; real-disc gameplay, widescreen and AI graphics on Linux remain
+  unvalidated upstream. macOS is not included in v0.8.0 (Intel packages are no longer published; Apple Silicon
+  awaits a hosted runner). See [docs/POSIX.md](docs/POSIX.md) and [docs/release-v0.8.0.md](docs/release-v0.8.0.md).
 
 Upstream releases accept only upstream's six registered discs (Sc1 USA, Sc1 V25.1, Sc2 v24, the Sc2 v24-to-V25.1
 migration, the supplied Sc2 V1.003 image whose header reports V24, and Sc3 V25.1), and they do not include the fork's
 changes. To use the fork's other profiles (the V25+ add-on discs, the other Sc2 and Sc3 revisions and the Premium Disc)
 and the fork's fixes, build from source.
 
-Upstream's v0.6.1-preview1 includes faster same-address module identification, reduced repeated GPU artwork uploads, larger demand-filled artwork caches on PCs with sufficient RAM, and an adaptive audio cushion (it starts at 100 ms and grows to 150 ms after repeated underruns, trading latency for fewer interruptions). Upstream tested these on selected Windows Scenario 2 routes. It also labels the artwork styles **Animated**, **Illustrated** and **General** (with **Off** in the game); older packs and saved settings keep their internal identifiers and stay compatible.
+Upstream's earlier v0.6.1-preview1 included faster same-address module identification, reduced repeated GPU artwork uploads, larger demand-filled artwork caches on PCs with sufficient RAM, and an adaptive audio cushion (it starts at 100 ms and grows to 150 ms after repeated underruns, trading latency for fewer interruptions). Upstream tested these on selected Windows Scenario 2 routes. It also labels the artwork styles **Animated**, **Illustrated** and **General** (with **Off** in the game); older packs and saved settings keep their internal identifiers and stay compatible.
 
 Windows source builds follow [docs/BUILDING.md](docs/BUILDING.md): run `tools\setup-dependencies.ps1`, then
 `tools\prepare-game.ps1 -Cue ... -Work ...`.
@@ -126,7 +128,6 @@ The build produces the same self-contained package as CI. It contains a launcher
 (Zig), CMake, Ninja, SDL3 and chdman, all pinned in
 [`desktop/posix-dependencies.json`](desktop/posix-dependencies.json). The game itself is generated and compiled
 later, from your disc, when you **prepare** it.
-
 **1. Host packages (Linux, Debian/Ubuntu).** You need Python 3.12 or newer.
 
 ```sh
@@ -528,7 +529,7 @@ Earlier screenshots below use original artwork. Click an image to open its full 
 | --- | --- | --- |
 | [![Scenario 2 town at 2x internal resolution](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-2x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-2x.png) | [![The same Scenario 2 town frame at 4x internal resolution](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-4x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-4x.png) | [![The same Scenario 2 town frame at 5x internal resolution](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-5x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-5x.png) |
 
-**Experimental widescreen at 5× (2135 × 1200):** the same scene with an expanded viewport. Edge gaps and missing scenery remain visible where game-side culling needs more work.
+**Experimental widescreen at 5× (2135 × 1200):** the same scene with an expanded viewport using original game graphics. It is the supported widescreen mode for this release; some untested routes may still expose game-side culling gaps or pop-in.
 
 [![Scenario 2 town with experimental widescreen and 5x GPU rendering](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-widescreen-5x.png)](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.4.0-preview1/screenshot-scenario2-widescreen-5x.png)
 
@@ -538,7 +539,6 @@ Selected PNG screenshots are hosted as release documentation, outside the source
 
 <details>
 <summary>Upstream roadmap</summary>
-
 Planned directions, with no release dates or compatibility guarantees. Faithful gameplay, graphics, audio and reliable saves take priority over enhancements.
 
 - **Broader gameplay validation:** exercise more towns, battles, menus and transitions, fixing crashes and rendering/audio defects as coverage grows.
