@@ -22,7 +22,7 @@ def metal_binding_flags(name):
 
 
 def validate_metal_bindings(code,name):
-    if 'fragmentMain' not in code or '[[buffer(0)]]' not in code or '[[buffer(1)]]' not in code:
+    if 'fragmentMain' not in code or '[[buffer(0)]]' not in code or (name!='display-filter' and '[[buffer(1)]]' not in code):
         raise ValueError('Metal shader resource mapping was not verified.')
     if name=='geometry':
         for variable,kind,slot in [('Pass','buffer',0),('scene','buffer',1),('textures','buffer',2),
@@ -30,6 +30,10 @@ def validate_metal_bindings(code,name):
             pattern=r'\b'+variable+r'\s*\[\['+kind+r'\('+str(slot)+r'\)\]\]'
             if not re.search(pattern,code):
                 raise ValueError('Metal geometry shader binding does not match SDL: '+variable)
+    if name=='display-filter':
+        for variable,kind,slot in [('Pass','buffer',0),('picture','texture',0)]:
+            if not re.search(r'\b'+variable+r'\s*\[\['+kind+r'\('+str(slot)+r'\)\]\]',code):
+                raise ValueError('Metal display filter binding does not match SDL: '+variable)
 
 
 def sha(path):
@@ -139,7 +143,9 @@ def main():
     # once into the external cache, then relocate SDL into the player package.
     sdl_install=cache/'sdl-install' if sys.platform=='linux' else prefix
     build=cache/'build-sdl'
-    run([cmake,'-S',sources['sdl'],'-B',build,'-DCMAKE_BUILD_TYPE=Release','-DSDL_SHARED=ON','-DSDL_STATIC=OFF',
+    # Runner images replace Xcode/SDK paths. Retain downloads/build objects,
+    # but never reuse cached compiler discovery from a previous runner image.
+    run([cmake,'--fresh','-S',sources['sdl'],'-B',build,'-DCMAKE_BUILD_TYPE=Release','-DSDL_SHARED=ON','-DSDL_STATIC=OFF',
          '-DSDL_TESTS=OFF','-DSDL_TEST_LIBRARY=OFF','-DSDL_FRAMEWORK=OFF','-DCMAKE_INSTALL_NAME_DIR=@rpath','-DCMAKE_INSTALL_PREFIX='+str(sdl_install)])
     run([cmake,'--build',build,'--parallel',jobs])
     run([cmake,'--install',build])
@@ -147,7 +153,7 @@ def main():
     for pc in (prefix/'lib/pkgconfig').glob('*.pc'):
         text=pc.read_text()
         pc.write_text('\n'.join('prefix=${pcfiledir}/../..' if line.startswith('prefix=') else line for line in text.splitlines())+'\n')
-    run([cmake,'-S',sources['ninja'],'-B',cache/'build-ninja','-DCMAKE_BUILD_TYPE=Release','-DBUILD_TESTING=OFF'])
+    run([cmake,'--fresh','-S',sources['ninja'],'-B',cache/'build-ninja','-DCMAKE_BUILD_TYPE=Release','-DBUILD_TESTING=OFF'])
     run([cmake,'--build',cache/'build-ninja','--parallel',jobs])
     (payload/'ninja').mkdir()
     shutil.copy2(cache/'build-ninja/ninja',payload/'ninja/ninja')
@@ -155,9 +161,9 @@ def main():
     shutil.copytree(a.shaders,shaders)
     if sys.platform=='darwin':
         cross=cache/'build-cross'
-        run([cmake,'-S',sources['spirv-cross'],'-B',cross,'-DCMAKE_BUILD_TYPE=Release','-DSPIRV_CROSS_ENABLE_TESTS=OFF'])
+        run([cmake,'--fresh','-S',sources['spirv-cross'],'-B',cross,'-DCMAKE_BUILD_TYPE=Release','-DSPIRV_CROSS_ENABLE_TESTS=OFF'])
         run([cmake,'--build',cross,'--parallel',jobs])
-        for name in ['geometry','hd-assets']:
+        for name in ['geometry','hd-assets','display-filter']:
             run([cross/'spirv-cross',shaders/(name+'.spv'),'--msl','--msl-version','20100',*metal_binding_flags(name),'--rename-entry-point','main','fragmentMain','frag','--output',shaders/(name+'.msl')])
             code=(shaders/(name+'.msl')).read_text()
             validate_metal_bindings(code,name)
@@ -209,7 +215,7 @@ def main():
     bootstrap_exe=executable if sys.platform=='darwin' else package/'SFIII Native'
     minimum_os=['-mmacosx-version-min=13.0'] if sys.platform=='darwin' else []
     run([payload/'compiler/bin/cc',ROOT/'native/launcher-bootstrap.c',*minimum_os,'-O2','-o',bootstrap_exe])
-    (resources/'START HERE.txt').write_text('Shining Force III Native '+lock['version']+'\n\nOpen the SFIII Native application/launcher. Choose the game: Scenario 1 USA (V1.001 or Translation Project V25.1), Scenario 2 (Translation Project V25.1 on V1.003 or V2.000, or v24) Scenario 3 (Translation Project V25.1) or the Premium Disc (Translation Project V25.1, experimental). Select its CUE/CHD and an external data folder, one per game. Click Prepare game, then Play.\n\nThe compiler, Python, SDL, CMake, Ninja and CHD converter are bundled. No game data or BIOS is included. Preparation stays local.\n\nExperimental platform candidate: native unit/build checks are separate from gameplay validation. Real-disc gameplay and hardware GPU/controller/audio checks on this OS remain unvalidated unless specifically documented. Keep backups of saves; native states are build-specific.\n',encoding='utf-8')
+    (resources/'START HERE.txt').write_text('Shining Force III Native '+lock['version']+'\n\nOpen the SFIII Native application/launcher. Choose the game: Scenario 1 USA (V1.001 or Translation Project V25.1), Scenario 2 (Translation Project V25.1 on V1.003 or V2.000, or v24) Scenario 3 (Translation Project V25.1) or the Premium Disc (Translation Project V25.1, experimental). Select its CUE/CHD and an external data folder, one per game. Click Prepare game, then Play.\n\nThe compiler, Python, SDL, CMake, Ninja and CHD converter are bundled. No game data or BIOS is included. Preparation stays local.\n\n9x rendering, optional four-sample SSAA, five display filters, vertex precision and sharper backgrounds are available in the game menu. For widescreen use original graphics (AI graphics Off).\n\nExperimental platform candidate: native unit/build checks are separate from gameplay validation. Real-disc gameplay and hardware GPU/controller/audio checks on this OS remain unvalidated unless specifically documented. Keep backups of saves; native states are build-specific. On macOS this app is ad-hoc signed and not Apple notarized.\n',encoding='utf-8')
     inventory={f.relative_to(resources).as_posix():sha(f) for f in resources.rglob('*') if f.is_file()}
     (resources/'PACKAGE-FILES.json').write_text(json.dumps(inventory,indent=2)+'\n')
     (out/'package-path.txt').write_text(str(package))
