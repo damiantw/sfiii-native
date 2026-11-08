@@ -7916,41 +7916,10 @@ index 6943552..0c64057 100644
  
  TEST(a_damaged_file_keeps_the_saves_before_the_damage) {
 diff --git a/runtime/tests/cdblock_test.cpp b/runtime/tests/cdblock_test.cpp
-index 1c7acb5..bbca950 100644
+index 1c7acb5..71f0a98 100644
 --- a/runtime/tests/cdblock_test.cpp
 +++ b/runtime/tests/cdblock_test.cpp
-@@ -58,7 +58,7 @@ uint16_t ask(uint16_t cr1, uint16_t cr2 = 0, uint16_t cr3 = 0, uint16_t cr4 = 0)
- 
- uint16_t cd_rom_bit() { return ask(0x0000) & 0x80; }
- 
--// A MODE1/2048 disc of zeros, FAD 150 to 409, opened, and the CD block reset on the host's clock.
-+// A MODE1/2048 disc of invented zeros, opened with a deterministic virtual clock.
- void data_disc() {
-     char tmpl[] = "/tmp/cdblock_test_XXXXXX";
-     std::string dir = mkdtemp(tmpl);
-@@ -70,14 +70,17 @@ void data_disc() {
-     std::fprintf(f, "FILE \"d.bin\" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n");
-     std::fclose(f);
-     CHECK_EQ(cdrom_open(dir + "/d.cue"), true);
--    g_cfg.realtime = true;
-+    g_cfg.realtime = false;
-+    g_cpu=&g_master;g_master.imask=15;
-     cd_init();
- }
- 
--// Ticks the drive every millisecond until `done`, for at most `ms`; whether it came.
-+// Advance virtual safe points; a host's millisecond sleep can overshoot the
-+// short CD-ROM-bit clear window, particularly on Windows or a busy CI runner.
- template <class F> bool tick_until(F done, int ms) {
--    for (int i = 0; i < ms; ++i) {
--        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-+    const uint64_t end=sat_now()+uint64_t(ms)*1000000;
-+    while(sat_now()<end) {
-+        sh2_poll(g_master);
-         cd_tick();
-         if (done()) return true;
-     }
-@@ -101,6 +104,17 @@ TEST(a_play_answers_with_the_cd_rom_bit_then_clears_it_until_it_reads_data) {
+@@ -101,6 +101,17 @@ TEST(a_play_answers_with_the_cd_rom_bit_then_clears_it_until_it_reads_data) {
      g_cfg.realtime = false;
  }
  
@@ -7969,7 +7938,7 @@ index 1c7acb5..bbca950 100644
      data_disc();
      play(150, 250);
 diff --git a/runtime/tests/cdrom_test.cpp b/runtime/tests/cdrom_test.cpp
-index b3c4db7..4c31614 100644
+index b3c4db7..714b10c 100644
 --- a/runtime/tests/cdrom_test.cpp
 +++ b/runtime/tests/cdrom_test.cpp
 @@ -113,7 +113,15 @@ TEST(a_change_directory_ends_at_once_but_on_the_accurate_drive_only_once_the_dri
@@ -7989,28 +7958,6 @@ index b3c4db7..4c31614 100644
      g_cfg.accurate_drive = false;
  }
  
-@@ -124,7 +132,8 @@ TEST(a_directory_read_on_the_accurate_drive_clears_the_cd_rom_bit_until_its_firs
-     CHECK_EQ(cdrom_open(disc(dir, "bit", "DATA")), true);
-     const uint16_t EFLS = 0x0200;
-     g_cfg.accurate_drive = true;
--    g_cfg.realtime = true;
-+    g_cfg.realtime = false;
-+    g_cpu=&g_master;g_master.imask=15;
-     cd_init();
-     change_to_root();
-     auto bit = [] {
-@@ -134,8 +143,9 @@ TEST(a_directory_read_on_the_accurate_drive_clears_the_cd_rom_bit_until_its_firs
-         return cr1 & 0x80;
-     };
-     bool cleared = false, set_before_efls = false;
--    for (int i = 0; i < 2000 && !(cd_read(0x90008, 2) & EFLS); ++i) {
--        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-+    const uint64_t deadline=sat_now()+2000000000ull;
-+    while(sat_now()<deadline && !(cd_read(0x90008, 2) & EFLS)) {
-+        sh2_poll(g_master);
-         cd_tick();
-         if (!bit()) cleared = true;
-         else if (cleared && !(cd_read(0x90008, 2) & EFLS)) set_before_efls = true;
 diff --git a/runtime/tests/frame_change_test.cpp b/runtime/tests/frame_change_test.cpp
 index ab9b24b..bb26d61 100644
 --- a/runtime/tests/frame_change_test.cpp
