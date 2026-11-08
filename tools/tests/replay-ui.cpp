@@ -5,7 +5,7 @@
 #include <fstream>
 
 int main(int argc, char** argv) {
-    if (argc != 2) return 2;
+    if (argc != 2 && !(argc==3 && std::string(argv[2])=="--display-only")) return 2;
     namespace fs = std::filesystem;
     auto root = fs::path(argv[1]);
     fs::create_directories(root);
@@ -24,6 +24,72 @@ int main(int argc, char** argv) {
     video_state(state);
     Frame picture; picture.w=320; picture.h=240; picture.px.assign(320*240, 0x102030);
     present(picture);
+    {
+        const auto base=g_base;const bool paced=g_paced;
+        const auto draw=g_last_presented_draw,change=g_last_presented_change;
+        const auto omitted=g_omitted_field,count=g_catch_up_fields;
+        g_paced=true;
+        g_base=Clock::now()-std::chrono::nanoseconds(sat_now()/g_game_speed)-std::chrono::milliseconds(40);
+        if(host_wants_frame() || g_omitted_field!=sat_vblanks())return 121;
+        g_last_presented_draw^=1;
+        if(!host_wants_frame())return 122; // A new draw must be shown even when late.
+        g_last_presented_draw=draw;g_last_presented_change^=1;
+        if(!host_wants_frame())return 123; // A framebuffer change must also be shown.
+        g_last_presented_change=change;g_paced=false;
+        if(!host_wants_frame())return 124;
+        g_base=base;g_paced=paced;g_omitted_field=omitted;g_catch_up_fields=count;
+    }
+    // Hidden toolbar has no reserved height and cannot activate invisible controls.
+    toolbar_set(2);draw(false);
+    if(replay_bar_height()!=0 || g_dst.h<=0 || g_dst.y<0)return 85;
+    SDL_Event hidden_click{};hidden_click.type=SDL_EVENT_MOUSE_BUTTON_DOWN;hidden_click.button.button=SDL_BUTTON_LEFT;
+    auto hidden_rect=replay_bar_button(3);
+    SDL_RenderCoordinatesToWindow(g_ren,hidden_rect.x+hidden_rect.w/2,hidden_rect.y+hidden_rect.h/2,&hidden_click.button.x,&hidden_click.button.y);
+    on_event(hidden_click);if(g_menu_open)return 86;
+    SDL_Event bar_key{};bar_key.type=SDL_EVENT_KEY_DOWN;bar_key.key.scancode=SDL_SCANCODE_F10;
+    on_event(bar_key);if(!toolbar_shown())return 87;
+    bar_key.key.repeat=true;on_event(bar_key);if(!toolbar_shown())return 88;
+    std::vector<std::string> display_problems;Settings display_saved;bool display_found=false;
+    display_saved.read(settings_load(g_cfg.settings,display_found),display_problems);
+    if(!display_found || !display_problems.empty() || display_saved.get("display","toolbar")!="shown")return 90;
+    toolbar_set(0);draw(false);if(replay_bar_height()<=0)return 89;
+    // The same menu path and F11 path share persistence and auto toolbar behavior.
+    choose(M_FULLSCREEN,1);SDL_SyncWindow(g_win);
+    if(choice_at(M_FULLSCREEN)!=1 || toolbar_shown())return 92;
+    bar_key.key.repeat=false;on_event(bar_key);if(!toolbar_shown())return 93;
+    toolbar_set(0);bar_key.key.scancode=SDL_SCANCODE_F11;on_event(bar_key);SDL_SyncWindow(g_win);
+    if(choice_at(M_FULLSCREEN)!=0 || !toolbar_shown() || g_settings.flag("display","fullscreen"))return 94;
+    vsync_set(false);if(choice_at(M_VSYNC)!=0)return 95;
+    draw(false);if(picture.px!=std::vector<uint32_t>(320*240,0x102030))return 96;
+    for(int mode=0;mode<5;++mode) {
+        choose(M_IMAGE_FILTER,mode);draw(false);
+        Settings saved_filter;std::vector<std::string> issues;bool found=false;
+        saved_filter.read(settings_load(g_cfg.settings,found),issues);
+        if(choice_at(M_IMAGE_FILTER)!=mode || !found || !issues.empty() ||
+           saved_filter.get("display","image_filter")!=g_settings.get("display","image_filter") ||
+           picture.px!=std::vector<uint32_t>(320*240,0x102030))return 100;
+    }
+    choose(M_IMAGE_FILTER,1);
+    for(auto id:{M_VERTEX,M_HIRES})for(int enabled:{0,1}) {
+        choose(id,enabled);if(choice_at(id)!=enabled)return 109;
+        load_settings(g_cfg.settings);if(choice_at(id)!=enabled)return 110;
+        Settings persisted;bool found=false;std::vector<std::string> issues;
+        persisted.read(settings_load(g_cfg.settings,found),issues);
+        if(!found || !issues.empty() || persisted.flag("display",id==M_VERTEX?"vertex_precision":"high_resolution_backgrounds")!=bool(enabled))return 111;
+    }
+    if(argc==3) {
+        if(!g_gpu_active)return 97;
+        resolution_set(9);choose(M_SSAA,1);
+        Frame ssaa;if(!g_gpu.capture(ssaa) || ssaa.w!=2880 || ssaa.h!=2160 || g_gpu.active_supersampling()!=2)return 106;
+        for(auto p:ssaa.px)if(p!=0x102030)return 107;
+        load_settings(g_cfg.settings);
+        if(vdp1_render_scale()!=9 || choice_at(M_SSAA)!=1 || picture.px!=std::vector<uint32_t>(320*240,0x102030))return 108;
+        choose(M_SSAA,0);resolution_set(1);
+        choose(M_VSYNC,1);if(choice_at(M_VSYNC)!=1 || !g_settings.flag("display","vsync"))return 98;
+        draw(true);choose(M_VSYNC,0);if(choice_at(M_VSYNC)!=0)return 99;
+        std::printf("PASS: GPU 2160p/SSAA, fullscreen, toolbar, hidden click, preference persistence and VSync on/off (%s, %s)\n",g_gpu.backend(),g_gpu.adapter());
+        return 0;
+    }
     SDL_Event event{};
     event.type=SDL_EVENT_KEY_DOWN; event.key.scancode=SDL_SCANCODE_F5;
     on_event(event);
@@ -37,8 +103,17 @@ int main(int argc, char** argv) {
     };
     auto initial_pixels=picture.px;
     if(g_game_speed!=1 || !host_audio_open())return 46;
+    {
+        std::vector<int16_t> pcm(sf3::AudioBuffer::lead*2,123);
+        host_audio_push(pcm.data(),sf3::AudioBuffer::lead);
+        SDL_PauseAudioStreamDevice(g_audio);SDL_ClearAudioStream(g_audio);
+        const int underruns=g_underruns;
+        host_audio_push(pcm.data(),128);
+        if(!g_audio_buffer.playing || g_underruns!=underruns)return 112;
+        SDL_ClearAudioStream(g_audio);g_audio_buffer.reset(1);
+    }
     for(int cycle=0;cycle<6;++cycle) {
-        click(7);int expected=cycle%3+2;if(expected==4)expected=1;
+        click(4+kRenderScaleCount);int expected=cycle%3+2;if(expected==4)expected=1;
         if(g_game_speed!=expected || SDL_GetAudioStreamFrequencyRatio(g_audio)!=expected ||
            SDL_GetAudioStreamQueued(g_audio)!=0 || g_audio_buffer.playing ||
            g_audio_buffer.speed!=expected || picture.px!=initial_pixels || vdp1_render_scale()!=1)return 47;
@@ -72,9 +147,18 @@ int main(int argc, char** argv) {
     click(5);
     if(vdp1_render_scale()!=2 || picture.px!=initial_pixels)return 20;
     click(6);if(vdp1_render_scale()!=5 || choice_at(M_RESOLUTION)!=2)return 41;
-    if(choice_count(M_RESOLUTION)!=3 || std::string(choice_name(M_RESOLUTION,2))!="5x")return 21;
+    if(choice_count(M_RESOLUTION)!=4 || std::string(choice_name(M_RESOLUTION,3))!="9x")return 21;
+    click(7);if(vdp1_render_scale()!=9 || picture.px!=initial_pixels)return 102;
+    choose(M_SSAA,1);if(choice_at(M_SSAA)!=1 || g_gpu.supersampling()!=2)return 103;
+    load_settings(g_cfg.settings);if(vdp1_render_scale()!=9 || choice_at(M_SSAA)!=1)return 104;
+    choose(M_SSAA,0);click(6);
     load_settings(g_cfg.settings);if(vdp1_render_scale()!=5)return 42;
-    for(int i=0;i<5+kRenderScaleCount;++i) {
+    for(int cycle=0;cycle<5;++cycle) {
+        const int expected=(choice_at(M_IMAGE_FILTER)+1)%5;
+        click(5+kRenderScaleCount);
+        if(choice_at(M_IMAGE_FILTER)!=expected || vdp1_render_scale()!=5 || picture.px!=initial_pixels)return 101;
+    }
+    for(int i=0;i<6+kRenderScaleCount;++i) {
         auto a=replay_bar_button(i);
         if(a.x<0 || a.x+a.w>g_out_w)return 43;
         if(i && replay_bar_button(i-1).x+replay_bar_button(i-1).w>a.x)return 44;
@@ -86,7 +170,9 @@ int main(int argc, char** argv) {
     if (second == checkpoint) return 5;
     event.key.scancode=SDL_SCANCODE_F8;
     on_event(event);
+    g_capture_writer.finish();
     click(2);
+    g_capture_writer.finish();
     auto work = fs::path(std::getenv("SF3_CONTROLLER_DIR"));
     std::ifstream pointer(work / "last-capture.txt");
     std::string capture_path((std::istreambuf_iterator<char>(pointer)), {});
@@ -97,6 +183,8 @@ int main(int argc, char** argv) {
     click(3);
     if (!g_menu_open) return 6;
     auto layout = menu_layout();
+    for(auto id:{M_FULLSCREEN,M_TOOLBAR,M_VSYNC,M_IMAGE_FILTER,M_SSAA})
+        if(std::none_of(layout.rows.begin(),layout.rows.end(),[&](const MenuRow& row){return row.id==id;}))return 91;
     bool save=false, load=false, has_capture=false;
     for (auto& row : layout.rows) { save |= row.id==M_REPLAY_SAVE; load |= row.id==M_REPLAY_LOAD; has_capture |= row.id==M_CAPTURE; }
     if (!save || !load || !has_capture) return 7;
@@ -113,6 +201,7 @@ int main(int argc, char** argv) {
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=5)return 29;
     {std::ofstream saved(g_cfg.settings);saved<<"[display]\ninternal_scale = 1\n";}
     load_settings(g_cfg.settings);if(vdp1_render_scale()!=5)return 30;
+    menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=9)return 105;
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=1)return 31;
     menu_adjust(M_RESOLUTION,1);if(vdp1_render_scale()!=2)return 32;
     upload_frame(picture);

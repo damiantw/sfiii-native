@@ -1,4 +1,4 @@
-name: Linux package
+name: Linux and Apple Silicon packages
 on:
   workflow_dispatch:
   push:
@@ -32,7 +32,7 @@ jobs:
           assert hashlib.sha256(archive.read_bytes()).hexdigest()==spec['sha256']
           with tarfile.open(archive) as t:t.extractall(root,filter='data')
           out=root/'output';out.mkdir()
-          for name in ['geometry','hd-assets']:
+          for name in ['geometry','hd-assets','display-filter']:
               subprocess.run([str(root/'bin/dxc'),'-T','ps_6_0','-E','main','-O3','-spirv','-fspv-target-env=vulkan1.0',f'native/{name}.hlsl','-Fo',str(out/(name+'.spv'))],check=True,env={**os.environ,'LD_LIBRARY_PATH':str(root/'lib')})
           PY
       - uses: actions/upload-artifact@v4
@@ -48,6 +48,8 @@ jobs:
         include:
           - runner: ubuntu-22.04
             target: linux-x86_64
+          - runner: macos-15
+            target: darwin-aarch64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 100
     env:
@@ -56,6 +58,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Verify native runner architecture
+        shell: bash
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: |
+          python3 - <<'PY'
+          import os,platform,sys
+          arch={'arm64':'aarch64'}.get(platform.machine(),platform.machine())
+          actual=('darwin' if sys.platform=='darwin' else 'linux')+'-'+arch
+          assert actual==os.environ['EXPECTED_TARGET'], (actual,os.environ['EXPECTED_TARGET'])
+          PY
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

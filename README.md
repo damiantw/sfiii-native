@@ -16,7 +16,7 @@ large automated test harness. Upstream's Windows releases, artwork tools and doc
 > **experimental**: it boots and its menus work in headless smoke tests.
 > See [Status and known issues](#status-and-known-issues).
 
-Upstream [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0) adds official widescreen support for the registered Scenario 1–3 profiles (16:9 with GPU rendering; Windows hybrid-GPU laptops request the high-performance GPU before SDL starts). The supported presentation for widescreen is **original game graphics** — turn **AI graphics** to **Off** when using 16:9. See the [v0.8.0 release notes](docs/release-v0.8.0.md).
+Upstream [v0.9.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0) adds 2160-line rendering (**1× / 2× / 5× / 9×**) with optional four-sample SSAA, five display filters (Nearest, Bilinear, Integer smooth, Bicubic and Lanczos), guarded vertex precision for reviewed Scenario 1–3 BOOT families, sharper sampling for supported rotation backgrounds, smoother audio when presentation falls behind, fullscreen/VSync/toolbar controls, and an Apple Silicon Mac package alongside Windows and Linux. Widescreen still uses **original game graphics** — turn **AI graphics** to **Off** when using 16:9. See the [v0.9.0 release notes](docs/release-v0.9.0.md). Upstream [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0) added official widescreen support (16:9 with GPU rendering; Windows hybrid-GPU laptops request the high-performance GPU before SDL starts).
 
 ## Contents
 
@@ -100,18 +100,21 @@ To check a dump, `python3 -m tools.sf3patch identify DISC.cue --content-id` prin
 
 The fork has no releases of its own yet. Upstream's published packages are:
 
-- **Windows x64:** [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0).
+- **Windows x64:** [v0.9.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0).
   1. Extract the whole ZIP and open **SFIII Native.exe**.
   2. Choose the scenario, your CUE or CHD, and a data folder.
   3. Click **Prepare game**, then **Play**.
 
   There is also an optional
-  [offline AI graphics builder](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.8.0/SFIII-Offline-Graphics-Builder-0.8.0-Windows-x64.zip).
+  [offline AI graphics builder](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Offline-Graphics-Builder-0.9.0-Windows-x64.zip).
   See [docs/DESKTOP.md](docs/DESKTOP.md).
-- **Linux x64:** [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0). Upstream built and
+- **Linux x64:** [v0.9.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0). Upstream built and
   synthetically tested the Linux package; real-disc gameplay, widescreen and AI graphics on Linux remain
-  unvalidated upstream. macOS is not included in v0.8.0 (Intel packages are no longer published; Apple Silicon
-  awaits a hosted runner). See [docs/POSIX.md](docs/POSIX.md) and [docs/release-v0.8.0.md](docs/release-v0.8.0.md).
+  unvalidated upstream. See [docs/POSIX.md](docs/POSIX.md) and [docs/release-v0.9.0.md](docs/release-v0.9.0.md).
+- **Apple Silicon macOS:** [v0.9.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0). Upstream
+  built and synthetically tested an Apple Silicon package (ad-hoc signed, not notarized). Intel Mac packages are
+  not included in the upstream release. Real-disc gameplay, physical controllers and hardware audio on macOS
+  remain unvalidated upstream.
 
 Upstream releases accept only upstream's six registered discs (Sc1 USA, Sc1 V25.1, Sc2 v24, the Sc2 v24-to-V25.1
 migration, the supplied Sc2 V1.003 image whose header reports V24, and Sc3 V25.1), and they do not include the fork's
