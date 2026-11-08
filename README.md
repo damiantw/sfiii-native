@@ -11,6 +11,8 @@ is Windows-first. The fork adds a Linux build (also packaged for macOS), a Linux
 (`sf3patch`), profiles for the Translation Project V25.1 discs, an optional accurate CD-drive timing mode, and a
 large automated test harness. Upstream's Windows releases, artwork tools and documentation are kept below.
 
+**Source updates after v0.9.0:** reviewed community fixes improve memory mirrors, non-local returns, save-file flushing, overlay snapshot dispatch, scene callback discovery and composition/lookup caching. Seven additional exact disc profiles are experimental registrations. See the [PR review and validation limits](docs/pr-review-2026-11.md). These source updates are not yet in the v0.9.0 downloads below.
+
 > **Status: work in progress.** All three scenarios boot, play and save, and save transfer between scenarios works.
 > End-to-end playthroughs of every scenario are still being tested. The Premium Disc (Translation V25.1) is
 > **experimental**: it boots and its menus work in headless smoke tests.
