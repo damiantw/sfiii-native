@@ -62,7 +62,7 @@ jobs:
           assert hashlib.sha256(archive.read_bytes()).hexdigest() == dxc['sha256']
           with tarfile.open(archive) as t: t.extractall(root, filter='data')
           out = Path(os.environ['RUNNER_TEMP'])/'shaders'; out.mkdir()
-          for name in ['geometry', 'hd-assets']:
+          for name in ['geometry', 'hd-assets', 'display-filter']:
               subprocess.run([str(root/'bin/dxc'), '-T', 'ps_6_0', '-E', 'main', '-O3', '-spirv', '-fspv-target-env=vulkan1.0',
                               f'native/{name}.hlsl', '-Fo', str(out/(name+'.spv'))], check=True,
                              env={**os.environ, 'LD_LIBRARY_PATH': str(root/'lib')})
@@ -79,7 +79,7 @@ jobs:
       - name: Build native host and self-tests
         run: |
           cmake -S "$RUNNER_TEMP/host-src" -B "$RUNNER_TEMP/host" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DSATURN_VDP1_GPL=OFF "-DSATURN_RUNTIME=$GITHUB_WORKSPACE/.local/saturn-recomp/runtime" "-DSATURN_EXTRA=$GITHUB_WORKSPACE/tools/windows.cmake" "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/sdl" "-DSF3_PRECOMPILED_SHADERS=$RUNNER_TEMP/shaders" "-DCMAKE_BUILD_RPATH=$RUNNER_TEMP/sdl/lib"
-          cmake --build "$RUNNER_TEMP/host" --parallel 4 --target saturn selftest controller_setup controller_selftest replay_checkpoint gpu_renderer_selftest gpu_parity replay_ui_selftest native_state_ui_selftest
+          cmake --build "$RUNNER_TEMP/host" --parallel 4 --target saturn selftest controller_setup controller_selftest replay_checkpoint gpu_renderer_selftest gpu_parity image_scaler_selftest replay_ui_selftest native_state_ui_selftest
       - name: Run synthetic host checks
         run: |
           cd "$RUNNER_TEMP/host"
@@ -92,6 +92,7 @@ jobs:
           export SF3_CONTROLLER_DIR="$ui" SF3_REPLAY_ROOT="$ui/points" SF3_REPLAY_SEED="$ui/seed"
           SDL_VIDEODRIVER=dummy ./replay_ui_selftest "$ui/replay"
           SDL_VIDEODRIVER=dummy ./native_state_ui_selftest "$ui/native-states"
+          SDL_VIDEODRIVER=dummy ./image_scaler_selftest
       - name: Block coverage build of the instruction fixture (opt-in coverage mode must not change results)
         run: |
           src="$RUNNER_TEMP/cov-src"
@@ -109,6 +110,7 @@ jobs:
         run: |
           cd "$RUNNER_TEMP/host"
           SF3_GPU_BACKEND=vulkan SF3_GPU_ALLOW_SOFTWARE=1 xvfb-run -a ./gpu_renderer_selftest "$RUNNER_TEMP/gpu" ./shaders
+          SF3_GPU_BACKEND=vulkan SF3_GPU_ALLOW_SOFTWARE=1 xvfb-run -a ./image_scaler_selftest --gpu
       - name: GPU against CPU parity at 1x/2x/4x on software Vulkan (synthetic scenes)
         run: |
           cd "$RUNNER_TEMP/host"

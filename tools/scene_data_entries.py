@@ -49,6 +49,8 @@ def plausible_code(img, start, pools):
             slot = img.insn(slot_pc)
             if slot.op == ".word" or slot.delay or slot.op in ("bt", "bf"):
                 return "illegal delay slot %04X at %08X" % (slot.word, slot_pc)
+            if slot.target is not None and not img.contains(slot.target, slot.size or 2):
+                return "delay-slot target %08X outside the image at %08X" % (slot.target,slot_pc)
             if ins.op in ENDS:
                 return None
             pc += 4
@@ -70,7 +72,7 @@ def data_table_entries(img, program, name=None):
             pools.update(range(ins.target, ins.target + ins.size, 2))
     refs = {}
     for at in range(img.base + (-img.base % 4), img.end - 3, 4):
-        if at in code or at + 2 in code or at in pools:
+        if at in code or at + 2 in code or at in pools or at + 2 in pools:
             continue
         value = img.u32(at)
         if img.base <= value < img.end - 1 and not value & 1:

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <cstdio>
+#include <cmath>
 static void check(bool value,const char* why){if(!value)throw std::runtime_error(why);}
 // VDP2 shows an RGB dot's 5-bit channels shifted left by 3, as the CPU composition does.
 static uint32_t rgb555(uint16_t d){const unsigned r=d&31,g=d>>5&31,b=d>>10&31;return (r<<19)|(g<<11)|(b<<3);}

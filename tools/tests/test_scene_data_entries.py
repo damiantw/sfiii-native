@@ -11,7 +11,7 @@ try:
     from saturnrecomp.recomp.discover import Program
 except ImportError:
     Image = Program = None
-from scene_data_entries import data_table_entries, is_scene
+from scene_data_entries import data_table_entries, is_scene, plausible_code
 
 BASE = 0x6000000
 
@@ -111,6 +111,28 @@ class SceneNames(unittest.TestCase):
             self.assertTrue(is_scene(name), name)
         for name in ("X005", "X3ITEM", "BOOT", "X1jasn01", "X1JASN01.BIN"):
             self.assertFalse(is_scene(name), name)
+
+
+@unittest.skipUnless(Program, "framework source unavailable; run dependency setup")
+class DelaySlotBounds(unittest.TestCase):
+    def test_delay_slot_literal_must_stay_in_the_image(self):
+        # RTS followed by a PC-relative load whose literal is beyond this image.
+        img=Image(bytes.fromhex('000bd0ff'),BASE)
+        self.assertIn('delay-slot target',plausible_code(img,BASE,set()))
+
+    def test_in_bounds_delay_slot_literal_is_allowed(self):
+        img=Image(bytes.fromhex('000bd000deadbeef'),BASE)
+        self.assertIsNone(plausible_code(img,BASE,set()))
+
+    def test_pointer_overlapping_the_second_half_of_a_pool_word_is_not_scanned(self):
+        raw=bytearray(0x200)
+        raw[:6]=bytes.fromhex('9081000b0009') # mov.w literal at +0x106
+        raw[0x6c:0x72]=bytes.fromhex('740a000b2411')
+        raw[0x104:0x108]=(BASE+0x6c).to_bytes(4,'big')
+        img=Image(bytes(raw),BASE)
+        accepted,rows=data_table_entries(img,Program(img,[BASE]))
+        self.assertNotIn(BASE+0x6c,accepted)
+        self.assertFalse(any(row[0]==BASE+0x6c for row in rows))
 
 
 if __name__ == "__main__":
