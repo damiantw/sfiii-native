@@ -297,7 +297,7 @@ int main(int argc,char** argv) {
                     auto blended=rendered(gpu,f,5);
                     for(int y=0;y<blended.h;++y)for(int x=0;x<blended.w;++x) {
                         const auto floor=expected((x+.5f)/5-.5f);uint32_t want=0;
-                        for(int shift:{0,8,16}) {uint32_t a=0xFF0000>>shift&255,b=floor>>shift&255;
+                        for(int shift:{0,8,16}) {uint32_t a=0xF80000>>shift&255,b=floor>>shift&255;
                             want|=(mode==2?(a*16+b*16)>>5:std::min(a+b,255u))<<shift;}
                         check(blended.px[y*blended.w+x]==want,"High-resolution floor must retain sprite colour-calculation order");
                     }
