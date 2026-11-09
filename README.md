@@ -11,14 +11,14 @@ is Windows-first. The fork adds a Linux build (also packaged for macOS), a Linux
 (`sf3patch`), profiles for the Translation Project V25.1 discs, an optional accurate CD-drive timing mode, and a
 large automated test harness. Upstream's Windows releases, artwork tools and documentation are kept below.
 
-**Source updates after v0.9.0:** reviewed community fixes improve memory mirrors, non-local returns, save-file flushing, overlay snapshot dispatch, scene callback discovery and composition/lookup caching. Seven additional exact disc profiles are experimental registrations. See the [PR review and validation limits](docs/pr-review-2026-11.md). These source updates are not yet in the v0.9.0 downloads below.
-
 > **Status: work in progress.** All three scenarios boot, play and save, and save transfer between scenarios works.
 > End-to-end playthroughs of every scenario are still being tested. The Premium Disc (Translation V25.1) is
 > **experimental**: it boots and its menus work in headless smoke tests.
 > See [Status and known issues](#status-and-known-issues).
 
-Upstream [v0.9.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0) adds 2160-line rendering (**1× / 2× / 5× / 9×**) with optional four-sample SSAA, five display filters (Nearest, Bilinear, Integer smooth, Bicubic and Lanczos), guarded vertex precision for reviewed Scenario 1–3 BOOT families, sharper sampling for supported rotation backgrounds, smoother audio when presentation falls behind, fullscreen/VSync/toolbar controls, and an Apple Silicon Mac package alongside Windows and Linux. Widescreen still uses **original game graphics** — turn **AI graphics** to **Off** when using 16:9. See the [v0.9.0 release notes](docs/release-v0.9.0.md). Upstream [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0) added official widescreen support (16:9 with GPU rendering; Windows hybrid-GPU laptops request the high-performance GPU before SDL starts).
+Upstream [v0.9.1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.1) is a maintenance release that ships the community fixes reviewed in [docs/pr-review-2026-11.md](docs/pr-review-2026-11.md) (memory mirroring, non-local returns, save flushing, overlay snapshot dispatch, scene callback discovery, composition/lookup caching) and registers seven additional exact disc profiles as experimental. See the [v0.9.1 release notes](docs/release-v0.9.1.md).
+
+Upstream [v0.9.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0) added 2160-line rendering (**1× / 2× / 5× / 9×**) with optional four-sample SSAA, five display filters (Nearest, Bilinear, Integer smooth, Bicubic and Lanczos), guarded vertex precision for reviewed Scenario 1–3 BOOT families, sharper sampling for supported rotation backgrounds, smoother audio when presentation falls behind, fullscreen/VSync/toolbar controls, and an Apple Silicon Mac package alongside Windows and Linux. Widescreen still uses **original game graphics** — turn **AI graphics** to **Off** when using 16:9. See the [v0.9.0 release notes](docs/release-v0.9.0.md). Upstream [v0.8.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.8.0) added official widescreen support (16:9 with GPU rendering; Windows hybrid-GPU laptops request the high-performance GPU before SDL starts).
 
 ## Contents
 
@@ -102,7 +102,7 @@ To check a dump, `python3 -m tools.sf3patch identify DISC.cue --content-id` prin
 
 The fork has no releases of its own yet. Upstream's published packages are:
 
-- **Windows x64:** [v0.9.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0).
+- **Windows x64:** [v0.9.1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.1).
   1. Extract the whole ZIP and open **SFIII Native.exe**.
   2. Choose the scenario, your CUE or CHD, and a data folder.
   3. Click **Prepare game**, then **Play**.
@@ -110,17 +110,17 @@ The fork has no releases of its own yet. Upstream's published packages are:
   There is also an optional
   [offline AI graphics builder](https://github.com/mattkuhnQAAI/sfiii-native/releases/download/v0.9.0/SFIII-Offline-Graphics-Builder-0.9.0-Windows-x64.zip).
   See [docs/DESKTOP.md](docs/DESKTOP.md).
-- **Linux x64:** [v0.9.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0). Upstream built and
+- **Linux x64:** [v0.9.1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.1). Upstream built and
   synthetically tested the Linux package; real-disc gameplay, widescreen and AI graphics on Linux remain
-  unvalidated upstream. See [docs/POSIX.md](docs/POSIX.md) and [docs/release-v0.9.0.md](docs/release-v0.9.0.md).
-- **Apple Silicon macOS:** [v0.9.0](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.0). Upstream
+  unvalidated upstream. See [docs/POSIX.md](docs/POSIX.md) and [docs/release-v0.9.1.md](docs/release-v0.9.1.md).
+- **Apple Silicon macOS:** [v0.9.1](https://github.com/mattkuhnQAAI/sfiii-native/releases/tag/v0.9.1). Upstream
   built and synthetically tested an Apple Silicon package (ad-hoc signed, not notarized). Intel Mac packages are
   not included in the upstream release. Real-disc gameplay, physical controllers and hardware audio on macOS
   remain unvalidated upstream.
 
-Upstream releases accept only upstream's six registered discs (Sc1 USA, Sc1 V25.1, Sc2 v24, the Sc2 v24-to-V25.1
-migration, the supplied Sc2 V1.003 image whose header reports V24, and Sc3 V25.1), and they do not include the fork's
-changes. To use the fork's other profiles (the V25+ add-on discs, the other Sc2 and Sc3 revisions and the Premium Disc)
+Upstream v0.9.1 registers 13 exact-content profiles: its original six (Sc1 USA, Sc1 V25.1, Sc2 v24, the Sc2
+v24-to-V25.1 migration, the supplied Sc2 V1.003 image whose header reports V24, and Sc3 V25.1) plus seven experimental
+registrations contributed from this fork. Upstream releases do not include the fork's other changes. To use the fork's other profiles (the V25+ add-on discs, the other Sc2 and Sc3 revisions and the Premium Disc)
 and the fork's fixes, build from source.
 
 Upstream's earlier v0.6.1-preview1 included faster same-address module identification, reduced repeated GPU artwork uploads, larger demand-filled artwork caches on PCs with sufficient RAM, and an adaptive audio cushion (it starts at 100 ms and grows to 150 ms after repeated underruns, trading latency for fewer interruptions). Upstream tested these on selected Windows Scenario 2 routes. It also labels the artwork styles **Animated**, **Illustrated** and **General** (with **Off** in the game); older packs and saved settings keep their internal identifiers and stay compatible.
