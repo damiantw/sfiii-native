@@ -21,7 +21,12 @@ class DelaySlots(unittest.TestCase):
         body=Body(program,program.funcs[base],{base},hooks={base+6})
         emitted='\n'.join(body.emit())
         self.assertIn('goto L_06000006',emitted)
-        self.assertRegex(emitted,r'L_06000006:\n[^\n]*sh2_hook\(c, 0x06000006u\)')
+        # The branch target's label opens a block: its prologue (state point, the
+        # per-block cycle charge SH2_CYC/SH2_CYC2, coverage mark) precedes the
+        # hooked instruction, and the hook runs after that instruction.
+        self.assertRegex(emitted,r'L_06000006:\n(?:    SH2_(?:STATE_POINT|CYC2?|BLK)\(c, [^\n]*\);\n)*'
+                                 r'    c\.r\[5\] = 0x1u; sh2_hook\(c, 0x06000006u\);')
+        self.assertEqual(emitted.count('sh2_hook('),1)
     def test_control_transfer_in_a_delay_slot_is_not_speculative_code(self):
         # Includes non-delayed conditional branches, which also cause slot-illegal exceptions.
         for slot in [0x8900,0x8B00,0x8D00,0x8F00,0xA000,0xB000,0x402B,0x400B,0x000B,0x002B,0x0023,0x0003,0xC300]:
